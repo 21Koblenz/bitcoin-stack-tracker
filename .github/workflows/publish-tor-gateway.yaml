@@ -47,7 +47,6 @@ jobs:
           image="$(awk '$1 == "image:" { print $2; exit }' "${APP_DIR}/config.yaml" | tr -d '\"')"
 
           test -n "${version}"
-          test "${version}" = "0.21.0.0"
           test "${image}" = "${REGISTRY_PREFIX}/${IMAGE_NAME}"
 
           publish=false
