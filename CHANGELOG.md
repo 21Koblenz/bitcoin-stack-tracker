@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.21.0.1
+
+### Hotfix
+
+- Historische BTC-Tageskurse werden nicht mehr fälschlich als vollständig betrachtet, wenn eine Langzeitquelle nur eine ausgedünnte Datenreihe liefert.
+- Fehlende Tage innerhalb der Historie werden jetzt durch die nachfolgenden Tor-Fallback-Quellen ergänzt.
+- Die Vollständigkeitsprüfung berücksichtigt Tagesdichte, größere Lücken sowie Anfang und Ende der Zeitreihe.
+- Bestehende lokale Kursdaten bleiben erhalten und werden ergänzt.
+
+
 ## v0.21.0.0 — Initial Public Release
 
 ### Portfolio, FIFO und Auswertungen

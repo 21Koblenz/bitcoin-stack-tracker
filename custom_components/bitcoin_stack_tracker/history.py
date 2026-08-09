@@ -69,9 +69,12 @@ _LOGGER = logging.getLogger(__name__)
 # intentionally causes one full backfill after an upgrade so installations
 # that were previously marked complete (for example an own mempool history
 # beginning in 2013) can discover older data from the Tor-routed fallbacks.
-HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v8-fx-fill"
+HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v9-dense-gap-fill"
 ALL_TIME_PRICE_START_DAY = "2010-07-01"
 LONG_HISTORY_REQUIRED_BEFORE_DAY = "2010-09-01"
+FULL_HISTORY_MIN_DENSITY = 0.95
+FULL_HISTORY_MAX_GAP_DAYS = 7
+FULL_HISTORY_MAX_RECENT_LAG_DAYS = 7
 
 # The exchange cache can retain several resolutions, but each chart request uses
 # one uniform OHLC interval from left to right.  Choose the smallest supported
@@ -118,19 +121,32 @@ def _market_ohlc_tiers_for_days(history_days: int) -> tuple[int, ...]:
 
 
 def _is_full_market_history(values: dict[str, float]) -> bool:
-    """Return whether a daily series reaches materially before the 2013 node limit.
+    """Return whether an all-time cache is genuinely dense daily history.
 
-    A Max cache should reach the earliest exchange-price era rather than merely
-    crossing the old 2013 mempool boundary.  The built-in deep providers are
-    queried from July 2010; accepting a first point by September 2010 leaves
-    room for the providers' actual first positive market observation.
+    Reaching 2010 with a few sampled observations is not enough. Some chart
+    providers may return a performance-sampled all-time response (~1.5k points),
+    which spans the full date range but leaves most calendar days missing. A
+    completed bootstrap therefore requires an early start, recent coverage, high
+    calendar-day density, and no large internal gaps.
     """
     if len(values) <= 720:
         return False
     try:
-        return min(values) < LONG_HISTORY_REQUIRED_BEFORE_DAY
-    except ValueError:
+        days = sorted(date.fromisoformat(day) for day in values)
+    except (TypeError, ValueError):
         return False
+    if not days or days[0].isoformat() >= LONG_HISTORY_REQUIRED_BEFORE_DAY:
+        return False
+    today = datetime.now(timezone.utc).date()
+    if days[-1] < today - timedelta(days=FULL_HISTORY_MAX_RECENT_LAG_DAYS):
+        return False
+    span_days = (days[-1] - days[0]).days + 1
+    if span_days <= 0 or len(days) / span_days < FULL_HISTORY_MIN_DENSITY:
+        return False
+    return all(
+        (current - previous).days <= FULL_HISTORY_MAX_GAP_DAYS
+        for previous, current in zip(days, days[1:])
+    )
 
 
 def _timestamp_value(timestamp: Any) -> float | None:
@@ -1646,39 +1662,40 @@ async def _async_sync_history_unlocked(
                 except (ClientError, asyncio.TimeoutError, ValueError) as err:
                     source_notes[currency].append(f"local USD cache conversion through ECB unavailable: {err}")
 
-        # 4) Deep public cascade.  Each provider sees only the still-missing
-        # prefix [2010-07-01, day-before-current-oldest].  Stop immediately once
-        # the all-time threshold has been reached.
+        # 4) Deep public cascade. Every provider is allowed to fill *all* missing
+        # calendar days in the all-time range, not only a prefix before the oldest
+        # cached observation. This is essential when a provider returns a sampled
+        # series that reaches 2010 but contains only ~1.5k points. Existing own or
+        # configured values remain authoritative because _fill_missing_days never
+        # overwrites them. Stop only after the cache is actually dense and recent.
         if needs_full_backfill and public_proxy is not None:
+            full_range_end = yesterday
             for provider in ("Blockchain.com", "Coin Metrics", "CoinGecko"):
                 if _is_full_market_history(values):
-                    break
-                gap_end = _older_gap_end(values, today)
-                if gap_end < ALL_TIME_PRICE_START_DAY:
                     break
                 try:
                     if provider == "CoinGecko":
                         candidate = await cached_coingecko(
-                            currency, ALL_TIME_PRICE_START_DAY, gap_end
+                            currency, ALL_TIME_PRICE_START_DAY, full_range_end
                         )
                         label = "CoinGecko public market chart"
                     else:
                         usd_values = await cached_public_usd(
-                            provider, ALL_TIME_PRICE_START_DAY, gap_end
+                            provider, ALL_TIME_PRICE_START_DAY, full_range_end
                         )
                         candidate = await usd_to_currency(
-                            usd_values, currency, ALL_TIME_PRICE_START_DAY, gap_end
+                            usd_values, currency, ALL_TIME_PRICE_START_DAY, full_range_end
                         )
                         label = (
                             f"{provider} BTC/USD"
                             if currency == "USD"
                             else f"{provider} BTC/USD + ECB"
                         )
-                    contributed = _merge_older_prefix(values, candidate)
+                    contributed = _fill_missing_days(values, candidate)
                     values.update(preferred_overlay)
                     if contributed:
                         record = _history_source_record(
-                            label, contributed, route="Tor", role="deep-backfill"
+                            label, contributed, route="Tor", role="gap-fill + deep-backfill"
                         )
                         if record:
                             source_chain.append(record)
@@ -1686,11 +1703,12 @@ async def _async_sync_history_unlocked(
                         if currency != "USD" and provider != "CoinGecko":
                             public_sources_used.append("ECB")
                         source_notes[currency].append(
-                            f"{label} through Tor: added {len(contributed)} older values ({min(contributed)} → {max(contributed)})"
+                            f"{label} through Tor: filled {len(contributed)} missing daily values "
+                            f"({min(contributed)} → {max(contributed)})"
                         )
                     else:
                         source_notes[currency].append(
-                            f"{label} through Tor: no values older than current cache edge"
+                            f"{label} through Tor: no missing daily values could be filled"
                         )
                 except (ClientError, asyncio.TimeoutError, ValueError) as err:
                     source_notes[currency].append(f"{provider} through Tor unavailable: {err}")
