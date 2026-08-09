@@ -2,44 +2,36 @@
 
 ## v0.21.0.0 — Initial Public Release
 
-### Portfolio, FIFO und Auswertungen
+### Tor und Netzwerk
 
-- Bitcoin-only Portfolio- und Stack-Tracking mit mehreren Depots.
-- Käufe, Verkäufe, Gebühren, Notizen und depotweise FIFO-Zuordnung.
-- Verkaufsübersicht mit FIFO-Einstand, Verkaufserlös, Gewinn/Verlust und Rendite.
-- Bitcoin-Kurs-, Stack-, Portfoliowert- und Gewinn/Verlust-Charts mit mehreren Zeiträumen und Overlays.
-- TWR-, XIRR-, DCA- und Drawdown-Auswertungen.
-- Ziele, Milestones, Halving- und Bitcoin-Netzwerk-Markierungen.
+- Eigenständiges Tor Gateway für die öffentlichen Netzwerkzugriffe des Bitcoin Stack Trackers.
+- Interner SOCKS5-Endpunkt `9050` für Home Assistant Core / Bitcoin Stack Tracker.
+- Optionaler interner SOCKS5-Endpunkt `9051` für andere Home-Assistant-Apps.
+- Private, Link-Local- und LAN-Ziele werden über den öffentlichen Tor-Egress blockiert.
+- Kein direkter Clearnet-Fallback für öffentliche Tracker-Daten.
 
-### Import und Datenportabilität
+### Fail Closed
 
-- CSV-Import mit bearbeitbarer Vorschau und Plausibilitätsprüfung für unterstützte Börsen und Broker.
-- Verschlüsselte portable `.bstbackup`-Backups für Käufe/Verkäufe, Depots, Ziele und Historie.
-- Netzwerk-, Tor-, Zugriffs- und Verschlüsselungseinstellungen werden nicht aus portablen Backups wiederhergestellt.
+- nftables-Killswitch mit Default-Drop-Regeln.
+- Öffentlichen Egress darf ausschließlich der Tor-Prozess öffnen.
+- Die App startet nicht normal weiter, wenn der Killswitch nicht eingerichtet oder verifiziert werden kann.
 
-### Home Assistant und mobile Nutzung
+### Home Assistant
 
-- Natives Home-Assistant-Seitenleistenpanel **Bitcoin Stack**.
-- Zugriff über die authentifizierte Home-Assistant-Benutzeridentität.
-- Desktop- und mobile Darstellung einschließlich Home-Assistant-Companion-App.
-- Seitenwechsel in Buchungs- und Verkaufslisten springen an den Anfang der jeweiligen Liste.
+- Bereitstellung als Home-Assistant-App für `amd64` und `aarch64`.
+- Vorbereitete Multi-Arch-Container-Images über GHCR.
+- Automatischer Start mit Home Assistant.
+- Interner Health-Endpunkt `8099` für den Supervisor-Watchdog.
+- Bewusst kein eigenes Ingress-Dashboard; die Benutzeroberfläche wird von der Bitcoin-Stack-Tracker-Custom-Integration bereitgestellt.
 
-### Tor und Fail Closed
+### Sicherheit und Transparenz
 
-- Eigenes Tor Gateway mit nftables-Default-Drop-Killswitch.
-- Öffentliche Kurs- und Historienquellen ausschließlich über Tor.
-- Lokale private Node-Ziele können direkt im privaten Netzwerk angesprochen werden.
-- Automatische Supervisor-interne Erkennung des GitHub-installierten Tor Gateways und Kompatibilität mit lokalen Entwicklungsinstallationen.
-- Kein öffentlicher DNS-/Clearnet-Fallback bei Fehlern der Gateway-Auflösung.
-
-### Sicherheit
-
-- Argon2id-basierte Passwortableitung und AES-256-GCM für den geschützten Tresor.
-- Begrenzter Panel-/iframe-RPC-Kanal und restriktive Content Security Policy.
-- Fail-closed Netzwerkpfad für öffentliche Datenquellen.
-- Größenlimits, Zugriffskontrollen und gehärtete Backup-/Restore-Grenzen.
-- Release-Metadaten, SBOM und reproduzierbare Integritätsprüfungen im Repository.
+- Keine Portfolio-, Ledger-, FIFO-, Depot-, Ziel- oder Tresordaten im Gateway.
+- Kein Home-Assistant-API-Token, Docker-Socket oder allgemeiner Host-Dateisystemzugriff erforderlich.
+- `NET_ADMIN` ausschließlich für den nftables-Killswitch.
+- Eigenes AppArmor-Profil.
+- Source- und Runtime-SBOM.
 
 ### Lizenz
 
-- Öffentlicher Neustart unter **AGPL-3.0-only**.
+- Öffentlicher Release unter **AGPL-3.0-only**.
