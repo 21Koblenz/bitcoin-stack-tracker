@@ -1,0 +1,25 @@
+# Bundled Tor client for Bitcoin Stack Tracker.
+# The dashboard uses loopback. Home Assistant Core reaches the second listener
+# on the app's internal IPv4 address. Tor policy and nftables both reject every
+# other source, so no separate socat bridge is required.
+ClientOnly 1
+DataDirectory /data/tor
+PidFile /run/bitcoin-stack-tor/tor.pid
+SocksPort 127.0.0.1:9050 IsolateSOCKSAuth
+SocksPort __CONTAINER_IP__:9050 IsolateSOCKSAuth
+SocksPort 127.0.0.1:9051 IsolateSOCKSAuth
+SocksPort __CONTAINER_IP__:9051 IsolateSOCKSAuth
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy accept 172.30.32.0/23
+SocksPolicy reject *
+
+# Reject SOCKS behavior that could resolve public names outside Tor.
+TestSocks 1
+SafeSocks 1
+SafeLogging 1
+# Keep directory cache and guard state in /data/tor so app restarts do not
+# need to download the complete Tor directory again.
+Log notice stdout
+
+# Keep shutdown bounded; no Tor control interface is exposed.
+ShutdownWaitLength 0

@@ -1,0 +1,41 @@
+#!/command/with-contenv sh
+# s6 passes: $1 = exit code (or 256 for an uncaught signal), $2 = signal.
+# run.sh classifies unexpected health-agent termination itself, so a normal
+# exit 0 or an external INT/TERM during container shutdown must stay clean.
+case "${1:-}" in
+  ''|*[!0-9]*) service_code=1 ;;
+  *) service_code="$1" ;;
+esac
+case "${2:-}" in
+  ''|*[!0-9]*) service_signal=0 ;;
+  *) service_signal="$2" ;;
+esac
+
+if [ "${service_code}" -eq 256 ]; then
+  case "${service_signal}" in
+    2|15) container_code=0 ;;
+    *) container_code=$((128 + service_signal)) ;;
+  esac
+else
+  container_code="${service_code}"
+fi
+
+# The explicit marker wins in the small race where s6 starts stopping the
+# service while run.sh is already performing its ordered shutdown sequence.
+if [ -e /run/bitcoin-stack-manual-stop ]; then
+  container_code=0
+fi
+
+case "${container_code}" in
+  ''|*[!0-9]*) container_code=1 ;;
+esac
+
+printf '%s\n' "${container_code}" > /run/s6-linux-init-container-results/exitcode
+
+if [ "${container_code}" -eq 0 ]; then
+  exit 0
+fi
+
+# Unexpected main-service termination: stop the container so Supervisor can
+# surface the real failure instead of silently restarting a broken service.
+exec /run/s6/basedir/bin/halt

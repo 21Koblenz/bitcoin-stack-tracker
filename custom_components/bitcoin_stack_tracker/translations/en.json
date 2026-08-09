@@ -1,0 +1,823 @@
+{
+  "title": "Bitcoin Stack Tracker",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Create Bitcoin portfolio",
+        "description": "Bitcoin only. Ledger, depots, goals, and history are stored locally. Public historical prices are fetched only through the configured Tor proxy.",
+        "data": {
+          "name": "Portfolio name",
+          "goal": "Initial stacking goal",
+          "goal_unit": "Goal unit",
+          "source_type": "Price source",
+          "update_interval": "Price update interval",
+          "history_enabled": "Enable historical daily values",
+          "history_auto_sync": "Automatically update history daily",
+          "encryption_enabled": "Encrypt local ledger with a master password",
+          "history_tor_proxy": "Bundled Tor SOCKS5 proxy for public data sources"
+        }
+      },
+      "kraken": {
+        "title": "Public market average via Tor",
+        "description": "Live BTC prices are calculated as an arithmetic mean of independent public Kraken, Coinbase, Bitstamp, and CoinGecko quotes routed through Tor. Kraken remains available for historical candles.",
+        "data": {
+          "currencies": "Currencies"
+        }
+      },
+      "mempool": {
+        "title": "mempool price API",
+        "description": "Own mempool instance or public service. Own instances are queried first and remain preferred on overlap; older missing history may then be filled by the next configured source and Tor-routed public fallbacks. Onion addresses and public instances require Tor.",
+        "data": {
+          "base_url": "Base URL",
+          "verify_ssl": "Verify TLS certificate",
+          "currencies": "Currencies, comma-separated",
+          "mempool_own_instance": "This is my own mempool instance",
+          "mempool_route": "Connection route"
+        }
+      },
+      "entity": {
+        "title": "Existing Home Assistant price sensor",
+        "description": "The state must contain the numeric price of one BTC. Add an explicitly configured public-market-average or mempool source for the same currency to backfill historical values. Sources are tried in configuration order.",
+        "data": {
+          "entity_id": "BTC price sensor",
+          "currency": "Currency"
+        }
+      },
+      "encryption_password": {
+        "title": "Choose master password",
+        "description": "The password is used with Scrypt and AES-256-GCM and is never saved. After every Home Assistant restart each allowed user must unlock the portfolio again.",
+        "data": {
+          "vault_password": "Master password (at least 16 characters)",
+          "vault_password_confirm": "Repeat master password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "The price source could not be reached or returned no BTC price.",
+      "unsupported_currency": "At least one selected currency is not returned by this mempool API.",
+      "password_mismatch": "The two passwords do not match.",
+      "weak_password": "Use a master password with at least 16 characters.",
+      "invalid_tor_proxy": "The Tor proxy must be a complete URL with host and port. The bundled default is socks5://20c000e9-bitcoin-stack-tracker-dashboard:9050.",
+      "invalid_mempool_route": "Direct access is allowed only for an explicitly marked own non-onion instance. Public and onion addresses must use Tor."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage Bitcoin portfolio",
+        "menu_options": {
+          "add_purchase": "Add purchase",
+          "add_sale": "Add sale",
+          "add_stack": "Add BTC without cost basis",
+          "delete_ledger_entry": "Delete ledger entry",
+          "add_depot": "Add depot",
+          "delete_depot": "Delete empty depot",
+          "add_goal": "Add stacking goal",
+          "delete_goal": "Delete stacking goal",
+          "history_settings": "History settings",
+          "sync_history": "Synchronize history now",
+          "settings": "Price update settings",
+          "add_source": "Add price source",
+          "delete_source": "Delete price source",
+          "export_csv": "Export CSV and ZIP",
+          "edit_goal": "Edit stacking goal",
+          "tax_settings": "Configure holding-period overview"
+        }
+      },
+      "add_purchase": {
+        "title": "Add Bitcoin purchase",
+        "data": {
+          "depot_id": "Depot",
+          "amount": "Amount",
+          "amount_unit": "Amount unit",
+          "currency": "Purchase currency",
+          "price": "Price per BTC",
+          "fee": "Purchase fee",
+          "timestamp": "Purchase time",
+          "note": "Note",
+          "timestamp_text": "Direct date entry (e.g. 2011-06-12 14:30)"
+        }
+      },
+      "add_sale": {
+        "title": "Add Bitcoin sale",
+        "description": "FIFO applies inside the selected depot. Mixed-currency matches remain unresolved until an FX conversion is available.",
+        "data": {
+          "depot_id": "Depot",
+          "amount": "Amount",
+          "amount_unit": "Amount unit",
+          "currency": "Sale currency",
+          "price": "Price per BTC",
+          "fee": "Sale fee",
+          "timestamp": "Sale time",
+          "note": "Note",
+          "timestamp_text": "Direct date entry (e.g. 2011-06-12 14:30)"
+        }
+      },
+      "add_stack": {
+        "title": "Add BTC without cost basis",
+        "description": "This balance counts toward the stack but creates an unresolved FIFO portion when sold.",
+        "data": {
+          "depot_id": "Depot",
+          "amount": "Amount",
+          "amount_unit": "Amount unit",
+          "timestamp": "Time",
+          "note": "Note",
+          "timestamp_text": "Direct date entry (e.g. 2011-06-12 14:30)"
+        }
+      },
+      "delete_ledger_entry": {
+        "title": "Delete ledger entry",
+        "data": {
+          "ledger_entry_id": "Entry"
+        }
+      },
+      "add_depot": {
+        "title": "Add depot",
+        "description": "Multiple depots create additional depot-specific sensors and long-term statistics.",
+        "data": {
+          "depot_name": "Depot name"
+        }
+      },
+      "delete_depot": {
+        "title": "Delete empty depot",
+        "data": {
+          "depot_id": "Depot"
+        }
+      },
+      "add_goal": {
+        "title": "Add stacking goal",
+        "description": "Each additional goal creates {sensor_count} live sensors and additional long-term series. More goals increase recorder and statistics storage.",
+        "data": {
+          "goal_name": "Goal name",
+          "goal": "Goal amount",
+          "goal_unit": "Goal unit",
+          "depot_id": "Applies to",
+          "currency": "Goal fiat currency"
+        }
+      },
+      "delete_goal": {
+        "title": "Delete stacking goal",
+        "data": {
+          "goal_id": "Goal"
+        }
+      },
+      "settings": {
+        "title": "Price update settings",
+        "data": {
+          "update_interval": "Price update interval"
+        }
+      },
+      "history_settings": {
+        "title": "Historical daily values",
+        "description": "Public historical price providers are fetched only through Tor, with no clearnet fallback. History uses an ordered source cascade: own infrastructure first, then configured sources, then Tor-routed public fallbacks only for still-missing older ranges.",
+        "data": {
+          "history_enabled": "Enable history",
+          "history_auto_sync": "Synchronize automatically every day",
+          "history_tor_proxy": "Tor SOCKS5 proxy"
+        }
+      },
+      "add_source": {
+        "title": "Add price source",
+        "data": {
+          "source_type": "Source type"
+        },
+        "description": "Sources are ordered by priority. The first reachable source supplies the live price; later sources can act as fallbacks or provide history for the same currency."
+      },
+      "add_kraken": {
+        "title": "Add public market-average currencies",
+        "data": {
+          "currencies": "Currencies"
+        }
+      },
+      "add_mempool": {
+        "title": "Add mempool source",
+        "data": {
+          "base_url": "Base URL",
+          "verify_ssl": "Verify TLS certificate",
+          "currencies": "Currencies, comma-separated",
+          "mempool_own_instance": "This is my own mempool instance",
+          "mempool_route": "Connection route"
+        }
+      },
+      "add_entity": {
+        "title": "Add Home Assistant price sensor",
+        "data": {
+          "entity_id": "BTC price sensor",
+          "currency": "Currency"
+        }
+      },
+      "delete_source": {
+        "title": "Delete price source",
+        "data": {
+          "source_index": "Source"
+        }
+      },
+      "export_csv": {
+        "title": "Export CSV and ZIP",
+        "description": "Persistent plaintext export is disabled. Use the dashboard download, which creates files only temporarily.",
+        "data": {
+          "delimiter": "CSV delimiter"
+        }
+      },
+      "edit_goal": {
+        "title": "Select stacking goal",
+        "data": {
+          "goal_id": "Goal"
+        }
+      },
+      "tax_settings": {
+        "title": "Holding-period and tax overview",
+        "description": "The configurable holding period classifies FIFO lots as short- or long-term. This is an overview only, not tax advice and not a tax return.",
+        "data": {
+          "long_term_days": "Days until long term",
+          "tax_note": "Custom note for this rule"
+        }
+      },
+      "edit_goal_details": {
+        "title": "Edit stacking goal",
+        "description": "A goal creates {sensor_count} sensors. Name, BTC amount, depot, and fiat currency can be changed at any time.",
+        "data": {
+          "goal_name": "Goal name",
+          "goal": "Goal amount",
+          "goal_unit": "Unit",
+          "depot_id": "Applies to",
+          "currency": "Fiat currency"
+        }
+      }
+    },
+    "error": {
+      "invalid_amount": "Amount, price, and goal must be greater than zero.",
+      "insufficient_stack": "The selected depot did not contain enough BTC at that time.",
+      "duplicate_currency": "This exact price source is already configured.",
+      "cannot_connect": "The price source could not be reached or returned no BTC price.",
+      "unsupported_currency": "At least one selected currency is not returned by this mempool API.",
+      "depot_not_empty": "The depot contains ledger entries and cannot be deleted.",
+      "invalid_name": "Enter a valid name.",
+      "delete_breaks_fifo": "Deleting this entry would leave a later sale without enough earlier BTC.",
+      "goal_not_found": "The goal was not found.",
+      "invalid_tor_proxy": "The Tor proxy must be a complete URL with host and port. The bundled default is socks5://20c000e9-bitcoin-stack-tracker-dashboard:9050.",
+      "invalid_mempool_route": "Direct access is allowed only for an explicitly marked own non-onion instance. Public and onion addresses must use Tor."
+    },
+    "abort": {
+      "no_ledger_entries": "There are no ledger entries.",
+      "last_source": "The last price source cannot be deleted.",
+      "no_depots_to_delete": "There is no additional empty depot to delete.",
+      "no_goals": "There are no stacking goals.",
+      "history_synced": "Historical daily values were synchronized.",
+      "history_sync_failed": "History synchronization failed. Details are available in the Home Assistant log and history sensor.",
+      "not_loaded": "The integration is not currently loaded.",
+      "csv_exported": "CSV export created: {path}",
+      "history_synced_with_errors": "History synchronization finished with warnings: {errors}",
+      "vault_locked_use_dashboard": "The Bitcoin vault is locked. Unlock it in the Bitcoin Stack Tracker app first."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "stack_btc": {
+        "name": "Stack"
+      },
+      "stack_sats": {
+        "name": "Stack in sats"
+      },
+      "purchase_count": {
+        "name": "Purchase count"
+      },
+      "sale_count": {
+        "name": "Sale count"
+      },
+      "known_cost_btc": {
+        "name": "BTC with known cost basis"
+      },
+      "unknown_cost_btc": {
+        "name": "BTC without cost basis"
+      },
+      "unresolved_fifo_btc": {
+        "name": "FIFO unresolved BTC"
+      },
+      "last_ledger_entry": {
+        "name": "Last ledger entry"
+      },
+      "depot_stack_btc": {
+        "name": "{depot} stack"
+      },
+      "depot_stack_sats": {
+        "name": "{depot} stack in sats"
+      },
+      "depot_purchase_count": {
+        "name": "{depot} purchase count"
+      },
+      "depot_sale_count": {
+        "name": "{depot} sale count"
+      },
+      "depot_known_cost_btc": {
+        "name": "{depot} BTC with known cost basis"
+      },
+      "depot_unknown_cost_btc": {
+        "name": "{depot} BTC without cost basis"
+      },
+      "depot_unresolved_fifo_btc": {
+        "name": "{depot} FIFO unresolved BTC"
+      },
+      "goal_progress": {
+        "name": "{goal} progress"
+      },
+      "goal_remaining_btc": {
+        "name": "{goal} BTC remaining"
+      },
+      "goal_remaining_sats": {
+        "name": "{goal} sats remaining"
+      },
+      "current_price": {
+        "name": "BTC price {currency}"
+      },
+      "portfolio_value": {
+        "name": "Portfolio value {currency}"
+      },
+      "known_cost_market_value": {
+        "name": "Cost-tracked market value {currency}"
+      },
+      "invested": {
+        "name": "Open cost basis {currency}"
+      },
+      "average_buy_price": {
+        "name": "Average open purchase price {currency}"
+      },
+      "unrealized_profit_loss": {
+        "name": "Unrealized profit/loss {currency}"
+      },
+      "unrealized_profit_loss_percent": {
+        "name": "Unrealized profit/loss {currency} percent"
+      },
+      "realized_profit_loss": {
+        "name": "Realized FIFO profit/loss {currency}"
+      },
+      "purchase_fees": {
+        "name": "Purchase fees {currency}"
+      },
+      "sale_fees": {
+        "name": "Sale fees {currency}"
+      },
+      "depot_portfolio_value": {
+        "name": "{depot} portfolio value {currency}"
+      },
+      "depot_invested": {
+        "name": "{depot} open cost basis {currency}"
+      },
+      "depot_average_buy_price": {
+        "name": "{depot} average purchase price {currency}"
+      },
+      "depot_unrealized_profit_loss": {
+        "name": "{depot} unrealized profit/loss {currency}"
+      },
+      "depot_unrealized_profit_loss_percent": {
+        "name": "{depot} unrealized profit/loss {currency} percent"
+      },
+      "depot_realized_profit_loss": {
+        "name": "{depot} realized FIFO profit/loss {currency}"
+      },
+      "history_last_sync": {
+        "name": "Last history synchronization"
+      },
+      "history_daily_points": {
+        "name": "Stored historical daily values"
+      },
+      "long_term_btc": {
+        "name": "Long-term BTC"
+      },
+      "short_term_btc": {
+        "name": "Short-term BTC"
+      },
+      "next_long_term_date": {
+        "name": "Next long-term date"
+      },
+      "next_long_term_btc": {
+        "name": "Next long-term BTC"
+      },
+      "depot_long_term_btc": {
+        "name": "{depot} long-term BTC"
+      },
+      "depot_short_term_btc": {
+        "name": "{depot} short-term BTC"
+      },
+      "depot_next_long_term_date": {
+        "name": "{depot} next long-term date"
+      },
+      "depot_next_long_term_btc": {
+        "name": "{depot} next long-term BTC"
+      },
+      "goal_remaining_fiat": {
+        "name": "{goal} remaining fiat {currency}"
+      },
+      "goal_target_fiat_value": {
+        "name": "{goal} current target value {currency}"
+      },
+      "realized_long_term_profit_loss": {
+        "name": "Realized long-term FIFO profit/loss {currency}"
+      },
+      "realized_short_term_profit_loss": {
+        "name": "Realized short-term FIFO profit/loss {currency}"
+      },
+      "depot_realized_long_term_profit_loss": {
+        "name": "{depot} realized long-term FIFO profit/loss {currency}"
+      },
+      "depot_realized_short_term_profit_loss": {
+        "name": "{depot} realized short-term FIFO profit/loss {currency}"
+      }
+    }
+  },
+  "services": {
+    "add_purchase": {
+      "name": "Add Bitcoin purchase",
+      "description": "Add a BTC purchase with known fiat cost basis to the local ledger.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "depot_id": {
+          "name": "Depot ID",
+          "description": "Target depot. The default depot is main."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Purchased amount."
+        },
+        "amount_unit": {
+          "name": "Amount unit",
+          "description": "BTC or sats."
+        },
+        "price": {
+          "name": "Price per BTC",
+          "description": "Actual fiat purchase price for one BTC."
+        },
+        "currency": {
+          "name": "Currency",
+          "description": "Fiat currency code, for example EUR."
+        },
+        "fee": {
+          "name": "Fee",
+          "description": "Purchase fee in the same fiat currency."
+        },
+        "timestamp": {
+          "name": "Time",
+          "description": "Purchase date and time. Empty means now."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional local note."
+        }
+      }
+    },
+    "add_sale": {
+      "name": "Add Bitcoin sale",
+      "description": "Add a BTC sale. FIFO is calculated separately inside the selected depot.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "depot_id": {
+          "name": "Depot ID",
+          "description": "Depot from which the BTC is sold."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Sold amount."
+        },
+        "amount_unit": {
+          "name": "Amount unit",
+          "description": "BTC or sats."
+        },
+        "price": {
+          "name": "Price per BTC",
+          "description": "Actual fiat sale price for one BTC."
+        },
+        "currency": {
+          "name": "Currency",
+          "description": "Fiat currency code, for example EUR."
+        },
+        "fee": {
+          "name": "Fee",
+          "description": "Sale fee in the same fiat currency."
+        },
+        "timestamp": {
+          "name": "Time",
+          "description": "Sale date and time. Empty means now."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional local note."
+        }
+      }
+    },
+    "add_stack": {
+      "name": "Add BTC without cost basis",
+      "description": "Add existing BTC without assigning a purchase price.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "depot_id": {
+          "name": "Depot ID",
+          "description": "Target depot."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "BTC amount."
+        },
+        "amount_unit": {
+          "name": "Amount unit",
+          "description": "BTC or sats."
+        },
+        "timestamp": {
+          "name": "Time",
+          "description": "Acquisition date and time. Empty means now."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional local note."
+        }
+      }
+    },
+    "add_depot": {
+      "name": "Add depot",
+      "description": "Add another locally stored depot and create depot-specific sensors.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "depot_name": {
+          "name": "Depot name",
+          "description": "Display name for the depot."
+        }
+      }
+    },
+    "add_goal": {
+      "name": "Add stacking goal",
+      "description": "Add a stacking goal with its own fiat currency. Each goal creates five sensors.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "goal_name": {
+          "name": "Goal name",
+          "description": "Display name for the goal."
+        },
+        "goal": {
+          "name": "Goal amount",
+          "description": "Target amount."
+        },
+        "goal_unit": {
+          "name": "Goal unit",
+          "description": "BTC or sats."
+        },
+        "depot_id": {
+          "name": "Depot ID or all",
+          "description": "Apply the goal to one depot or to all depots."
+        },
+        "currency": {
+          "name": "Fiat currency",
+          "description": "Currency for remaining amount and target value."
+        }
+      }
+    },
+    "delete_entry": {
+      "name": "Delete ledger entry",
+      "description": "Permanently delete one purchase, sale, or stack entry. Deletion is blocked if it would break FIFO.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "ledger_entry_id": {
+          "name": "Ledger entry ID",
+          "description": "ID returned by the ledger export."
+        }
+      }
+    },
+    "set_goal": {
+      "name": "Set first stacking goal",
+      "description": "Backward-compatible action that updates the first goal or creates it.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "goal": {
+          "name": "Goal",
+          "description": "Target amount."
+        },
+        "goal_unit": {
+          "name": "Goal unit",
+          "description": "BTC or sats."
+        }
+      }
+    },
+    "export_ledger": {
+      "name": "Export ledger as response",
+      "description": "Return ledger, depot, goal, and FIFO data as action response data.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        }
+      }
+    },
+    "export_csv": {
+      "name": "Export CSV and ZIP",
+      "description": "Write transactions, FIFO matches, and holding-period overview as CSV/ZIP below /config.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "delimiter": {
+          "name": "CSV delimiter",
+          "description": "Semicolon is usually best for German spreadsheet programs."
+        }
+      }
+    },
+    "sync_history": {
+      "name": "Synchronize historical daily values",
+      "description": "Download daily BTC prices from explicitly configured sources, cache them locally, and import long-term statistics.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        }
+      }
+    },
+    "delete_depot": {
+      "name": "Delete depot",
+      "description": "Delete an empty depot.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "depot_id": {
+          "name": "Depot-ID",
+          "description": "Depot to delete."
+        }
+      }
+    },
+    "update_goal": {
+      "name": "Update stacking goal",
+      "description": "Change goal name, amount, depot, and fiat currency.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "goal_id": {
+          "name": "Ziel-ID",
+          "description": "Goal to update."
+        },
+        "goal_name": {
+          "name": "Zielname",
+          "description": ""
+        },
+        "goal": {
+          "name": "Zielmenge",
+          "description": ""
+        },
+        "goal_unit": {
+          "name": "Einheit",
+          "description": "BTC oder sats."
+        },
+        "depot_id": {
+          "name": "Depot-ID",
+          "description": ""
+        },
+        "currency": {
+          "name": "Fiatwährung",
+          "description": ""
+        }
+      }
+    },
+    "delete_goal": {
+      "name": "Delete stacking goal",
+      "description": "Delete one goal.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "goal_id": {
+          "name": "Ziel-ID",
+          "description": ""
+        }
+      }
+    },
+    "set_tax_settings": {
+      "name": "Set holding-period rule",
+      "description": "Store a configurable long-term threshold and note. Overview only.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "long_term_days": {
+          "name": "Tage",
+          "description": "Days from acquisition until long-term classification."
+        },
+        "tax_note": {
+          "name": "Notiz",
+          "description": "Custom note; not tax advice."
+        }
+      }
+    },
+    "list_portfolios": {
+      "name": "List portfolios",
+      "description": "Internal dashboard action.",
+      "fields": {}
+    },
+    "dashboard_data": {
+      "name": "Dashboard data",
+      "description": "Internal dashboard action with local ledger and history.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker config entry."
+        },
+        "history_days": {
+          "name": "Historientage",
+          "description": ""
+        }
+      }
+    },
+    "lock_vault": {
+      "name": "Lock vault",
+      "description": ""
+    },
+    "set_history_settings": {
+      "name": "Set history settings",
+      "description": "Enable or disable historical daily values. Existing cached price data is retained.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio"
+        },
+        "enabled": {
+          "name": "History enabled"
+        },
+        "auto_sync": {
+          "name": "Automatic daily synchronization"
+        }
+      }
+    },
+    "delete_all_entries": {
+      "name": "Delete all entries",
+      "description": "Permanently delete all local ledger entries.",
+      "fields": {}
+    },
+    "update_entry": {
+      "name": "Update ledger entry",
+      "description": "Correct an existing ledger entry while keeping its ID. FIFO is validated before saving.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Portfolio",
+          "description": "Bitcoin Stack Tracker configuration."
+        },
+        "ledger_entry_id": {
+          "name": "Ledger entry ID",
+          "description": "ID of the existing ledger entry."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Corrected BTC or sats amount."
+        },
+        "amount_unit": {
+          "name": "Unit",
+          "description": "BTC or sats."
+        },
+        "currency": {
+          "name": "Fiat currency",
+          "description": "Fiat currency for priced entries."
+        },
+        "price": {
+          "name": "Price per BTC",
+          "description": "Corrected Bitcoin price."
+        },
+        "fee": {
+          "name": "Fee",
+          "description": "Corrected fee."
+        },
+        "timestamp": {
+          "name": "Timestamp",
+          "description": "Corrected transaction time."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Corrected local note."
+        },
+        "depot_id": {
+          "name": "Depot ID",
+          "description": "Depot that owns this entry."
+        }
+      }
+    }
+  }
+}

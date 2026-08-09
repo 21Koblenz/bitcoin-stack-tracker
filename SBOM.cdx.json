@@ -1,0 +1,129 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "name": "bitcoin-stack-tracker-integration",
+      "properties": [
+        {
+          "name": "bst:role",
+          "value": "Home Assistant Core integration / encrypted ledger / native API"
+        }
+      ],
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    {
+      "name": "bitcoin-stack-tracker-native-panel",
+      "properties": [
+        {
+          "name": "bst:role",
+          "value": "Home Assistant frontend panel served by Core"
+        }
+      ],
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    {
+      "name": "bitcoin-stack-tracker-tor-gateway",
+      "properties": [
+        {
+          "name": "bst:role",
+          "value": "network-only Home Assistant add-on / Tor + nftables; no ingress, no HA API token"
+        }
+      ],
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    {
+      "name": "cryptography",
+      "properties": [
+        {
+          "name": "bst:provided-by",
+          "value": "Home Assistant Core runtime"
+        }
+      ],
+      "type": "library"
+    },
+    {
+      "name": "Tor",
+      "properties": [
+        {
+          "name": "bst:provided-by",
+          "value": "Alpine package in Tor gateway image"
+        }
+      ],
+      "type": "application"
+    },
+    {
+      "name": "nftables",
+      "properties": [
+        {
+          "name": "bst:provided-by",
+          "value": "Alpine package in Tor gateway image"
+        }
+      ],
+      "type": "application"
+    },
+    {
+      "name": "aiohttp-socks",
+      "purl": "pkg:pypi/aiohttp-socks@0.11.0",
+      "type": "library",
+      "version": "0.11.0"
+    },
+    {
+      "name": "python-socks",
+      "purl": "pkg:pypi/python-socks@2.8.2",
+      "type": "library",
+      "version": "2.8.2"
+    },
+    {
+      "name": "argon2-cffi",
+      "purl": "pkg:pypi/argon2-cffi@25.1.0",
+      "type": "library",
+      "version": "25.1.0"
+    },
+    {
+      "name": "argon2-cffi-bindings",
+      "purl": "pkg:pypi/argon2-cffi-bindings@25.1.0",
+      "type": "library",
+      "version": "25.1.0"
+    },
+    {
+      "name": "ghcr.io/home-assistant/amd64-base",
+      "purl": "pkg:oci/home-assistant/amd64-base@sha256:368b5fcd266d1e5a643bad9bc9e84760760032e911ecfdef2a7fc148d76035d1",
+      "type": "container",
+      "version": "3.22-2026.06.1"
+    },
+    {
+      "name": "ghcr.io/home-assistant/aarch64-base",
+      "purl": "pkg:oci/home-assistant/aarch64-base@sha256:03185a346a3e505e0aa102cb1e976a2e7be7421cf4a405abd2cd83e0a6bd0a58",
+      "type": "container",
+      "version": "3.22-2026.06.1"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "name": "bitcoin-stack-tracker",
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    "properties": [
+      {
+        "name": "bst:inventory-kind",
+        "value": "release-source-direct"
+      },
+      {
+        "name": "bst:architecture",
+        "value": "native Home Assistant panel + Core vault + network-only Tor gateway"
+      },
+      {
+        "name": "bst:runtime-sbom",
+        "value": "Tor gateway image generates exact Alpine runtime inventory at build time"
+      }
+    ],
+    "timestamp": "2026-08-08T01:56:25.937421+00:00"
+  },
+  "serialNumber": "urn:uuid:19e0f7eb-16ab-4b08-84be-263fbcd406af",
+  "specVersion": "1.7",
+  "version": 1
+}

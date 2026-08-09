@@ -1,0 +1,126 @@
+name: Build and publish Tor Gateway
+
+on:
+  pull_request:
+    paths:
+      - "bitcoin_stack_tracker_dashboard/**"
+      - ".github/workflows/publish-tor-gateway.yaml"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tor-gateway-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: bitcoin_stack_tracker_dashboard
+  IMAGE_NAME: bitcoin-stack-tracker-tor-gateway
+  REGISTRY_PREFIX: ghcr.io/21koblenz
+  ARCHITECTURES: '["amd64","aarch64"]'
+
+jobs:
+  prepare:
+    name: Prepare build
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.meta.outputs.version }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '$1 == "version:" { print $2; exit }' "${APP_DIR}/config.yaml" | tr -d '\"')"
+          image="$(awk '$1 == "image:" { print $2; exit }' "${APP_DIR}/config.yaml" | tr -d '\"')"
+
+          test -n "${version}"
+          test "${version}" = "0.21.0.0"
+          test "${image}" = "${REGISTRY_PREFIX}/${IMAGE_NAME}"
+
+          publish=false
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME}" = "v${version}"
+            publish=true
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+      - name: Prepare native multi-arch matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, optionally publish, and sign image
+        uses: home-assistant/builder/actions/build-image@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./${{ env.APP_DIR }}
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.prepare.outputs.version }}
+            latest
+          labels: |
+            io.hass.type=app
+            io.hass.name=Bitcoin Stack Tracker Tor Gateway
+            io.hass.description=Fail-closed Tor gateway for Bitcoin Stack Tracker
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+          push: ${{ needs.prepare.outputs.publish }}
+          version: ${{ needs.prepare.outputs.version }}
+
+  manifest:
+    name: Publish signed multi-arch manifest
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Publish and sign manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.prepare.outputs.version }}
+            latest
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}

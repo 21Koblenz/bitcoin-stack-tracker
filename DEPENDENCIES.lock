@@ -1,0 +1,8 @@
+# Bitcoin Stack Tracker 0.21.0.0 Python dependency lock
+# Exact non-Home-Assistant packages used by the custom integration.
+# aiohttp and cffi are platform-provided by Home Assistant and deliberately not
+# overridden here, to avoid conflicting with Core's own dependency constraints.
+aiohttp-socks==0.11.0
+python-socks==2.8.2
+argon2-cffi==25.1.0
+argon2-cffi-bindings==25.1.0

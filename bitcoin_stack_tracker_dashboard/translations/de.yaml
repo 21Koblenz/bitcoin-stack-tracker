@@ -1,0 +1,4 @@
+configuration:
+  log_level:
+    name: Log-Level
+    description: Mindeststufe für das technische App-Protokoll.

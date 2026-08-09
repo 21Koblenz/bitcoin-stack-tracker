@@ -1,0 +1,55 @@
+name: Publish release assets
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  assets:
+    name: Build ZIP and SHA-256
+    if: ${{ github.event.release.prerelease == false }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION.txt)"
+          tag="${{ github.event.release.tag_name }}"
+          test "${tag}" = "v${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release ZIP and SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.version }}"
+          tag="${{ steps.meta.outputs.tag }}"
+          archive="bitcoin-stack-tracker-home-assistant-${tag}.zip"
+          prefix="bitcoin-stack-tracker-${tag}/"
+          git archive --format=zip --prefix="${prefix}" -o "${archive}" "${tag}"
+          sha256sum "${archive}" > "${archive}.sha256"
+          sha256sum -c "${archive}.sha256"
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          archive="bitcoin-stack-tracker-home-assistant-${tag}.zip"
+          gh release upload "${tag}" "${archive}" "${archive}.sha256" --clobber

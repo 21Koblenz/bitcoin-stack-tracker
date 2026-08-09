@@ -1,0 +1,32 @@
+name: Bitcoin Stack Tracker Tor Gateway
+version: 0.21.0.0
+slug: bitcoin_stack_tracker_dashboard
+description: >-
+  Netzwerk-only Tor-Gateway mit nftables-Killswitch für den nativen Bitcoin Stack Tracker in Home Assistant Core.
+url: https://github.com/21koblenz/bitcoin-stack-tracker
+arch:
+  - aarch64
+  - amd64
+image: ghcr.io/21koblenz/bitcoin-stack-tracker-tor-gateway
+startup: application
+boot: auto
+init: false
+ports:
+  9050/tcp: null
+  9051/tcp: null
+  8099/tcp: null
+ports_description:
+  9050/tcp: Core-only Tor SOCKS5 proxy for Bitcoin Stack Tracker; not published to the host
+  9051/tcp: Shared internal Tor SOCKS5 proxy for other Home Assistant add-ons; not published to the host
+  8099/tcp: Internal watchdog health endpoint; not published to the host
+watchdog: http://[HOST]:[PORT:8099]/health
+timeout: 20
+stage: stable
+backup: hot
+apparmor: true
+privileged:
+  - NET_ADMIN
+options:
+  log_level: info
+schema:
+  log_level: list(debug|info|warning|error)

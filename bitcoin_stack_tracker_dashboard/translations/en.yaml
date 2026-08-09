@@ -1,0 +1,4 @@
+configuration:
+  log_level:
+    name: Log level
+    description: Minimum severity for the technical application log.

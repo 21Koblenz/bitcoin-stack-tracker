@@ -1,0 +1,461 @@
+add_purchase:
+  name: Add Bitcoin purchase
+  description: Add a BTC purchase with known fiat cost basis to the local ledger.
+  fields: &id001
+    config_entry_id:
+      name: Portfolio
+      required: true
+      selector:
+        config_entry:
+          integration: bitcoin_stack_tracker
+    depot_id:
+      name: Depot ID
+      default: main
+      selector:
+        text: null
+    amount:
+      name: Amount
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 21000000
+          step: any
+          mode: box
+    amount_unit:
+      name: Amount unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+    price:
+      name: Price per BTC
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 1000000000
+          step: any
+          mode: box
+    currency:
+      name: Currency
+      required: true
+      example: EUR
+      selector:
+        text: null
+    fee:
+      name: Fee
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1000000
+          step: any
+          mode: box
+    timestamp:
+      name: Time
+      selector:
+        datetime: null
+    note:
+      name: Note
+      selector:
+        text: null
+add_sale:
+  name: Add Bitcoin sale
+  description: Add a BTC sale. FIFO is calculated inside the selected depot.
+  fields: *id001
+add_stack:
+  name: Add BTC without cost basis
+  description: Add existing BTC without assigning a purchase price.
+  fields:
+    config_entry_id:
+      name: Portfolio
+      required: true
+      selector:
+        config_entry:
+          integration: bitcoin_stack_tracker
+    depot_id:
+      name: Depot ID
+      default: main
+      selector:
+        text: null
+    amount:
+      name: Amount
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 21000000
+          step: any
+          mode: box
+    amount_unit:
+      name: Amount unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+    timestamp:
+      name: Time
+      selector:
+        datetime: null
+    note:
+      name: Note
+      selector:
+        text: null
+add_depot:
+  name: Add depot
+  description: Add another locally stored depot and create depot-specific sensors.
+  fields:
+    config_entry_id: &id002
+      name: Portfolio
+      required: true
+      selector:
+        config_entry:
+          integration: bitcoin_stack_tracker
+    depot_name:
+      name: Depot name
+      required: true
+      selector:
+        text: null
+delete_depot:
+  name: Delete depot
+  description: Delete an empty depot.
+  fields:
+    config_entry_id: *id002
+    depot_id:
+      name: Depot ID
+      required: true
+      selector:
+        text: null
+add_goal:
+  name: Add stacking goal
+  description: Add a stacking goal with its own fiat currency. Each goal creates five
+    sensors and additional statistics.
+  fields:
+    config_entry_id: *id002
+    goal_name:
+      name: Goal name
+      required: true
+      selector:
+        text: null
+    goal:
+      name: Goal amount
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 21000000
+          step: any
+          mode: box
+    goal_unit:
+      name: Goal unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+    depot_id:
+      name: Depot ID or all
+      default: all
+      selector:
+        text: null
+    currency:
+      name: Fiat currency
+      required: true
+      example: EUR
+      selector:
+        text: null
+update_goal:
+  name: Update stacking goal
+  description: Change goal name, amount, depot, and fiat currency.
+  fields:
+    config_entry_id: *id002
+    goal_id:
+      name: Goal ID
+      required: true
+      selector:
+        text: null
+    goal_name:
+      name: Goal name
+      selector:
+        text: null
+    goal:
+      name: Goal amount
+      selector:
+        number:
+          min: 1.0e-08
+          max: 21000000
+          step: any
+          mode: box
+    goal_unit:
+      name: Goal unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+    depot_id:
+      name: Depot ID or all
+      selector:
+        text: null
+    currency:
+      name: Fiat currency
+      selector:
+        text: null
+delete_goal:
+  name: Delete stacking goal
+  description: Delete one stacking goal.
+  fields:
+    config_entry_id: *id002
+    goal_id:
+      name: Goal ID
+      required: true
+      selector:
+        text: null
+delete_all_entries:
+  name: Delete all ledger entries
+  description: Permanently delete every local purchase, sale, expense, and stack entry.
+    The dashboard requires two confirmations first.
+  fields:
+    config_entry_id: *id002
+update_entry:
+  name: Update ledger entry
+  description: Correct an existing local ledger entry while keeping its stable ID. FIFO is validated before saving.
+  fields:
+    config_entry_id: *id002
+    ledger_entry_id:
+      name: Ledger entry ID
+      required: true
+      selector:
+        text: null
+    amount:
+      name: Amount
+      required: true
+      selector:
+        number:
+          min: 0.00000001
+          max: 21000000
+          step: any
+          mode: box
+    amount_unit:
+      name: Amount unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+    currency:
+      name: Fiat currency
+      selector:
+        text: null
+    price:
+      name: Price per BTC
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+    fee:
+      name: Fee
+      default: 0
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+    timestamp:
+      name: Timestamp
+      selector:
+        text: null
+    note:
+      name: Note
+      selector:
+        text: null
+    depot_id:
+      name: Depot ID
+      selector:
+        text: null
+delete_entry:
+  name: Delete ledger entry
+  description: Permanently delete one local purchase, sale, or stack entry by ID.
+  fields:
+    config_entry_id: *id002
+    ledger_entry_id:
+      name: Ledger entry ID
+      required: true
+      selector:
+        text: null
+set_goal:
+  name: Set first stacking goal
+  description: Backward-compatible action that updates the first goal or creates it.
+  fields:
+    config_entry_id: *id002
+    goal:
+      name: Goal
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 21000000
+          step: any
+          mode: box
+    goal_unit:
+      name: Goal unit
+      default: BTC
+      selector:
+        select:
+          options:
+          - BTC
+          - sats
+set_tax_settings:
+  name: Set holding-period overview
+  description: Store a freely configurable long-term threshold and note. This is not
+    tax advice or a tax return.
+  fields:
+    config_entry_id: *id002
+    long_term_days:
+      name: Days until long term
+      required: true
+      default: 365
+      selector:
+        number:
+          min: 1
+          max: 36500
+          step: 1
+          mode: box
+          unit_of_measurement: d
+    tax_note:
+      name: Custom note
+      selector:
+        text:
+          multiline: true
+export_ledger:
+  name: Export ledger as response
+  description: Return ledger, depot, goal, holding-period, and FIFO data as action
+    response data.
+  fields:
+    config_entry_id: *id002
+export_csv:
+  name: Export CSV and ZIP
+  description: Write transaction, FIFO-match, and holding-period overview CSV files
+    only temporarily through the dashboard download; no durable plaintext export is retained.
+  fields:
+    config_entry_id: *id002
+    delimiter:
+      name: CSV delimiter
+      default: ;
+      selector:
+        select:
+          options:
+          - label: Semicolon
+            value: ;
+          - label: Comma
+            value: ','
+sync_history:
+  name: Synchronize historical daily values
+  description: Download daily BTC prices, cache them locally, and import Home Assistant
+    long-term statistics.
+  fields:
+    config_entry_id: *id002
+list_portfolios:
+  name: List portfolios
+  description: Internal action used by the native Home Assistant Bitcoin panel.
+  fields: {}
+dashboard_data:
+  name: Dashboard data
+  description: Internal action used by the native Home Assistant Bitcoin panel.
+  fields:
+    config_entry_id: *id002
+    history_days:
+      name: History range
+      default: 365
+      selector:
+        number:
+          min: 0
+          max: 36500
+          step: 1
+          mode: box
+          unit_of_measurement: d
+list_users:
+  name: List portfolio users
+  description: Internal owner-only action used by the native Home Assistant Bitcoin panel to configure
+    the user allowlist.
+  fields:
+    config_entry_id: *id002
+set_allowed_users:
+  name: Set allowed portfolio users
+  description: Owner-only action. Only selected Home Assistant users may open the
+    portfolio; password mode additionally requires the shared master password.
+  fields:
+    config_entry_id: *id002
+    allowed_user_ids:
+      name: Allowed Home Assistant user IDs
+      required: true
+      selector:
+        object: null
+security_status:
+  name: Get portfolio security status
+  description: Return encryption and access status without returning portfolio values.
+  fields:
+    config_entry_id: *id002
+set_sensitive_sensors:
+  name: Set sensitive sensor compatibility mode
+  description: Owner-only action. Enabling this exposes portfolio values as normal
+    Home Assistant entities that other users may be able to read.
+  fields:
+    config_entry_id: *id002
+    enabled:
+      name: Publish sensitive sensors
+      required: true
+      default: false
+      selector:
+        boolean: null
+lock_vault:
+  name: Lock password vault
+  description: Lock the portfolio for the requesting Home Assistant user. Decrypted
+    data is removed from memory after the last user locks it.
+  fields:
+    config_entry_id: *id002
+purge_statistics:
+  name: Purge Bitcoin Stack Tracker statistics
+  description: Remove all external statistics tracked for this portfolio. This is
+    useful before testing, after changing privacy mode, or when removing old beta
+    data.
+  fields:
+    config_entry_id: *id002
+set_history_settings:
+  name: Set history settings
+  description: Enable or disable durable historical price synchronization. Disabling
+    never deletes the local cache.
+  fields:
+    config_entry_id: *id002
+    enabled:
+      name: History enabled
+      required: true
+      selector:
+        boolean: null
+    auto_sync:
+      name: Automatic daily sync
+      required: true
+      selector:
+        boolean: null
+bulk_import:
+  name: Import reviewed CSV transactions
+  description: Dashboard-internal atomic import of already reviewed Bitcoin purchases,
+    sales, and explicit BTC expenses. Duplicate rows are skipped and no original CSV
+    content is stored.
+  fields:
+    config_entry_id: *id002
+    transactions:
+      name: Reviewed transactions
+      required: true
+      description: Normalized purchase/sale/expense objects from the CSV review dialog.
+      selector:
+        object: null

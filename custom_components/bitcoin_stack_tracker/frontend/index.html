@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090a0d">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
+  <meta name="referrer" content="no-referrer">
+  <title>Bitcoin Stack Tracker · Einundzwanzig Koblenz</title>
+  <link rel="stylesheet" href="static/style-v021000-197f97c6.css">
+</head>
+<body>
+  <div class="topography" aria-hidden="true"></div>
+
+  <header class="app-header">
+    <div class="brand-lockup">
+      <img class="brand-koblenz-logo brand-color-logo" src="static/assets/bitcoin-stack-tracker-logo.png" alt="Bitcoin Stack Tracker · Einundzwanzig Koblenz">
+      <div class="brand-copy">
+        <strong>Bitcoin Stack Tracker</strong>
+        <span>Koblenz · Only Bitcoin</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <select id="portfolioSelect" aria-label="Portfolio"></select>
+      <span id="networkBadge" class="network-badge is-checking" title="Only-Tor-Status" aria-live="polite"><span class="network-dot"></span><span id="networkBadgeText">Tor-Verbindung wird aufgebaut</span></span>
+      <span id="currentUser" class="current-user" aria-label="Home Assistant user"><span id="currentUserAvatar" class="current-user-avatar" aria-hidden="true">?</span><span id="currentUserName" class="current-user-name">–</span></span>
+      <button id="unitButton" class="ghost compact" type="button" title="BTC/Sats">BTC</button>
+      <button id="privacyButton" class="ghost compact privacy-quick-button" type="button" aria-pressed="false" title="Diskret-Modus einschalten" aria-label="Diskret-Modus einschalten"><span aria-hidden="true">🕶</span></button>
+      <button id="themeButton" class="ghost compact" type="button" title="Hell/Dunkel">☀</button>
+      <button id="langButton" class="ghost compact" type="button">DE/EN</button>
+      <button id="refreshButton" class="ghost compact" type="button" title="Aktualisieren">↻</button>
+      <button id="lockButton" class="danger compact hidden" type="button" data-i18n="lockVault">Sperren</button>
+    </div>
+  </header>
+
+  <div id="fatal" class="fatal hidden"></div>
+
+  <section id="vaultGate" class="vault-gate hidden">
+    <div class="vault-card">
+      <img class="vault-logo" src="static/assets/einundzwanzig-koblenz-logo.svg" alt="Einundzwanzig Koblenz">
+      <div class="vault-icon">🔐</div>
+      <span class="kicker">AES-256-GCM · ARGON2ID · ENVELOPE V3</span>
+      <h1 data-i18n="vaultLocked">Bitcoin-Tresor gesperrt</h1>
+      <p id="vaultGateText"></p>
+      <form id="unlockForm" class="action-stack">
+        <label><span data-i18n="masterPassword">Master-Passwort</span><input name="password" type="password" minlength="1" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>
+        <button class="primary" type="submit" data-i18n="unlockVault">Tresor entsperren</button>
+      </form>
+      <p class="storage-note" data-i18n="unlockHardened">Nativer Core-Geheimnis-Pfad: Master- und Backup-Passwörter gehen direkt vom Browser an Home Assistant Core. Das Tor-/Netzwerk-Add-on erhält keine Tresor-Passwörter und keine Portfolio-Dateien.</p>
+      <p class="danger-note" data-i18n="passwordLoss">Das Passwort wird nicht gespeichert.</p>
+    </div>
+  </section>
+
+  <main id="app" class="app-shell hidden">
+    <nav class="tabs" aria-label="Bereiche">
+      <button class="active" data-tab="overview" type="button" data-i18n="overview">Übersicht</button>
+      <button data-tab="ledger" type="button" data-i18n="ledger">Buchungen</button>
+      <button data-tab="structure" type="button" data-i18n="structure">Depots & Ziele</button>
+      <button data-tab="tax" type="button" data-i18n="tax">Haltezeit</button>
+      <button data-tab="settings" type="button" data-i18n="settings">Export & Daten</button>
+      <button data-tab="security" type="button" data-i18n="security">Zugriff & Verschlüsselung</button>
+      <button data-tab="logs" type="button" data-i18n="logs">App-Log</button>
+    </nav>
+
+    <section id="tab-overview" class="tab active">
+      <section class="hero">
+        <div>
+          <span class="eyebrow">BITCOIN ONLY · LOCAL FIRST</span>
+          <h1><span class="hero-bitcoin">Bitcoin</span><span class="hero-stack-title">Stack Tracker</span></h1>
+          <p id="heroText" class="hero-copy"></p>
+          <div id="bitcoinNetworkStrip" class="bitcoin-network-strip" aria-live="polite">
+            <div class="bitcoin-network-strip-head"><span class="kicker" data-i18n="bitcoinNetwork">BITCOIN NETZWERK</span><small id="bitcoinNetworkSource">–</small></div>
+            <div class="bitcoin-network-metrics">
+              <article><span data-i18n="blockHeight">Blockhöhe</span><strong id="heroBlockHeight">–</strong></article>
+              <article><span data-i18n="moscowTime">Moscow Time</span><strong id="heroMoscowTime">–</strong><small id="heroMoscowUnit">sats / EUR</small></article>
+              <article><span data-i18n="halvingCountdown">Halving-Countdown</span><strong id="heroHalvingCountdown">–</strong><small id="heroHalvingBlocks">–</small></article>
+              <article><span data-i18n="estimatedHalving">Halving geschätzt</span><strong id="heroHalvingEstimate">–</strong><small id="heroHalvingHeight">–</small></article>
+            </div>
+          </div>
+        </div>
+        <div class="hero-orbit" aria-hidden="true">
+          <div class="coin"><span class="bitcoin-mark">₿</span></div>
+          <div class="orbit-card"><span data-i18n="longTerm">Langzeit</span><strong id="heroLong">–</strong></div>
+          <div id="heroGoalCard" class="orbit-card second"><span data-i18n="nextMilestone">Nächstes Ziel</span><strong id="heroGoal">–</strong></div>
+        </div>
+      </section>
+
+      <div class="summary-total-head"><div><span class="kicker" data-i18n="allDepotsCombined">Alle Depots zusammen</span><h2 data-i18n="totalDepot">Gesamtdepot</h2></div><span class="badge" data-i18n="totalStack">Gesamtstack</span></div>
+      <div id="summaryCards" class="card-grid"></div>
+
+      <section class="panel chart-panel">
+        <div class="panel-head chart-head">
+          <div><span class="kicker" data-i18n="dailyHistory">TAGESWERTE</span><h2 data-i18n="chartTitle">Verlauf</h2></div>
+          <div class="chart-head-actions">
+            <button id="refreshChartPrices" class="chart-refresh-button" type="button" title="Kurse aktualisieren"><span aria-hidden="true">↻</span><span data-i18n="refreshChartPrices">Kurse aktualisieren</span></button>
+            <button id="chartMilestonesButton" class="chart-marker-toggle is-active" type="button" aria-pressed="true" title="Meilensteine"><span aria-hidden="true">★</span><span data-i18n="chartMilestones">Meilensteine</span></button>
+            <button id="chartHalvingsButton" class="chart-marker-toggle is-active" type="button" aria-pressed="true" title="Halvings"><span aria-hidden="true">₿</span><span data-i18n="chartHalvings">Halvings</span></button>
+            <button id="chartScaleButton" class="chart-scale-button" type="button" title="Skala: Linear" aria-label="Skala: Linear"><span class="chart-scale-icon" aria-hidden="true">↕</span><span id="chartScaleText">Linear</span></button>
+          </div>
+        </div>
+        <div class="chart-controls">
+          <label id="opacityControl" class="opacity-control"><span><span data-i18n="overlayOpacity">Überlagerung</span> <output id="overlayOpacityValue" for="overlayOpacity">55 %</output></span><input id="overlayOpacity" type="range" min="0" max="100" step="5" value="55"></label>
+          <label class="chart-view-control"><span data-i18n="chartView">Ansicht</span><select id="chartMode">
+            <option value="price" data-i18n="btcPrice">Bitcoin-Kurs</option>
+            <option value="portfolio" data-i18n="portfolioValue">Portfoliowert</option>
+            <option value="stack" data-i18n="stackHistory">Stack-Verlauf</option>
+            <option value="pnl" data-i18n="profitLossHistory">Gesamtgewinn/-verlust</option>
+            <option value="price_portfolio" data-i18n="pricePortfolioOverlay">Kurs + Portfoliowert</option>
+            <option value="price_stack" data-i18n="priceStackOverlay">Kurs + Stack</option>
+            <option value="price_pnl" data-i18n="priceProfitLossOverlay">Kurs + P/L</option>
+            <option value="portfolio_pnl" data-i18n="portfolioProfitLossOverlay">Portfoliowert + P/L</option>
+            <option value="cost_pnl" data-i18n="costProfitLossOverlay">Einstand + P/L</option>
+          </select></label>
+          <label><span data-i18n="chartCurrency">Chartwährung</span><select id="chartCurrency"></select></label>
+          <label><span data-i18n="period">Zeitraum</span><select id="historyRange">
+            <option value="1" data-i18n="today">Heute</option>
+            <option value="30">30 Tage</option>
+            <option value="90">90 Tage</option>
+            <option value="365">1 Jahr</option>
+            <option value="ytd" data-i18n="yearToDate">Jahresanfang</option>
+            <option value="1095">3 Jahre</option>
+            <option value="1825">5 Jahre</option>
+            <option value="3650">10 Jahre</option>
+            <option value="first_purchase" data-i18n="firstPurchaseRange">Seit erstem Kauf</option>
+            <option value="max" data-i18n="maxRange">Max</option>
+          </select></label>
+        </div>
+        <div id="historyStatus" class="history-inline"></div>
+        <div id="chartLegend" class="chart-legend" aria-label="Chart-Legende"></div>
+        <div id="priceChart" class="chart"><p data-i18n="noData">Keine Daten vorhanden</p></div>
+        <div id="chartTooltip" class="chart-tooltip hidden"></div>
+        <div class="performance-head"><span class="kicker" data-i18n="performance">PERFORMANCE</span><small data-i18n="performanceNote">Portfoliowert ist die Marktwertänderung; Buchgewinn/-verlust und realisierter Gewinn/Verlust werden getrennt ausgewiesen.</small></div>
+        <div id="performanceSummary" class="performance-grid"></div>
+        <div id="returnAnalytics" class="return-analytics"></div>
+        <div class="analysis-split">
+          <section class="analysis-block"><div class="analysis-head"><span class="kicker">DCA</span><h3 data-i18n="dcaAnalysis">DCA-Auswertung</h3></div><div id="dcaAnalytics" class="analysis-grid"></div><p id="dcaNote" class="storage-note"></p></section>
+          <section class="analysis-block"><div class="analysis-head"><span class="kicker">DRAWDOWN</span><h3 data-i18n="drawdownAnalysis">Drawdown im Zeitraum</h3></div><div id="drawdownAnalytics" class="analysis-grid"></div><p class="storage-note" data-i18n="drawdownHint">Der Portfolio-Drawdown basiert auf einem cashflowbereinigten TWR-Index.</p></section>
+        </div>
+      </section>
+
+      <section id="milestonesPanel" class="panel">
+        <div class="panel-head"><div><span class="kicker">STACKING</span><h2 data-i18n="milestones">Meilensteine</h2></div></div>
+        <div id="goalCards" class="goal-grid"></div>
+      </section>
+    </section>
+
+    <section id="tab-ledger" class="tab">
+      <section class="panel csv-import-panel">
+        <div class="panel-head"><div><span class="kicker">CSV · REVIEW FIRST</span><h2 data-i18n="csvImport">CSV-Buchungen importieren</h2></div></div>
+        <form id="csvImportForm" class="csv-import-form">
+          <div class="file-field"><span data-i18n="transactionFile">Transaktionsdatei</span><span class="file-picker"><input id="csvFileInput" name="file" class="file-input-hidden" type="file" required><label for="csvFileInput" class="secondary file-picker-button" data-i18n="chooseCsvFile">CSV auswählen</label><span id="csvFileName" class="file-picker-name" data-i18n="noFileSelected">Keine Datei ausgewählt</span></span></div>
+          <label><span data-i18n="targetDepot">Zieldepot</span><select id="csvDefaultDepot" name="depot_id"></select></label>
+          <button id="csvPreviewButton" class="primary" type="submit" data-i18n="checkCsv">CSV prüfen</button>
+        </form>
+        <p class="storage-note" data-i18n="csvPrivacyHint">Die Originaldatei wird nur im Arbeitsspeicher gelesen und nie im Add-on gespeichert. Sensible Zusatzfelder sind standardmäßig abgewählt und werden nur nach aktiver Auswahl in die Notiz übernommen.</p>
+      </section>
+      <div class="split">
+        <section class="panel sticky-panel">
+          <div class="panel-head"><div><span class="kicker">LOCAL LEDGER</span><h2 id="transactionFormTitle" data-i18n="newEntry">Neue Buchung</h2></div></div>
+          <form id="transactionForm" class="form-grid">
+            <label><span data-i18n="type">Art</span><select name="type"><option value="purchase" data-i18n="purchase">Kauf</option><option value="sale" data-i18n="sale">Verkauf</option><option value="stack">Bestand ohne Einstand</option><option value="expense" data-i18n="expense" disabled>Ausgabe</option></select></label>
+            <label><span data-i18n="depot">Depot</span><select name="depot_id"></select></label>
+            <label><span data-i18n="amount">Menge</span><input name="amount" type="number" min="0" step="any" required></label>
+            <label><span data-i18n="unit">Einheit</span><select name="amount_unit"><option>BTC</option><option>sats</option></select></label>
+            <label class="priced"><span data-i18n="currency">Fiatwährung</span><select name="currency"></select></label>
+            <label class="priced"><span data-i18n="pricePerBtc">Preis pro BTC</span><input name="price" type="number" min="0" step="any"></label>
+            <label class="priced"><span id="transactionFiatTotalLabel" data-i18n="fiatTotal">Fiat-Gesamtbetrag</span><input name="fiat_total" type="number" min="0" step="0.01" inputmode="decimal"></label>
+            <label class="priced"><span data-i18n="fee">Gebühr</span><input name="fee" type="number" min="0" step="any" value="0"></label>
+            <div id="transactionCalcStatus" class="storage-note wide transaction-calc-status" aria-live="polite"></div>
+            <label><span data-i18n="dateTime">Datum / Uhrzeit</span><input name="timestamp" type="datetime-local" required></label>
+            <label class="wide"><span data-i18n="note">Notiz</span><input name="note" maxlength="500"></label>
+            <div class="transaction-form-actions wide"><button id="transactionCancelEdit" class="ghost hidden" type="button" data-i18n="cancelEdit">Bearbeiten abbrechen</button><button id="transactionSubmit" class="primary" type="submit" data-i18n="saveEntry">Buchung speichern</button></div>
+          </form>
+        </section>
+        <section class="panel table-panel">
+          <div class="panel-head ledger-panel-head"><div><span class="kicker">FIFO</span><h2 data-i18n="ledger">Buchungen</h2></div><div class="ledger-panel-actions"><input id="ledgerSearch" class="search" placeholder="Suchen"><label class="ledger-period-label"><span data-i18n="ledgerPeriodFilter">Buchungszeitraum</span><select id="ledgerPeriodFilter" aria-label="Buchungszeitraum"><option value="all">Alle Buchungen</option></select></label><button id="deleteAllEntries" class="danger" type="button" data-i18n="deleteAllEntries">Alle Buchungen löschen</button></div></div>
+          <div class="table-wrap ledger-table-wrap"><table><thead><tr><th data-i18n="date">Datum</th><th data-i18n="type">Art</th><th id="ledgerAmountHead">BTC</th><th data-i18n="price">Preis</th><th data-i18n="fiatTotal">Fiat-Gesamtbetrag</th><th data-i18n="fee">Gebühr</th><th data-i18n="depot">Depot</th><th data-i18n="holding">Haltezeit</th><th></th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div id="ledgerCards" class="ledger-mobile-list"></div><nav id="ledgerPagination" class="ledger-pagination" aria-label="Buchungsseiten"></nav>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-structure" class="tab">
+      <div class="split equal">
+        <section class="panel">
+          <div class="panel-head"><div><span class="kicker">SEPARATION</span><h2 data-i18n="depots">Depots</h2></div></div>
+          <div id="aggregateDepotSummary" class="aggregate-depot-summary" aria-live="polite"></div>
+          <form id="depotForm" class="inline-form"><input name="depot_name" required placeholder="Depotname"><button class="primary" data-i18n="add">Hinzufügen</button></form>
+          <div id="depotList" class="list"></div>
+        </section>
+        <section id="goalsStructurePanel" class="panel"><div class="panel-head"><div><span class="kicker">MILESTONES</span><h2 data-i18n="goals">Stacking-Ziele</h2></div></div><form id="goalForm" class="form-grid compact"><label><span data-i18n="name">Name</span><input name="goal_name" required></label><label><span data-i18n="target">Ziel</span><input name="goal" type="number" min="0" step="any" required></label><label><span data-i18n="unit">Einheit</span><select name="goal_unit"><option>BTC</option><option>sats</option></select></label><label><span data-i18n="depot">Depot</span><select name="depot_id"></select></label><label><span data-i18n="currency">Fiatwährung</span><select name="currency"></select></label><button class="primary wide" data-i18n="addGoal">Ziel hinzufügen</button></form><p class="storage-note" data-i18n="goalStorage">Mehr Ziele bedeuten mehr lokale Daten.</p><div id="goalEditor" class="list"></div></section>
+      </div>
+    </section>
+
+    <section id="tab-tax" class="tab">
+      <div class="tax-callout"><strong data-i18n="overviewOnly">Nur Übersicht</strong><p id="taxDisclaimer"></p></div>
+      <div class="split equal">
+        <section class="panel"><div class="panel-head"><div><span class="kicker">CONFIGURABLE</span><h2 data-i18n="holdingRule">Haltezeit-Regel</h2></div></div><form id="taxForm" class="form-grid"><label><span data-i18n="days">Tage bis Langzeit</span><input name="long_term_days" type="number" min="1" max="36500" required></label><label class="wide"><span data-i18n="customNote">Eigene Notiz</span><textarea name="tax_note" rows="5"></textarea></label><button class="primary wide" data-i18n="saveRule">Regel speichern</button></form></section>
+        <section class="panel"><div class="panel-head"><div><span class="kicker">OPEN LOTS</span><h2 data-i18n="currentClassification">Aktuelle Einordnung</h2></div></div><div id="taxSummary" class="tax-stats"></div></section>
+      </div>
+      <section class="panel table-panel"><div class="panel-head"><div><span class="kicker">FIFO SALES</span><h2 data-i18n="saleOverview">Verkaufsübersicht</h2></div></div><div id="fifoSaleSummary" class="fifo-sale-summary"></div><div class="table-wrap fifo-table-wrap"><table><thead><tr><th data-i18n="sale">Verkauf</th><th id="fifoAmountHead">BTC</th><th data-i18n="purchasePriceThen">Kaufkurs damals</th><th data-i18n="fifoCostBasis">FIFO-Einstand</th><th data-i18n="salePrice">Verkaufskurs</th><th data-i18n="saleProceeds">Verkaufserlös</th><th data-i18n="gain">Gewinn/Verlust</th><th data-i18n="returnPercent">Rendite</th></tr></thead><tbody id="fifoBody"></tbody></table></div><div id="fifoCards" class="ledger-mobile-list"></div><nav id="fifoPagination" class="ledger-pagination" aria-label="Verkaufsseiten"></nav></section>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <section class="panel network-panel">
+        <div class="panel-head"><div><span class="kicker">ONLY TOR · FAIL CLOSED</span><h2 data-i18n="networkSecurity">Tor-Killswitch & Leak-Test</h2></div><div class="panel-actions"><button id="newTorIdentityButton" class="ghost" type="button" data-i18n="newTorIdentity">Neue Tor-Verbindung</button><button id="leakTestButton" class="secondary" type="button" data-i18n="runLeakTest">Neue Tor-IP & Leak-Test</button></div></div>
+        <div id="networkAlert" class="network-alert"></div>
+        <div id="networkStatusGrid" class="network-status-grid"></div>
+        <div id="leakTestResult" class="result" aria-live="polite"></div>
+        <div class="tor-rotation-settings">
+          <label class="switch-row"><input id="torRotationEnabled" type="checkbox"><span><strong data-i18n="automaticTorRotation">Tor-Adresse automatisch wechseln</strong><small data-i18n="automaticTorRotationHint">Fordert regelmäßig neue Tor-Circuits an. Eine andere Exit-IP kann nicht garantiert werden.</small></span></label>
+          <label><span data-i18n="rotationInterval">Wechselintervall</span><select id="torRotationInterval"><option value="10">10 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="180">3 h</option><option value="360">6 h</option><option value="720">12 h</option><option value="1440">24 h</option></select></label>
+          <button id="saveTorRotationButton" class="secondary" type="button" data-i18n="saveTorRotation">Tor-Wechsel speichern</button>
+        </div>
+        <div id="torRotationResult" class="result" aria-live="polite"></div>
+        <p class="storage-note" data-i18n="leakTestHint">Der Test sendet keine direkte öffentliche Prüfverbindung. Er prüft Firewallregeln, Blockierungszähler, SOCKS5, Remote-DNS und die Tor-Ausgangsverbindung.</p>
+      </section>
+      <section class="panel connections-panel">
+        <div class="panel-head"><div><span class="kicker">LIVE NETWORK MAP</span><h2 data-i18n="liveConnections">Live-Verbindungen & Datenquellen</h2></div><button id="refreshConnectionsButton" class="secondary" type="button" data-i18n="refreshConnections">Verbindungen aktualisieren</button></div>
+        <p class="storage-note" data-i18n="liveConnectionsHint">Zeigt konfigurierte Datenquellen, den vorgesehenen Netzwerkweg und zuletzt beziehungsweise aktuell beobachtete Verbindungen. Nur für den Portfolio-Eigentümer sichtbar.</p>
+        <div id="connectionRefreshResult" class="result" aria-live="polite"></div>
+        <div id="connectionSummary" class="connection-summary"></div>
+        <div id="connectionInventory" class="connection-inventory"></div>
+      </section>
+      <section class="panel discreet-panel">
+        <div class="panel-head"><div><span class="kicker">PRIVACY DISPLAY</span><h2 data-i18n="discreetMode">Diskret-Modus</h2></div></div>
+        <label class="switch-row"><input id="discreetMode" type="checkbox"><span><strong data-i18n="hideSensitiveValues">Finanzwerte mit •••• ausblenden</strong><small data-i18n="discreetModeHint">Gilt nur für diesen Browser beziehungsweise dieses Gerät. Diagrammformen bleiben sichtbar, Zahlen werden verborgen.</small></span></label>
+      </section>
+      <section class="panel fiat-free-panel">
+        <div class="panel-head"><div><span class="kicker">BTC / SATS ONLY</span><h2 data-i18n="fiatFreeMode">Fiat-freier Modus</h2></div></div>
+        <label class="switch-row"><input id="fiatFreeMode" type="checkbox"><span><strong data-i18n="fiatFreeValues">Nur BTC und Sats anzeigen</strong><small data-i18n="fiatFreeHint">Blendet Fiatwerte in Übersichten, Buchungen und Charts aus. Eingabefelder für Käufe bleiben erhalten.</small></span></label>
+        <label class="switch-row nested-switch"><input id="satsPerFiatMode" type="checkbox"><span><strong data-i18n="showSatsPerFiat">Kurs als Sats pro Fiat anzeigen</strong><small data-i18n="showSatsPerFiatHint">Zeigt optional, wie viele Sats eine Einheit der gewählten Währung kauft.</small></span></label>
+      </section>
+      <div class="split equal">
+        <section class="panel">
+          <div class="panel-head"><div><span class="kicker" data-i18n="dailyDataCache">TAGESDATEN-CACHE</span><h2 data-i18n="historyAndExport">Historie & Export</h2></div></div>
+          <form id="historySettingsForm" class="action-stack">
+            <label class="switch-row"><input id="historyEnabled" name="history_enabled" type="checkbox"><span><strong data-i18n="enableHistory">Historische Daten aktivieren</strong><small data-i18n="historyCacheHint">Gespeicherte Tageskurse bleiben auch nach dem Deaktivieren erhalten.</small></span></label>
+            <label class="switch-row"><input id="historyAutoSync" name="history_auto_sync" type="checkbox"><span><strong data-i18n="autoSync">Täglich automatisch ergänzen</strong><small data-i18n="incrementalHint">Nach dem ersten vollständigen Abruf werden nur neue Tage mit kleinem Überlappungsfenster geladen.</small></span></label>
+            <label><span data-i18n="torProxy">Integrierter Tor-SOCKS5-Proxy</span><input id="historyTorProxy" name="history_tor_proxy" type="text" value="socks5://20c000e9-bitcoin-stack-tracker-dashboard:9050" autocomplete="off" readonly required><small data-i18n="torProxyHint">Tor wird mit dem Add-on installiert. Alle öffentlichen Live- und Historienabfragen laufen darüber; nur eine eigene private lokale Node wird direkt angesprochen.</small></label>
+            <button id="saveHistorySettingsButton" class="secondary" type="button" data-i18n="saveHistorySettings">Historieneinstellungen speichern</button>
+          </form>
+          <div id="historySaveResult" class="result" aria-live="polite"></div>
+          <div id="historyDetails" class="history-details"></div>
+          <p class="storage-note history-count-hint" data-i18n="historyCountHint">Ein Datenpunkt entspricht einem gespeicherten Tageswert für die jeweilige Währung – nicht dem Bitcoin-Preis.</p>
+          <div class="action-stack"><button id="syncButton" class="primary" data-i18n="syncHistory">Historische Tageswerte synchronisieren</button><button id="exportButton" class="secondary" data-i18n="createExport">CSV-/ZIP-Export erstellen</button><div id="actionResult" class="result"></div></div>
+        </section>
+        <section class="panel"><div class="panel-head"><div><span class="kicker">ENCRYPTED BACKUP</span><h2 data-i18n="backupRestore">Sicherung & Wiederherstellung</h2></div></div>
+          <div class="backup-health-block"><div class="analysis-head"><span class="kicker">BACKUP HEALTH</span><h3 data-i18n="backupHealth">Backup-Gesundheit</h3></div><div id="backupHealthStatus" class="backup-health-grid"><p class="storage-note">–</p></div>
+            <div class="backup-health-settings"><label><span data-i18n="backupAgeLimit">Backup-Warnung nach</span><select id="backupWarningDays"><option value="7">7</option><option value="14">14</option><option value="30">30</option><option value="60">60</option><option value="90">90</option></select><small data-i18n="daysUnit">Tagen</small></label><label><span data-i18n="restoreTestAgeLimit">Test-Erinnerung nach</span><select id="restoreTestWarningDays"><option value="30">30</option><option value="90">90</option><option value="180">180</option><option value="365">365</option></select><small data-i18n="daysUnit">Tagen</small></label></div>
+            <div class="panel-actions backup-health-actions"><button id="saveBackupHealth" class="secondary" type="button" data-i18n="save">Speichern</button><button id="markRestoreTest" class="ghost" type="button" data-i18n="markRestoreTest">Wiederherstellungstest als erledigt markieren</button></div><div id="backupHealthResult" class="result" aria-live="polite"></div>
+          </div>
+          <p class="danger-note seed-warning" data-i18n="neverStoreSeed">Seed-Wörter, Passphrases und private Schlüssel niemals in dieser App oder im Backup speichern.</p>
+          <form id="backupForm" class="action-stack"><label><span data-i18n="backupPassword">Backup-Passwort</span><input name="password" type="password" minlength="16" autocomplete="off" required></label><label><span data-i18n="repeatPassword">Passwort wiederholen</span><input name="password_confirm" type="password" minlength="16" autocomplete="off" required></label><button class="primary" type="submit" data-i18n="createBackup">Verschlüsseltes Backup herunterladen</button></form>
+          <hr class="soft-line">
+          <form id="restoreForm" class="action-stack"><div class="file-field"><span data-i18n="backupFile">Backup-Datei</span><span class="file-picker"><input id="backupFileInput" name="backup" class="file-input-hidden" type="file" accept=".bstbackup,application/octet-stream" required><label for="backupFileInput" class="secondary file-picker-button" data-i18n="chooseBackupFile">Datei auswählen</label><span id="backupFileName" class="file-picker-name" data-i18n="noFileSelected">Keine Datei ausgewählt</span></span></div><label><span data-i18n="backupPassword">Backup-Passwort</span><input name="password" type="password" minlength="1" autocomplete="off" required></label><button class="secondary" type="submit" data-i18n="restoreBackup">Backup importieren</button></form>
+          <p class="danger-note" data-i18n="restoreWarning">Der Import ersetzt die Daten dieses Portfolios.</p><div id="backupResult" class="result"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-security" class="tab">
+      <div class="security-callout"><div class="lock-mark">🔐</div><div><span class="kicker">AES-256-GCM · ARGON2ID · ENVELOPE V3 128 MiB</span><h2 data-i18n="securityTitle">Passwort-Tresor und Familienzugriff</h2><p data-i18n="securityIntro">Nur ausgewählte Home-Assistant-Nutzer erhalten Zugriff.</p></div></div>
+      <div class="split equal">
+        <section class="panel"><div class="panel-head"><div><span class="kicker">ALLOWLIST</span><h2 data-i18n="allowedUsers">Erlaubte Nutzer</h2></div></div><p id="securityOwnerNote" class="storage-note"></p><form id="accessForm"><div id="userAccessList" class="user-access-list"></div><button id="saveAccessButton" class="primary" type="submit" data-i18n="saveAccess">Zugriff speichern</button></form><div id="securityReadOnly" class="result hidden"></div></section>
+        <section class="panel"><div class="panel-head"><div><span class="kicker">PASSWORD VAULT</span><h2 data-i18n="encryptionSettings">Verschlüsselung</h2></div></div><div id="encryptionStatus" class="tax-stats"></div>
+          <div id="autoLockBlock" class="vault-session-settings">
+            <div class="analysis-head"><span class="kicker">SESSION HARDENING</span><h3 data-i18n="autoLock">Auto-Lock</h3></div>
+            <label><span data-i18n="autoLockAfter">Bei Inaktivität sperren nach</span><select id="autoLockMinutes"><option value="0" data-i18n="disabled">Deaktiviert</option><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option><option value="120">120 min</option></select></label>
+            <p id="autoLockStatus" class="storage-note"></p>
+            <p class="danger-note" data-i18n="browserSecretWarning">Das Master-Passwort niemals als Seed-, BIP39-, xprv-, Wallet- oder Nostr-Schlüssel wiederverwenden. Ein kompromittierter Browser kann eingegebene Geheimnisse auslesen.</p>
+          </div>
+          <form id="enableEncryptionForm" class="action-stack hidden"><label><span data-i18n="newMasterPassword">Neues Master-Passwort</span><input name="password" type="password" minlength="16" autocomplete="off" required></label><label><span data-i18n="repeatPassword">Passwort wiederholen</span><input name="password_confirm" type="password" minlength="16" autocomplete="off" required></label><button class="primary" type="submit" data-i18n="enableEncryption">Verschlüsselung aktivieren</button></form>
+          <form id="changePasswordForm" class="action-stack hidden"><label><span data-i18n="currentMasterPassword">Aktuelles Master-Passwort</span><input name="current_password" type="password" minlength="1" autocomplete="off" autocapitalize="none" spellcheck="false" required></label><label><span data-i18n="newMasterPassword">Neues Master-Passwort</span><input name="new_password" type="password" minlength="16" autocomplete="off" required></label><label><span data-i18n="repeatPassword">Passwort wiederholen</span><input name="new_password_confirm" type="password" minlength="16" autocomplete="off" required></label><button class="secondary" type="submit" data-i18n="changePassword">Passwort ändern</button></form>
+          <button id="disableEncryptionButton" class="danger hidden" type="button" data-i18n="disableEncryption">Verschlüsselung deaktivieren</button><p class="danger-note" data-i18n="encryptionChoice">Ohne Verschlüsselung liegt das Kaufbuch lokal im Klartext.</p><hr class="soft-line">
+          <div class="panel-head"><div><span class="kicker">PRIVACY MODE</span><h2 data-i18n="entityPrivacy">HA-Sensoren und Recorder</h2></div></div><label class="unsafe-toggle"><input id="sensitiveSensors" type="checkbox"><span><strong data-i18n="exposeSensors">Sensible HA-Sensoren veröffentlichen</strong><small data-i18n="sensorWarning">Unsicher: Normale HA-Nutzer können Entity-Zustände und Recorder-Historie sehen.</small></span></label><button id="saveSensorMode" class="secondary" type="button" data-i18n="saveSensorMode">Sensormodus speichern</button><p class="danger-note" data-i18n="adminLimit">Ein Administrator mit Root-Zugriff bleibt technisch vertrauenswürdig.</p>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab"><section class="panel"><div class="panel-head"><div><span class="kicker">OWNER ONLY · NO PASSWORDS</span><h2 data-i18n="appLog">App-Log</h2></div><div class="filters"><button id="refreshLogs" class="secondary" type="button" data-i18n="refreshLogs">Log aktualisieren</button><button id="downloadLogs" class="ghost" type="button" data-i18n="downloadLogs">Log herunterladen</button><button id="clearLogs" class="danger" type="button" data-i18n="clearLogs">Log leeren</button></div></div><p class="storage-note" data-i18n="logPrivacy">Das Log enthält nur technische Metadaten.</p><pre id="appLogOutput" class="log-output">–</pre></section></section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-brand" aria-label="Einundzwanzig Koblenz">
+      <img class="footer-koblenz-logo" src="static/assets/einundzwanzig-koblenz-logo-footer.svg" alt="Einundzwanzig Koblenz">
+    </div>
+    <div class="footer-v4v">
+      <span class="kicker">VALUE FOR VALUE</span>
+      <h2 data-i18n="support">Unterstützen</h2>
+      <p data-i18n="v4vText">Die Anwendung ist offen, lokal und Bitcoin-only. Wer einen Wert darin sieht, kann Sats zurückgeben.</p>
+      <a class="lightning-address" href="lightning:creamowl25@primal.net">⚡ creamowl25@primal.net</a>
+      <small>created by <strong>Einundzwanzig Koblenz</strong> · Open Source · Only Bitcoin</small>
+    </div>
+    <a class="footer-qr-link" href="lightning:creamowl25@primal.net" aria-label="Lightning QR-Code">
+      <img class="theme-dark-only footer-lightning-qr" src="static/assets/lightning-qr-white.svg" alt="Lightning QR-Code für Dark Mode">
+      <img class="theme-light-only footer-lightning-qr" src="static/assets/lightning-qr-black.svg" alt="Lightning QR-Code für Light Mode">
+    </a>
+  </footer>
+  <div id="csvImportModal" class="import-modal hidden" role="dialog" aria-modal="true" aria-labelledby="csvImportTitle">
+    <div class="import-modal-card">
+      <div class="import-modal-head">
+        <div><span class="kicker">CSV PREVIEW · LOCAL ONLY</span><h2 id="csvImportTitle" data-i18n="reviewCsv">Erkannte Buchungen prüfen</h2><p id="csvImportSummary" class="storage-note"></p></div>
+        <button id="csvImportClose" class="ghost compact" type="button" aria-label="Schließen">×</button>
+      </div>
+      <div id="csvImportWarnings" class="import-warning-list"></div>
+      <section id="csvOptionalFields" class="import-optional-fields hidden" aria-labelledby="csvOptionalFieldsTitle">
+        <div class="import-optional-fields-head">
+          <div><strong id="csvOptionalFieldsTitle" data-i18n="optionalFieldsTitle">Zusätzliche CSV-Felder in die Notiz übernehmen</strong><small data-i18n="optionalFieldsHint">Standardmäßig ist alles abgewählt. Ausgewählte Werte werden nur an die Notiz der jeweiligen Buchung angehängt.</small></div>
+          <button id="csvOptionalFieldsClear" class="ghost compact" type="button" data-i18n="optionalFieldsClear">Alle Zusatzfelder abwählen</button>
+        </div>
+        <div id="csvOptionalFieldChoices" class="import-optional-field-choices"></div>
+      </section>
+      <div class="import-toolbar"><button id="csvSelectValid" class="secondary" type="button" data-i18n="selectValid">Gültige auswählen</button><button id="csvDeselectAll" class="ghost" type="button" data-i18n="deselectAll">Alle abwählen</button><span id="csvSelectedCount" class="storage-note"></span></div>
+      <div class="table-wrap import-table-wrap"><table class="import-table"><thead><tr><th>✓</th><th data-i18n="sourceRow">Quelle</th><th data-i18n="type">Art</th><th data-i18n="dateTime">Datum / Uhrzeit</th><th data-i18n="amountUnit">BTC / Sats</th><th data-i18n="currency">Währung</th><th data-i18n="pricePerBtc">Preis pro BTC</th><th data-i18n="fiatTotal">Fiat-Gesamtbetrag</th><th data-i18n="fee">Gebühr</th><th data-i18n="depot">Depot</th><th data-i18n="note">Notiz</th><th data-i18n="status">Status</th><th></th></tr></thead><tbody id="csvImportBody"></tbody></table></div>
+      <div class="import-modal-actions">
+        <div class="import-scrollbar-panel">
+          <button id="csvScrollLeft" class="secondary compact import-scroll-button" type="button" aria-label="Tabelle nach links" title="Tabelle nach links">←</button>
+          <label class="import-horizontal-control"><span data-i18n="tableHorizontalScroll">Tabelle waagerecht verschieben</span><input id="csvHorizontalScroll" type="range" min="0" max="0" value="0" step="1"></label>
+          <button id="csvScrollRight" class="secondary compact import-scroll-button" type="button" aria-label="Tabelle nach rechts" title="Tabelle nach rechts">→</button>
+        </div>
+        <span id="csvImportActionStatus" class="import-action-status" aria-live="polite"></span>
+        <button id="csvImportCancel" class="ghost" type="button" data-i18n="cancel">Abbrechen</button>
+        <button id="csvImportConfirm" class="primary" type="button" data-i18n="confirmImport">Ausgewählte Buchungen importieren</button>
+      </div>
+    </div>
+  </div>
+  <div id="deleteEntryModal" class="confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteEntryTitle" data-working="0">
+    <div class="confirm-modal-card">
+      <div class="confirm-modal-head">
+        <div><span class="kicker" data-i18n="deleteEntryKicker">BUCHUNG ENTFERNEN</span><h2 id="deleteEntryTitle" data-i18n="deleteEntryDialogTitle">Buchung löschen</h2></div>
+        <button id="deleteEntryClose" class="ghost compact" type="button" aria-label="Schließen">×</button>
+      </div>
+      <p id="deleteEntryMessage" class="confirm-modal-message"></p>
+      <div id="deleteEntryDetails" class="delete-entry-details"></div>
+      <div class="confirm-modal-actions">
+        <button id="deleteEntryCancel" class="ghost" type="button" data-i18n="cancel">Abbrechen</button>
+        <button id="deleteEntryConfirm" class="danger" type="button" data-i18n="deleteEntryNow">Buchung endgültig löschen</button>
+      </div>
+    </div>
+  </div>
+  <div id="deleteAllModal" class="confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteAllTitle" data-working="0">
+    <div class="confirm-modal-card">
+      <div class="confirm-modal-head">
+        <div><span id="deleteAllStep" class="kicker">Schritt 1 von 2 · Backup prüfen</span><h2 id="deleteAllTitle" data-i18n="deleteAllDialogTitle">Alle Buchungen löschen</h2></div>
+        <button id="deleteAllClose" class="ghost compact" type="button" aria-label="Schließen">×</button>
+      </div>
+      <p id="deleteAllMessage" class="confirm-modal-message"></p>
+      <label id="deleteAllAcknowledgeRow" class="confirm-check hidden"><input id="deleteAllAcknowledge" type="checkbox"><span data-i18n="deleteAllAcknowledge">Ich verstehe, dass alle eingetragenen Daten dauerhaft gelöscht werden.</span></label>
+      <div class="confirm-modal-actions">
+        <button id="deleteAllCancel" class="ghost" type="button" data-i18n="cancel">Abbrechen</button>
+        <button id="deleteAllNext" class="secondary" type="button" data-i18n="deleteAllBackupContinue">Backup erstellt – weiter</button>
+        <button id="deleteAllFinal" class="danger hidden" type="button" data-i18n="deleteAllNow">Alle Buchungen endgültig löschen</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="static/app-v021000-197f97c6.js"></script>
+</body>
+</html>

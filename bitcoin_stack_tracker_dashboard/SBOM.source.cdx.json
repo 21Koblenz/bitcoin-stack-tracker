@@ -1,0 +1,67 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "name": "bitcoin-stack-tracker-tor-gateway",
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    {
+      "name": "Tor",
+      "properties": [
+        {
+          "name": "bst:package-manager",
+          "value": "apk"
+        }
+      ],
+      "type": "application"
+    },
+    {
+      "name": "nftables",
+      "properties": [
+        {
+          "name": "bst:package-manager",
+          "value": "apk"
+        }
+      ],
+      "type": "application"
+    },
+    {
+      "name": "ghcr.io/home-assistant/amd64-base",
+      "purl": "pkg:oci/home-assistant/amd64-base@sha256:368b5fcd266d1e5a643bad9bc9e84760760032e911ecfdef2a7fc148d76035d1",
+      "type": "container",
+      "version": "3.22-2026.06.1"
+    },
+    {
+      "name": "ghcr.io/home-assistant/aarch64-base",
+      "purl": "pkg:oci/home-assistant/aarch64-base@sha256:03185a346a3e505e0aa102cb1e976a2e7be7421cf4a405abd2cd83e0a6bd0a58",
+      "type": "container",
+      "version": "3.22-2026.06.1"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "name": "bitcoin-stack-tracker-tor-gateway",
+      "type": "application",
+      "version": "0.21.0.0"
+    },
+    "properties": [
+      {
+        "name": "bst:inventory-kind",
+        "value": "tor-gateway-source-direct"
+      },
+      {
+        "name": "bst:secret-access",
+        "value": "none"
+      },
+      {
+        "name": "bst:home-assistant-api-token",
+        "value": "none"
+      }
+    ],
+    "timestamp": "2026-08-08T01:56:25.937421+00:00"
+  },
+  "serialNumber": "urn:uuid:f68417a6-1b7c-4408-9896-d3a56b256d71",
+  "specVersion": "1.7",
+  "version": 1
+}
