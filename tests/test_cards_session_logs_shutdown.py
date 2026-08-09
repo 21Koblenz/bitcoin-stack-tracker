@@ -44,7 +44,7 @@ def test_shutdown_uses_final_managed_process_cleanup_before_retaining_killswitch
 
 
 def test_history_strategy_forces_one_new_full_backfill_and_drops_stale_exclusive_labels():
-    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v8-fx-fill"' in HISTORY
+    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v9-dense-gap-fill"' in HISTORY
     assert 'metadata.pop(stale_key, None)' in HISTORY
     assert '"exclusive_source", "history_strategy"' in HISTORY
     assert "function historySourceSummary(item={})" in APP

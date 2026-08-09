@@ -67,7 +67,7 @@ def test_fill_missing_days_preserves_own_node_values_on_overlap():
 
 
 def test_eur_backfill_reuses_full_local_usd_cache_and_fills_all_missing_days():
-    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v8-fx-fill"' in HISTORY
+    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v9-dense-gap-fill"' in HISTORY
     assert 'ECB_BULK_HISTORY_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip"' in HISTORY
     assert 'contributed = _fill_missing_days(values, converted)' in HISTORY
     assert 'values.update(preferred_overlay)' in HISTORY

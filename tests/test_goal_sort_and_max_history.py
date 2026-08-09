@@ -17,7 +17,7 @@ def test_stacking_goals_are_sorted_smallest_to_largest_for_cards_and_editor():
 
 
 def test_full_history_requests_explicit_2010_start_and_does_not_accept_2013_as_complete():
-    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v8-fx-fill"' in HISTORY
+    assert 'HISTORY_STRATEGY_VERSION = "ordered-source-cascade-v9-dense-gap-fill"' in HISTORY
     assert 'ALL_TIME_PRICE_START_DAY = "2010-07-01"' in HISTORY
     assert 'LONG_HISTORY_REQUIRED_BEFORE_DAY = "2010-09-01"' in HISTORY
     assert '"start_time": start_day or ALL_TIME_PRICE_START_DAY' in HISTORY
