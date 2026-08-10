@@ -12,8 +12,8 @@ def test_service_identity_cannot_be_forwarded():
 
 
 def test_native_iframe_uses_authenticated_same_origin_postmessage_bridge():
-    panel=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/panel-v021002-81aa3197.js").read_text()
-    app=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/static/app-v021002-81aa3197.js").read_text()
+    panel=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/panel-v021003-e7911ff7.js").read_text()
+    app=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/static/app-v021003-e7911ff7.js").read_text()
     assert "new MessageChannel()" not in panel
     assert "nativeBridgeReady" not in app
     assert "event.source !== this._frame.contentWindow" in panel
@@ -66,7 +66,7 @@ def test_transitive_security_dependencies_are_pinned():
 
 
 def test_bridge_does_not_accept_cross_window_or_cross_origin_messages():
-    panel=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/panel-v021002-81aa3197.js").read_text()
+    panel=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/panel-v021003-e7911ff7.js").read_text()
     assert "event.source !== this._frame.contentWindow" in panel
     assert "event.origin !== window.location.origin" in panel
     assert 'message.source !== RPC_SOURCE' in panel

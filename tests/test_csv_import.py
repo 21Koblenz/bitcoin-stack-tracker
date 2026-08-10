@@ -204,7 +204,7 @@ Withdrawal,,,0.003,BTC,0.000003,BTC,Pocket,,onchain batch,2025-02-02 01:55:07
         result = self.parse("pocket-export.csv", """Type,Buy Amount,Buy Cur.,Sell Amount,Sell Cur.,Fee Amount (optional),Fee Cur. (optional),Exchange (optional),Trade Group (optional),Comment (optional),Date
 Trade,620,EUR,0.01,XBT,0.00001,BTC,Pocket,,Sale,2026-08-02T10:00:00Z
 """)
-        self.assert_single(result, "Pocket Bitcoin", "sale", "0.01", "EUR", "62000")
+        self.assert_single(result, "Pocket Bitcoin", "sale", "0.01001", "EUR", "62000")
         self.assertEqual(result["rows"][0]["fee"], "0.620")
 
     def test_pocket_native_dashboard_export_purchase(self):
@@ -341,38 +341,56 @@ sale,2026-08-02T10:00:00Z,,EUR,62000,BTC,-0.01,EUR,-1.25,EUR,620
 """)
         self.assert_single(result, "Coinfinity", "purchase", "0.01", "EUR", "60000")
 
-    def test_coinfinity_current_onchain_schema_uses_satoshis_and_total_fee(self):
+    def test_coinfinity_current_onchain_schema_uses_btc_amount_and_satoshi_mining_fee(self):
         result = self.parse("activities.csv", """Order ID;Type;Date;Amount EUR;Amount Crypto;Crypto;Rate EUR;Mining Fee Crypto;Mining Fee EUR;Service Fee EUR;Total Fee EUR;Address;Transaction;LN Invoice;Transaction type
-cf-1;Buy;2026-08-01 12:00:00;600;1000000;BTC;60000;500;0,30;2,00;2,30;bc1qexample;abcdef0123456789abcdef0123456789;;On-Chain
+cf-1;Buy;2026-08-01 12:00:00;600;0.00996000;BTC;60000;500;0,30;2,10;2,40;bc1qexample;abcdef0123456789abcdef0123456789;;;
 """)
-        self.assert_single(result, "Coinfinity", "purchase", "0.01", "EUR", "60000")
+        self.assert_single(result, "Coinfinity", "purchase", "0.00996000", "EUR", "60000")
         row = result["rows"][0]
-        self.assertEqual(row["fee"], "2.30")
+        self.assertEqual(row["fee"], "2.40")
+        self.assertEqual(row["fiat_amount"], "600")
         self.assertIn("On-Chain", row["note"])
         self.assertIn("Mining Fee: 500 sats", row["note"])
-        self.assertIn("Service Fee: 2 EUR", row["note"])
+        self.assertIn("Service Fee: 2.1 EUR", row["note"])
         self.assertNotIn("bc1qexample", row["note"])
         self.assertNotIn("abcdef0123456789", row["note"])
         self.assertEqual(row["optional_note_fields"]["order_id"], "cf-1")
         self.assertEqual(row["optional_note_fields"]["address"], "bc1qexample")
         self.assertEqual(row["optional_note_fields"]["transaction_id"], "abcdef0123456789abcdef0123456789")
 
-    def test_coinfinity_current_lightning_schema(self):
+    def test_coinfinity_current_lightning_schema_uses_empty_mining_fee(self):
         result = self.parse("download.csv", """Order ID,Type,Date,Amount EUR,Amount Crypto,Crypto,Rate EUR,Mining Fee Crypto,Mining Fee EUR,Service Fee EUR,Total Fee EUR,Address,Transaction,LN Invoice,Transaction type
-cf-ln-1,Purchase,2026-08-02T08:30:00Z,60,100000,XBT,60000,0,0,0.75,0.75,,,lnbc1exampleinvoice,Lightning
+cf-ln-1,Purchase,2026-08-02T08:30:00Z,60,0.00098750,XBT,60000,,,0.75,0.75,,,lnbc1exampleinvoice,Lightning
 """)
-        self.assert_single(result, "Coinfinity", "purchase", "0.001", "EUR", "60000")
+        self.assert_single(result, "Coinfinity", "purchase", "0.00098750", "EUR", "60000")
         row = result["rows"][0]
         self.assertEqual(row["fee"], "0.75")
+        self.assertEqual(row["fiat_amount"], "60")
         self.assertIn("Lightning", row["note"])
         self.assertNotIn("lnbc1exampleinvoice", row["note"])
         self.assertNotIn("LN-Invoice", row["note"])
         self.assertEqual(row["optional_note_fields"]["ln_invoice"], "lnbc1exampleinvoice")
         self.assertEqual(row["optional_note_fields"]["order_id"], "cf-ln-1")
 
+    def test_coinfinity_zero_mining_fee_is_also_lightning(self):
+        result = self.parse("download.csv", """Order ID,Type,Date,Amount EUR,Amount Crypto,Crypto,Rate EUR,Mining Fee Crypto,Mining Fee EUR,Service Fee EUR,Total Fee EUR,Address
+cf-ln-0,Purchase,2026-08-02T08:30:00Z,60,0.00098750,BTC,60000,0,0,0.75,0.75,
+""")
+        row = result["rows"][0]
+        self.assertIn("Lightning", row["note"])
+        self.assertNotIn("On-Chain", row["note"])
+
+    def test_coinfinity_amount_crypto_decimal_keeps_satoshi_trailing_zeros_value(self):
+        result = self.parse("activities.csv", """Order ID,Type,Date,Amount EUR,Amount Crypto,Crypto,Rate EUR,Mining Fee Crypto,Mining Fee EUR,Service Fee EUR,Total Fee EUR,Address
+cf-20000,Purchase,2026-08-02T08:30:00Z,12,0.00020000,BTC,60000,,,,0,
+""")
+        row = result["rows"][0]
+        self.assertEqual(row["amount_btc"], "0.00020000")
+        self.assertEqual(Decimal(row["amount_btc"]) * Decimal("100000000"), Decimal("20000"))
+
     def test_coinfinity_sensitive_identifiers_are_optional_not_default_note(self):
         result = self.parse("activities.csv", """Order ID;Type;Date;Amount EUR;Amount Crypto;Crypto;Rate EUR;Mining Fee Crypto;Mining Fee EUR;Service Fee EUR;Total Fee EUR;Address;Transaction;LN Invoice;Transaction type
-cf-private;Buy;2026-08-01 12:00:00;600;1000000;BTC;60000;500;0,30;2,00;2,30;bc1q-private-address;private-txid;lnbc-private-invoice;Lightning
+cf-private;Buy;2026-08-01 12:00:00;60;0.00098750;BTC;60000;;;0,75;0,75;bc1q-private-address;private-txid;lnbc-private-invoice;Lightning
 """)
         row = result["rows"][0]
         for secret in ("bc1q-private-address", "private-txid", "lnbc-private-invoice", "cf-private"):
@@ -385,11 +403,11 @@ cf-private;Buy;2026-08-01 12:00:00;600;1000000;BTC;60000;500;0,30;2,00;2,30;bc1q
         })
         self.assertIn("Lightning", row["note"])
 
-    def test_coinfinity_current_sale_schema(self):
+    def test_coinfinity_current_sale_schema_uses_btc_decimal(self):
         result = self.parse("activities.csv", """Order ID,Type,Date,Amount EUR,Amount Crypto,Crypto,Rate EUR,Mining Fee Crypto,Mining Fee EUR,Service Fee EUR,Total Fee EUR,Address,Transaction,LN Invoice,Transaction type
-cf-sell-1,Sell,2026-08-03 09:00:00,620,1000000,BTC,62000,0,0,1.50,1.50,,,tx-sale,,Onchain
+cf-sell-1,Sell,2026-08-03 09:00:00,620,0.01000000,BTC,62000,,,,0,,,tx-sale,,
 """)
-        self.assert_single(result, "Coinfinity", "sale", "0.01", "EUR", "62000")
+        self.assert_single(result, "Coinfinity", "sale", "0.01000000", "EUR", "62000")
 
     def test_wavespace_purchase_schema_exposes_private_fields_only_as_optional(self):
         result = self.parse("export.csv", """Type Category,Executes At,Transaction ID,Transaction Type,From Currency,From Amount,To Currency,To Amount,Memo
@@ -479,7 +497,7 @@ DEPOSIT,2026-08-04 12:00:00,id-d,Deposit,EUR,602,,,hidden
         self.assert_single(result, "Wavespace", "purchase", "0.00999", "EUR", "60000")
         self.assertEqual(result["rows"][0]["fee"], "2.600")
 
-    def test_wavespace_semantic_grouping_handles_variable_rows_and_card_sales(self):
+    def test_wavespace_semantic_grouping_handles_variable_rows_and_card_expenses(self):
         result = self.parse("wavespace.csv", """Type Category,Executes At,Transaction ID,Transaction Type,From Currency,From Amount,To Currency,To Amount,Memo
 FEE,2026-08-04 09:00:00,unrelated-fee,APPLICATION_FEE,BTC,0.000001,BTC,0.000001,Lightning deposit fee 0.000001 BTC
 DEPOSIT,2026-08-04 09:00:01,unrelated-deposit,LIGHTNING_DEPOSIT,BTC,0.01,BTC,0.01,unrelated
@@ -494,19 +512,21 @@ BUY,2026-08-04 12:00:00,buy-b,CURRENCY_SWAP,EUR,300,BTC,0.005,swap without payou
 """)
         self.assertEqual(result["recognized"], 3)
         purchases = [row for row in result["rows"] if row["type"] == "purchase"]
-        sales = [row for row in result["rows"] if row["type"] == "sale"]
+        expenses = [row for row in result["rows"] if row["type"] == "expense"]
         self.assertEqual(len(purchases), 2)
-        self.assertEqual(len(sales), 1)
+        self.assertEqual(len(expenses), 1)
         self.assertEqual(purchases[0]["amount_btc"], "0.01")
         self.assertEqual(purchases[0]["fee"], "0.1")
         self.assertIn("Wallet-Menge aus Withdrawal", purchases[0]["note"])
         self.assertEqual(purchases[1]["amount_btc"], "0.005")
         self.assertEqual(purchases[1]["fee"], "0.05")
         self.assertIn("BTC-Menge aus Currency Swap", purchases[1]["note"])
-        self.assertEqual(sales[0]["amount_btc"], "0.001")
-        self.assertEqual(sales[0]["price"], "60000")
-        self.assertEqual(sales[0]["fee"], "0.060")
-        self.assertIn("Kartentransaktion", sales[0]["note"])
+        self.assertEqual(expenses[0]["amount_btc"], "0.001001")
+        self.assertEqual(expenses[0]["price"], "60000")
+        self.assertEqual(expenses[0]["fee"], "0.060")
+        self.assertEqual(expenses[0]["fiat_amount"], "60.000")
+        self.assertIn("Kartentransaktion", expenses[0]["note"])
+        self.assertEqual(expenses[0]["import_hints"]["calculation_kind"], "sale")
         self.assertNotIn("unrelated-fee", repr(result["rows"]))
 
     def test_wavespace_standalone_withdrawal_does_not_replace_purchase_amount(self):
@@ -533,9 +553,10 @@ FEE,2026-08-04 12:00:00,sale-fee,APPLICATION_FEE,BTC,0.00001,BTC,0.00001,Trading
 SELL,2026-08-04 12:00:01,sale,CURRENCY_SWAP,BTC,0.01,EUR,620,sale
 WITHDRAWAL,2026-08-04 12:30:00,payout,SEPA_PAYOUT,EUR,620,EUR,620,bank payout
 """)
-        self.assert_single(result, "Wavespace", "sale", "0.01", "EUR", "62000")
+        self.assert_single(result, "Wavespace", "sale", "0.01001", "EUR", "62000")
         row = result["rows"][0]
         self.assertEqual(row["fee"], "0.620")
+        self.assertEqual(row["fiat_amount"], "620.000")
         self.assertIn("Bitcoin-Verkauf", row["note"])
         self.assertNotIn("payout", repr(row["optional_note_fields"]))
 
@@ -568,13 +589,14 @@ TRANSACTION,2026-08-05 09:00:00,card-pay-1,CARD_AUTHORIZATION,BTC,0.001,EUR,60,C
             )
         result = self.parse("wavespace.csv", "\n".join(rows) + "\n")
         self.assertEqual(result["recognized"], 11)
-        self.assertEqual(sum(row["type"] == "sale" for row in result["rows"]), 11)
+        self.assertEqual(sum(row["type"] == "sale" for row in result["rows"]), 2)
+        self.assertEqual(sum(row["type"] == "expense" for row in result["rows"]), 9)
         self.assertEqual(sum(row.get("import_hints", {}).get("wavespace_kind") == "card_transaction" for row in result["rows"]), 9)
         self.assertEqual(sum(row.get("import_hints", {}).get("wavespace_kind") == "card_creation" for row in result["rows"]), 2)
 
     def test_delete_all_ui_uses_two_step_dashboard_modal_and_compat_fallback(self):
         static = APP / "static"
-        script = (static / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
+        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="deleteAllEntries"', html)
         self.assertIn('id="deleteAllModal"', html)
@@ -592,7 +614,8 @@ TRANSACTION,2026-08-04 11:00:00,pos,CARD_AUTHORIZATION,BTC,0.001,EUR,60,POSPurch
 """)
         self.assertEqual(result["recognized"], 1)
         row = result["rows"][0]
-        self.assertEqual(row["type"], "sale")
+        self.assertEqual(row["type"], "expense")
+        self.assertEqual(row["amount_btc"], "0.00100148")
         self.assertEqual(row["note"], "Wavespace · Kartentransaktion REWE")
         self.assertEqual(row["import_hints"]["wavespace_kind"], "card_transaction")
         self.assertEqual(row["import_hints"]["localized_note_en"], "Wavespace · Card transaction REWE")
@@ -604,9 +627,13 @@ TRANSACTION,2026-08-04 11:00:00,pos,CARD_AUTHORIZATION,BTC,0.001,EUR,60,POSPurch
 """)
         self.assertEqual(result["recognized"], 2)
         atm, pos = result["rows"]
+        self.assertEqual(atm["type"], "sale")
+        self.assertEqual(atm["amount_btc"], "0.00103943")
         self.assertEqual(atm["note"], "Wavespace · Bargeldabhebung SPARKASSE")
         self.assertEqual(atm["fee"], "2.36580")
         self.assertEqual(atm["import_hints"]["wavespace_kind"], "atm_withdrawal")
+        self.assertEqual(pos["type"], "expense")
+        self.assertEqual(pos["amount_btc"], "0.00100148")
         self.assertEqual(pos["note"], "Wavespace · Kartentransaktion REWE")
         self.assertEqual(pos["fee"], "0.08880")
         self.assertEqual(pos["import_hints"]["merchant"], "REWE")
@@ -620,9 +647,12 @@ FEE,2026-08-04 11:00:00,fee-atm,APPLICATION_FEE,BTC,0.00003943,BTC,0.00003943,AT
 TRANSACTION,2026-08-04 11:00:02,card-atm,CARD_AUTHORIZATION,BTC,0.002,EUR,120,Card authorization
 """)
         self.assertEqual(result["recognized"], 2)
-        self.assertTrue(all(row["type"] == "sale" for row in result["rows"]))
         pos = next(row for row in result["rows"] if "REWE" in row["note"])
         atm = next(row for row in result["rows"] if "SPARKASSE" in row["note"])
+        self.assertEqual(pos["type"], "expense")
+        self.assertEqual(pos["amount_btc"], "0.00100148")
+        self.assertEqual(atm["type"], "sale")
+        self.assertEqual(atm["amount_btc"], "0.00203943")
         self.assertEqual(pos["note"], "Wavespace · Kartentransaktion REWE")
         self.assertEqual(pos["import_hints"]["wavespace_kind"], "card_transaction")
         self.assertEqual(pos["import_hints"]["merchant"], "REWE")
@@ -634,19 +664,21 @@ TRANSACTION,2026-08-04 11:00:02,card-atm,CARD_AUTHORIZATION,BTC,0.002,EUR,120,Ca
         result = self.parse("wavespace.csv", """Type Category,Executes At,Transaction ID,Transaction Type,From Currency,From Amount,To Currency,To Amount,Memo
 TRANSACTION,2026-08-04 12:00:00,card-paywave,CARD_AUTHORIZATION,BTC,0.001,EUR,60,payWaveLowValuePurchase Card Authorization at (REWE ) application fee of  0.00000371 BTC
 """)
-        self.assert_single(result, "Wavespace", "sale", "0.001", "EUR", "60000")
+        self.assert_single(result, "Wavespace", "expense", "0.00100371", "EUR", "60000")
         row = result["rows"][0]
         self.assertEqual(row["note"], "Wavespace · Kartentransaktion REWE")
         self.assertEqual(row["fee"], "0.22260")
+        self.assertEqual(row["fiat_amount"], "60.00000")
+        self.assertEqual(row["import_hints"]["calculation_kind"], "sale")
         self.assertEqual(row["import_hints"]["localized_note_en"], "Wavespace · Card transaction REWE")
         self.assertEqual(row["import_hints"]["merchant"], "REWE")
         self.assertNotIn("application fee", row["note"].lower())
 
     def test_csv_scroller_initializes_after_modal_and_import_button_is_not_silent(self):
         static = APP / "static"
-        script = (static / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
+        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021002-81aa3197.css").read_text(encoding="utf-8")
+        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
         self.assertIn("queueCsvHorizontalScrollUpdate", script)
         self.assertIn('modal.classList.remove("hidden")', script)
         self.assertIn("requestAnimationFrame(()=>requestAnimationFrame(updateCsvHorizontalScroll))", script)
@@ -669,7 +701,7 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
         self.assertTrue(all(row["currency"] == "EUR" and float(row["price"]) > 0 for row in result["rows"]))
         self.assertTrue(all(row["import_hints"]["wavespace_kind"] == "card_creation" for row in result["rows"]))
         static = APP / "static"
-        script = (static / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
+        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
         self.assertIn("localImportPrice", script)
         self.assertIn("2.99", script)
         self.assertIn("29.99", script)
@@ -677,8 +709,8 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
 
     def test_goal_reached_timestamp_is_rendered_and_progress_is_capped(self):
         static = APP / "static"
-        script = (static / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
-        style = (static / "style-v021002-81aa3197.css").read_text(encoding="utf-8")
+        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
         self.assertIn("goal.goal_reached_at", script)
         self.assertIn("goalReachedAt", script)
         self.assertIn("currentlyReached ? 100 : Math.min(99.9, rawProgress)", script)
@@ -708,9 +740,9 @@ t1,o1,{pair},2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
 
     def test_optional_note_fields_are_disabled_by_default_in_ui(self):
         static = APP / "static"
-        script = (static / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
+        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021002-81aa3197.css").read_text(encoding="utf-8")
+        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
         self.assertIn("result.optional_note_selection = [];", script)
         self.assertIn('id="csvOptionalFields"', html)
         self.assertIn('data-i18n="optionalFieldsTitle"', html)

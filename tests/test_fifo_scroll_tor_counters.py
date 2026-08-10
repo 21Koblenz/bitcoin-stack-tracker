@@ -2,8 +2,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021002-81aa3197.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021002-81aa3197.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021003-e7911ff7.css").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 

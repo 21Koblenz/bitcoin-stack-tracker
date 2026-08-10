@@ -90,8 +90,7 @@ def write_csv_export(
             )
             net = (
                 gross + fee if kind == "purchase" and gross is not None
-                else gross - fee if kind == "sale" and gross is not None
-                else gross if kind == "expense"
+                else gross - fee if kind in {"sale", "expense"} and gross is not None
                 else None
             )
             sale = sale_summaries.get(str(item.get("id")), {})

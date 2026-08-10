@@ -178,10 +178,15 @@ def _transaction(
         issues.append("Datum konnte nicht gelesen werden")
     if amount_btc is None or amount_btc <= 0:
         issues.append("BTC-Menge fehlt oder ist ungültig")
+    expense_has_currency = kind == "expense" and bool(str(currency or "").strip())
+    expense_has_price = kind == "expense" and price is not None and price > 0
+    expense_has_fiat_value = expense_has_currency and expense_has_price
     if kind != "expense" and not currency:
         issues.append("Handelswährung fehlt")
     if kind != "expense" and (price is None or price <= 0):
         issues.append("Preis pro BTC fehlt oder ist ungültig")
+    if kind == "expense" and expense_has_currency != expense_has_price:
+        issues.append("Bei einer bewerteten Ausgabe müssen Währung und Preis gemeinsam vorhanden sein")
     clean_fee = abs(fee or Decimal("0"))
     clean_fiat_amount: Decimal | None = None
     if fiat_amount is not None:
@@ -190,10 +195,10 @@ def _transaction(
         gross = abs(amount_btc) * abs(price)
         if kind == "purchase":
             clean_fiat_amount = gross + clean_fee
-        elif kind == "sale":
+        elif kind in {"sale", "expense"}:
+            # A priced BTC expense is a disposal just like a sale for the fiat
+            # control calculation: the BTC fee reduces the merchant/fiat value.
             clean_fiat_amount = max(Decimal("0"), gross - clean_fee)
-        else:
-            clean_fiat_amount = gross
     clean_optional_fields: dict[str, str] = {}
     for key, value in (optional_note_fields or {}).items():
         clean_key = re.sub(r"[^a-z0-9_]+", "_", str(key or "").strip().lower()).strip("_")
@@ -222,10 +227,10 @@ def _transaction(
         "type": kind or "purchase",
         "timestamp": timestamp or "",
         "amount_btc": format(abs(amount_btc or Decimal("0")), "f"),
-        "currency": _asset(currency) if kind != "expense" else "",
-        "price": format(abs(price or Decimal("0")), "f") if kind != "expense" else "0",
+        "currency": _asset(currency) if kind != "expense" or expense_has_fiat_value else "",
+        "price": format(abs(price or Decimal("0")), "f") if kind != "expense" or expense_has_fiat_value else "0",
         "fiat_amount": format(clean_fiat_amount, "f") if clean_fiat_amount is not None and clean_fiat_amount > 0 else "",
-        "fee": format(clean_fee, "f") if kind != "expense" else "0",
+        "fee": format(clean_fee, "f") if kind != "expense" or expense_has_fiat_value else "0",
         "note": str(note or "")[:2000],
         "optional_note_fields": clean_optional_fields,
         "import_hints": clean_import_hints,
@@ -399,15 +404,25 @@ def _parse_kraken_ledger(headers: list[str], rows: list[list[str]]) -> tuple[lis
             continue
         kind = "purchase" if btc_amount > 0 and quote_amount < 0 else "sale" if btc_amount < 0 and quote_amount > 0 else None
         warnings: list[str] = []
-        btc_fee = _number(_get(btc_row, "fee")) or Decimal("0")
+        btc_fee = abs(_number(_get(btc_row, "fee")) or Decimal("0"))
+        quote_fee = abs(_number(_get(quote_row, "fee")) or Decimal("0"))
+        execution_price = abs(quote_amount / btc_amount)
+        disposed_btc = abs(btc_amount)
+        fee_fiat = quote_fee
         if btc_fee:
-            warnings.append("Kraken-Gebühr in BTC erkannt; Fiat-Gebühr bitte prüfen")
+            if kind == "sale":
+                # Kraken ledger rows keep the BTC trade amount and BTC fee
+                # separate.  On a sale both are debited from the wallet.
+                disposed_btc += btc_fee
+                fee_fiat += btc_fee * execution_price
+            else:
+                warnings.append("Kraken-Gebühr in BTC erkannt; erhaltene BTC-Menge bitte prüfen")
         output.append(_transaction(
             source="Kraken Ledger", row_number=row_no, kind=kind,
-            timestamp=_iso_timestamp(_get(btc_row, "time")), amount_btc=abs(btc_amount),
+            timestamp=_iso_timestamp(_get(btc_row, "time")), amount_btc=disposed_btc,
             currency=_asset(_get(quote_row, "asset")),
-            price=abs(quote_amount / btc_amount),
-            fee=_number(_get(quote_row, "fee")), warnings=warnings,
+            price=execution_price,
+            fee=fee_fiat, warnings=warnings,
             note="Kraken Ledger-Import", reference=reference,
         ))
     return output, skipped
@@ -456,8 +471,15 @@ def _parse_binance_trade(headers: list[str], rows: list[list[str]]) -> tuple[lis
         fee, fee_asset = _split_amount_asset(fee_value)
         warnings: list[str] = []
         if fee and fee_asset and fee_asset not in {quote, ""}:
-            warnings.append(f"Gebühr in {fee_asset} erkannt; Fiat-Gebühr bitte prüfen")
-            fee = Decimal("0")
+            if kind == "sale" and fee_asset == "BTC" and price is not None and amount is not None:
+                # A BTC-denominated commission on a BTC sale is an additional
+                # wallet debit, not a reduction of the already exported BTC trade
+                # amount.  Account for both the extra sats and their fiat value.
+                amount = abs(amount) + abs(fee)
+                fee = abs(fee) * abs(price)
+            else:
+                warnings.append(f"Gebühr in {fee_asset} erkannt; Fiat-Gebühr bitte prüfen")
+                fee = Decimal("0")
         output.append(_transaction(
             source="Binance Trade", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(_get(row, "date utc", "utc time", "date", "time", "timestamp")),
@@ -553,10 +575,19 @@ def _parse_cointracking(headers: list[str], rows: list[list[str]]) -> tuple[list
         fee_currency = _asset(cell(fee_cur_i))
         warnings: list[str] = []
         if fee and fee_currency and fee_currency != currency:
-            warnings.append(
-                f"Gebühr in {fee_currency} erkannt; Fiat-Gebühr in {currency} bitte prüfen"
-            )
-            fee = Decimal("0")
+            if kind == "sale" and fee_currency == "BTC" and price is not None and amount is not None:
+                # CoinTracking reports the traded BTC amount and a BTC fee in
+                # separate columns.  For a sale, both leave the wallet.  Keep the
+                # execution price, add the fee-BTC to the disposed quantity and
+                # retain its fiat equivalent in the fee field.  Then
+                # amount*price-fee equals the actual fiat proceeds.
+                amount = abs(amount) + abs(fee)
+                fee = abs(fee) * abs(price)
+            else:
+                warnings.append(
+                    f"Gebühr in {fee_currency} erkannt; Fiat-Gebühr in {currency} bitte prüfen"
+                )
+                fee = Decimal("0")
         output.append(_transaction(
             source="CoinTracking", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(date_i)), amount_btc=amount,
@@ -876,6 +907,10 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
             else:
                 fee_btc = _pocket_btc_amount(raw_fee, fee_currency_raw)
                 if fee_btc is not None and price is not None:
+                    if kind == "sale" and amount_btc is not None:
+                        # CoinTracking-style Pocket exports separate a BTC fee
+                        # from the BTC sold.  Both quantities leave the wallet.
+                        amount_btc = abs(amount_btc) + abs(fee_btc)
                     fee = abs(fee_btc * price)
                 else:
                     warnings.append(
@@ -1232,13 +1267,13 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
     return output, skipped
 
 def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
-    """Parse Coinfinity satoshi fields without losing grouped trailing zeros.
+    """Parse a Coinfinity satoshi field without stripping significant zeros.
 
-    Coinfinity exports can contain integer satoshi amounts with locale-style
-    thousands separators (for example ``20.000`` or ``20,000``). The generic
-    decimal parser intentionally treats a lone dot as a decimal separator,
-    which would turn ``20.000`` into 20 instead of 20,000. Keep this stricter
-    parsing local to Coinfinity so other exchange formats are unaffected.
+    Coinfinity's ``Mining Fee Crypto`` is a satoshi amount. Locale-style
+    thousands separators such as ``20.000`` or ``20,000`` therefore mean
+    20,000 sats, not 20 sats. The result remains an integer-valued Decimal;
+    trailing zeros are part of the value and must never be removed from a sats
+    integer by string trimming.
     """
     if value is None:
         return None
@@ -1255,92 +1290,47 @@ def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
             return Decimal(("-" if negative else "") + digits)
         except InvalidOperation:
             return None
-    return _number(value)
-
-
-def _coinfinity_crypto_to_btc(value: Any) -> Decimal | None:
-    """Normalize Coinfinity's Amount Crypto / Mining Fee Crypto values.
-
-    Coinfinity activity exports currently express these numeric fields in
-    satoshis even though the adjacent Crypto column says BTC. Explicit BTC/XBT
-    suffixes and future decimal-BTC values remain supported as a safeguard.
-    """
-    text = str(value or "").strip().lower()
-    explicit_btc = bool(re.search(r"\b(?:btc|xbt|xxbt|xbtc)\b", text))
-    explicit_sats = bool(re.search(r"\b(?:sats?|satoshis?)\b", text))
-
-    if explicit_btc and not explicit_sats:
-        return _number(value)
-
-    amount = _coinfinity_satoshi_number(value)
-    if amount is None:
+    value_decimal = _number(value)
+    if value_decimal is None:
         return None
-    # A bare value below 1 is a decimal-BTC safeguard for future exports. An
-    # explicitly labelled satoshi value is always interpreted as satoshis.
-    if abs(amount) < 1 and not explicit_sats:
-        return amount
-    return amount / SATOSHIS_PER_BTC
+    return value_decimal
 
 
-def _coinfinity_close_eur(left: Decimal, right: Decimal) -> bool:
-    """Return True for normal cent-level rounding differences."""
-    return abs(left - right) <= Decimal("0.02")
+def _coinfinity_amount_crypto_to_btc(value: Any) -> Decimal | None:
+    """Parse Coinfinity ``Amount Crypto`` as BTC.
 
-
-def _coinfinity_purchase_total_eur(
-    *,
-    amount_eur: Decimal | None,
-    amount_btc: Decimal | None,
-    rate_eur: Decimal | None,
-    mining_fee_btc: Decimal | None,
-    mining_fee_eur: Decimal | None,
-    service_fee_eur: Decimal | None,
-    total_fee_eur: Decimal,
-) -> Decimal | None:
-    """Infer Coinfinity's exact customer payment without double-counting fees.
-
-    Depending on the export generation, ``Amount EUR`` may describe the net
-    crypto value, the crypto principal before the network fee, or the complete
-    fiat payment. Coinfinity also exports the network and service fee
-    separately. Compare the internally consistent candidates and keep the
-    original cent amount as the anchor whenever it already represents the full
-    payment.
+    In the Coinfinity activity report the ``Amount Crypto`` column is a BTC
+    decimal (for example ``0.00020000``). Parsing it as Decimal may normalize
+    the textual representation to ``0.0002``; that is mathematically identical
+    and still converts to exactly 20,000 sats. Never interpret a bare
+    ``Amount Crypto`` value as a satoshi integer.
     """
-    if amount_eur is None:
+    text = str(value or "").strip()
+    if not text:
         return None
-    amount_eur = abs(amount_eur)
-    if not amount_btc or not rate_eur or rate_eur <= 0:
-        return amount_eur
+    # Explicit sats are accepted only as a defensive compatibility fallback.
+    if re.search(r"(?i)\b(?:sats?|satoshis?)\b", text):
+        sats = _coinfinity_satoshi_number(text)
+        return sats / SATOSHIS_PER_BTC if sats is not None else None
+    return _number(text)
 
-    received_value = abs(amount_btc) * abs(rate_eur)
-    network_value = Decimal("0")
-    if mining_fee_btc is not None and mining_fee_btc > 0:
-        network_value = abs(mining_fee_btc) * abs(rate_eur)
-    elif mining_fee_eur is not None:
-        network_value = abs(mining_fee_eur)
 
-    service_value = abs(service_fee_eur or Decimal("0"))
-    crypto_principal = received_value + network_value
+def _coinfinity_mining_fee_to_btc(value: Any) -> Decimal | None:
+    """Parse Coinfinity ``Mining Fee Crypto`` as satoshis and return BTC."""
+    sats = _coinfinity_satoshi_number(value)
+    if sats is None:
+        return None
+    return sats / SATOSHIS_PER_BTC
 
-    # Amount EUR already is the complete bank/card payment.
-    if _coinfinity_close_eur(amount_eur, crypto_principal + service_value):
-        return amount_eur
-    if _coinfinity_close_eur(amount_eur, received_value + total_fee_eur):
-        return amount_eur
 
-    # Amount EUR is the crypto principal; only the service fee is paid on top.
-    # The mining fee is already represented by the BTC removed before delivery.
-    if _coinfinity_close_eur(amount_eur, crypto_principal):
-        return amount_eur + service_value
+def _coinfinity_purchase_total_eur(*, amount_eur: Decimal | None) -> Decimal | None:
+    """Return Coinfinity's exact transferred fiat amount.
 
-    # Amount EUR is the net BTC value; both exported fees complete the payment.
-    if _coinfinity_close_eur(amount_eur, received_value):
-        return amount_eur + total_fee_eur
-
-    # Unknown/new schema: do not invent another amount. The exact exported EUR
-    # value is safer than recomputing a cent amount from a rounded exchange rate.
-    return amount_eur
-
+    ``Amount EUR`` is the amount the customer transferred. Service fee and,
+    for on-chain purchases, mining fee are deductions from that amount rather
+    than amounts added on top of it.
+    """
+    return abs(amount_eur) if amount_eur is not None else None
 
 def _format_decimal(value: Decimal | None) -> str:
     if value is None:
@@ -1361,7 +1351,7 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
 
         kind = _generic_kind(row)
         raw_crypto = _get(row, "amount crypto", "crypto amount")
-        amount_btc = _coinfinity_crypto_to_btc(raw_crypto)
+        amount_btc = _coinfinity_amount_crypto_to_btc(raw_crypto)
         amount_eur = _number(_get(row, "amount eur", "eur amount"))
         price = _number(_get(row, "rate eur", "eur rate", "price eur"))
 
@@ -1395,11 +1385,15 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
         price = abs(price) if price is not None else None
 
         mining_fee_crypto_raw = _get(row, "mining fee crypto", "network fee crypto")
-        mining_fee_btc = _coinfinity_crypto_to_btc(mining_fee_crypto_raw)
+        mining_fee_btc = _coinfinity_mining_fee_to_btc(mining_fee_crypto_raw)
         mining_fee_btc = abs(mining_fee_btc) if mining_fee_btc is not None else None
         mining_fee_eur = _number(_get(row, "mining fee eur", "network fee eur"))
         service_fee_eur = _number(_get(row, "service fee eur", "purchase fee eur", "buy fee eur"))
         total_fee_eur = _number(_get(row, "total fee eur", "fee eur"))
+        # If an on-chain export omits the EUR network fee, reconstruct it from
+        # the satoshi fee and the exported BTC/EUR rate.
+        if mining_fee_eur is None and mining_fee_btc is not None and price is not None:
+            mining_fee_eur = abs(mining_fee_btc) * abs(price)
         fee = abs(total_fee_eur) if total_fee_eur is not None else (
             abs(mining_fee_eur or Decimal("0")) + abs(service_fee_eur or Decimal("0"))
         )
@@ -1414,15 +1408,7 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
         # crooked cent amount in the preview/database.
         coinfinity_fiat_total: Decimal | None = None
         if kind == "purchase":
-            coinfinity_fiat_total = _coinfinity_purchase_total_eur(
-                amount_eur=amount_eur,
-                amount_btc=amount_btc,
-                rate_eur=price,
-                mining_fee_btc=mining_fee_btc,
-                mining_fee_eur=mining_fee_eur,
-                service_fee_eur=service_fee_eur,
-                total_fee_eur=fee,
-            )
+            coinfinity_fiat_total = _coinfinity_purchase_total_eur(amount_eur=amount_eur)
             if amount_btc and coinfinity_fiat_total is not None and coinfinity_fiat_total > fee:
                 price = (coinfinity_fiat_total - fee) / amount_btc
             elif price is None and amount_btc and amount_eur is not None:
@@ -1433,30 +1419,24 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
         # Sensitive source columns are kept only as optional preview metadata.
         # They are not part of the default note and are persisted only when the
         # user explicitly enables the corresponding checkbox in the preview.
-        transaction_type = _get(row, "transaction type").strip()
         optional_note_fields = {
             "order_id": _get(row, "order id", "orderid", "id"),
             "address": _get(row, "address", "wallet address"),
             "transaction_id": _get(row, "transaction", "transaction id", "txid", "tx id"),
             "ln_invoice": _get(row, "ln invoice", "lightning invoice", "invoice"),
         }
-        lower_delivery = transaction_type.lower()
-        is_lightning = any(word in lower_delivery for word in (
-            "lightning", "lightning network", "lnurl", "bolt12",
-        )) or lower_delivery == "ln"
-        is_onchain = any(word in lower_delivery for word in (
-            "onchain", "on-chain", "bitcoin network", "blockchain",
-        ))
+        # Coinfinity encodes the delivery path through Mining Fee Crypto:
+        # empty/zero = Lightning, positive value = on-chain fee in satoshis.
+        raw_mining_sats = _coinfinity_satoshi_number(mining_fee_crypto_raw)
+        is_onchain = raw_mining_sats is not None and abs(raw_mining_sats) > 0
+        is_lightning = not is_onchain
 
         details: list[str] = ["Coinfinity"]
         if is_lightning:
             details.append("Lightning")
         elif is_onchain:
             details.append("On-Chain")
-        elif transaction_type:
-            details.append(transaction_type)
 
-        raw_mining_sats = _coinfinity_satoshi_number(mining_fee_crypto_raw)
         if raw_mining_sats:
             details.append(f"Mining Fee: {_format_decimal(raw_mining_sats)} sats")
         if mining_fee_eur:
@@ -1775,6 +1755,25 @@ def _wavespace_card_usage(item: dict[str, Any]) -> tuple[str, str]:
     return usage, location
 
 
+def _wavespace_is_card_purchase_expense(item: dict[str, Any]) -> bool:
+    """Return True for Wavespace card purchases that are spending, not a sale order.
+
+    The CSV still represents the BTC->fiat leg numerically like a sale, but labels
+    such as ``payWaveLowValuePurchase`` / ``POSPurchase`` identify an actual card
+    purchase.  Those rows should therefore be stored as ``expense`` while keeping
+    sale-style fiat arithmetic.
+    """
+    memo = _wavespace_memo(item)
+    compact = re.sub(r"[^a-z0-9]+", "", memo.lower())
+    normalized = re.sub(r"[^a-z0-9]+", " ", memo.lower()).strip()
+    return (
+        "paywavelowvaluepurchase" in compact
+        or "pospurchase" in compact
+        or "card purchase" in normalized
+        or "card payment" in normalized
+    )
+
+
 def _wavespace_localized_card_label(usage: str, location: str) -> tuple[str, str]:
     """Return compact German and English card-disposal labels."""
     if usage == "atm":
@@ -1792,8 +1791,10 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
 
     Wavespace can export two, three, four or more rows for one logical action and
     unrelated deposits can appear between them. ``CURRENCY_SWAP`` is therefore the
-    anchor for a Bitcoin purchase/sale and ``CARD_AUTHORIZATION`` is imported as a
-    Bitcoin sale. Nearby compatible fee/withdrawal rows are associated by timestamp,
+    anchor for a Bitcoin purchase/sale. ``CARD_AUTHORIZATION`` rows that identify a
+    real card purchase (for example ``payWaveLowValuePurchase``) are imported as an
+    expense, while their fiat control math remains sale-like. Nearby compatible
+    fee/withdrawal rows are associated by timestamp,
     currency, amount and (when repeated) the internal transaction ID.
     """
     entries: list[dict[str, Any]] = []
@@ -1826,6 +1827,11 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
         if event_type == "card" and kind != "sale":
             continue
         card_usage, card_location = _wavespace_card_usage(item) if event_type == "card" else ("", "")
+        book_kind = (
+            "expense"
+            if event_type == "card" and _wavespace_is_card_purchase_expense(item)
+            else kind
+        )
         embedded_fee = None
         memo_lower = _wavespace_memo(item).lower()
         if event_type == "card" and "application fee" in memo_lower:
@@ -1843,6 +1849,7 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             "entry": item,
             "index": item["index"],
             "kind": kind,
+            "book_kind": book_kind,
             "event_type": event_type,
             "card_usage": card_usage,
             "card_location": card_location,
@@ -2141,6 +2148,9 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             if transaction_meta is not None:
                 card_sources.append(transaction_meta)
 
+            if any(_wavespace_is_card_purchase_expense(source_item) for source_item in card_sources):
+                event["book_kind"] = "expense"
+
             chosen_usage = event.get("card_usage", "card")
             chosen_location = event.get("card_location", "")
             for source_item in card_sources:
@@ -2188,6 +2198,7 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             details_en.append("BTC amount from currency swap")
 
         total_fee_fiat = Decimal("0")
+        sale_fee_btc = Decimal("0")
         application_fee = event.get("application_fee")
         if application_fee is not None:
             fee_asset = application_fee["asset"]
@@ -2196,6 +2207,11 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
                 fee_amount * price if fee_asset == "BTC" and price is not None else Decimal("0")
             )
             total_fee_fiat += fee_fiat
+            if event["kind"] == "sale" and fee_asset == "BTC":
+                # Wavespace exports card/sale BTC fees separately from the BTC
+                # amount used for the merchant conversion.  The fee sats are an
+                # additional disposal and must reduce the tracked stack as well.
+                sale_fee_btc += abs(fee_amount)
             label_de_fee = "Kartengebühr" if event["event_type"] == "card" else "Wechselgebühr"
             label_en_fee = "Card fee" if event["event_type"] == "card" else "Trading fee"
             origin_de = " aus Memo" if application_fee["from_memo"] else ""
@@ -2215,6 +2231,8 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
                 fee_amount * price if fee_asset == "BTC" and price is not None else Decimal("0")
             )
             total_fee_fiat += fee_fiat
+            if event["kind"] == "sale" and fee_asset == "BTC":
+                sale_fee_btc += abs(fee_amount)
             origin_de = " aus Memo" if network_fee["from_memo"] else ""
             origin_en = " from memo" if network_fee["from_memo"] else ""
             fee_text = f"{_format_decimal(fee_amount)} {fee_asset}"
@@ -2223,6 +2241,9 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             details_de.append(f"Netzwerkgebühr{origin_de}: {fee_text}")
             details_en.append(f"Network fee{origin_en}: {fee_text}")
             metadata_indices.add(network_fee["item"]["index"])
+
+        if event["kind"] == "sale" and sale_fee_btc > 0 and amount_btc is not None:
+            amount_btc = abs(amount_btc) + sale_fee_btc
 
         for related in (event.get("deposit"), event.get("transaction_meta")):
             if related is not None:
@@ -2256,11 +2277,12 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
                     else "card_transaction"
                 ),
                 "merchant": event.get("card_location", ""),
+                "calculation_kind": "sale",
             })
         output.append(_transaction(
             source="Wavespace",
             row_number=primary["row_no"],
-            kind=event["kind"],
+            kind=event.get("book_kind", event["kind"]),
             timestamp=primary["timestamp"],
             amount_btc=amount_btc,
             currency=event["fiat_currency"],

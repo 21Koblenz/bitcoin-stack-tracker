@@ -4,8 +4,8 @@ ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-APP = (COMP / "frontend/static/app-v021002-81aa3197.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021002-81aa3197.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021003-e7911ff7.css").read_text(encoding="utf-8")
 
 
 def test_chart_event_symbols_share_one_height_and_milestones_are_green():
