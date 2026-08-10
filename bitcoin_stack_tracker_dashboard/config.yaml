@@ -1,5 +1,5 @@
 name: Bitcoin Stack Tracker Tor Gateway
-version: 0.21.0.2
+version: 0.21.0.3
 slug: bitcoin_stack_tracker_dashboard
 description: >-
   Tor-Gateway mit nftables-Fail-Closed-Killswitch für öffentliche Kurs- und Historienabfragen des Bitcoin Stack Trackers
