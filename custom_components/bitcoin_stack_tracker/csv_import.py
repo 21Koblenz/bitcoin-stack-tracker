@@ -1231,6 +1231,33 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
         ))
     return output, skipped
 
+def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
+    """Parse Coinfinity satoshi fields without losing grouped trailing zeros.
+
+    Coinfinity exports can contain integer satoshi amounts with locale-style
+    thousands separators (for example ``20.000`` or ``20,000``). The generic
+    decimal parser intentionally treats a lone dot as a decimal separator,
+    which would turn ``20.000`` into 20 instead of 20,000. Keep this stricter
+    parsing local to Coinfinity so other exchange formats are unaffected.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    unitless = re.sub(r"(?i)\b(?:sats?|satoshis?)\b", "", text)
+    unitless = unitless.replace("\u00a0", "").replace(" ", "").replace("'", "")
+    if re.fullmatch(r"[+-]?\d{1,3}(?:[.,]\d{3})+", unitless):
+        negative = unitless.startswith("-")
+        digits = re.sub(r"\D", "", unitless)
+        try:
+            return Decimal(("-" if negative else "") + digits)
+        except InvalidOperation:
+            return None
+    return _number(value)
+
+
 def _coinfinity_crypto_to_btc(value: Any) -> Decimal | None:
     """Normalize Coinfinity's Amount Crypto / Mining Fee Crypto values.
 
@@ -1238,15 +1265,81 @@ def _coinfinity_crypto_to_btc(value: Any) -> Decimal | None:
     satoshis even though the adjacent Crypto column says BTC. Explicit BTC/XBT
     suffixes and future decimal-BTC values remain supported as a safeguard.
     """
-    amount = _number(value)
+    text = str(value or "").strip().lower()
+    explicit_btc = bool(re.search(r"\b(?:btc|xbt|xxbt|xbtc)\b", text))
+    explicit_sats = bool(re.search(r"\b(?:sats?|satoshis?)\b", text))
+
+    if explicit_btc and not explicit_sats:
+        return _number(value)
+
+    amount = _coinfinity_satoshi_number(value)
     if amount is None:
         return None
-    text = str(value or "").strip().lower()
-    if re.search(r"\b(?:btc|xbt|xxbt|xbtc)\b", text) and not re.search(r"\bsats?\b", text):
-        return amount
-    if abs(amount) < 1:
+    # A bare value below 1 is a decimal-BTC safeguard for future exports. An
+    # explicitly labelled satoshi value is always interpreted as satoshis.
+    if abs(amount) < 1 and not explicit_sats:
         return amount
     return amount / SATOSHIS_PER_BTC
+
+
+def _coinfinity_close_eur(left: Decimal, right: Decimal) -> bool:
+    """Return True for normal cent-level rounding differences."""
+    return abs(left - right) <= Decimal("0.02")
+
+
+def _coinfinity_purchase_total_eur(
+    *,
+    amount_eur: Decimal | None,
+    amount_btc: Decimal | None,
+    rate_eur: Decimal | None,
+    mining_fee_btc: Decimal | None,
+    mining_fee_eur: Decimal | None,
+    service_fee_eur: Decimal | None,
+    total_fee_eur: Decimal,
+) -> Decimal | None:
+    """Infer Coinfinity's exact customer payment without double-counting fees.
+
+    Depending on the export generation, ``Amount EUR`` may describe the net
+    crypto value, the crypto principal before the network fee, or the complete
+    fiat payment. Coinfinity also exports the network and service fee
+    separately. Compare the internally consistent candidates and keep the
+    original cent amount as the anchor whenever it already represents the full
+    payment.
+    """
+    if amount_eur is None:
+        return None
+    amount_eur = abs(amount_eur)
+    if not amount_btc or not rate_eur or rate_eur <= 0:
+        return amount_eur
+
+    received_value = abs(amount_btc) * abs(rate_eur)
+    network_value = Decimal("0")
+    if mining_fee_btc is not None and mining_fee_btc > 0:
+        network_value = abs(mining_fee_btc) * abs(rate_eur)
+    elif mining_fee_eur is not None:
+        network_value = abs(mining_fee_eur)
+
+    service_value = abs(service_fee_eur or Decimal("0"))
+    crypto_principal = received_value + network_value
+
+    # Amount EUR already is the complete bank/card payment.
+    if _coinfinity_close_eur(amount_eur, crypto_principal + service_value):
+        return amount_eur
+    if _coinfinity_close_eur(amount_eur, received_value + total_fee_eur):
+        return amount_eur
+
+    # Amount EUR is the crypto principal; only the service fee is paid on top.
+    # The mining fee is already represented by the BTC removed before delivery.
+    if _coinfinity_close_eur(amount_eur, crypto_principal):
+        return amount_eur + service_value
+
+    # Amount EUR is the net BTC value; both exported fees complete the payment.
+    if _coinfinity_close_eur(amount_eur, received_value):
+        return amount_eur + total_fee_eur
+
+    # Unknown/new schema: do not invent another amount. The exact exported EUR
+    # value is safer than recomputing a cent amount from a rounded exchange rate.
+    return amount_eur
 
 
 def _format_decimal(value: Decimal | None) -> str:
@@ -1299,16 +1392,43 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
 
         amount_btc = abs(amount_btc) if amount_btc is not None else None
         amount_eur = abs(amount_eur) if amount_eur is not None else None
-        if price is None and amount_btc and amount_eur is not None:
-            price = amount_eur / amount_btc
+        price = abs(price) if price is not None else None
 
         mining_fee_crypto_raw = _get(row, "mining fee crypto", "network fee crypto")
+        mining_fee_btc = _coinfinity_crypto_to_btc(mining_fee_crypto_raw)
+        mining_fee_btc = abs(mining_fee_btc) if mining_fee_btc is not None else None
         mining_fee_eur = _number(_get(row, "mining fee eur", "network fee eur"))
         service_fee_eur = _number(_get(row, "service fee eur", "purchase fee eur", "buy fee eur"))
         total_fee_eur = _number(_get(row, "total fee eur", "fee eur"))
         fee = abs(total_fee_eur) if total_fee_eur is not None else (
             abs(mining_fee_eur or Decimal("0")) + abs(service_fee_eur or Decimal("0"))
         )
+
+        # Coinfinity purchase accounting:
+        #   paid fiat -> service fee -> BTC purchase -> mining fee -> received BTC
+        # ``Amount Crypto`` is therefore the final BTC amount that reached the
+        # wallet and must never be increased/decreased by the importer. For the
+        # cost basis we keep the exported fees, infer the exact customer payment
+        # and derive an effective rate so amount_btc * price + fee equals that
+        # payment exactly. This prevents a rounded bank transfer from becoming a
+        # crooked cent amount in the preview/database.
+        coinfinity_fiat_total: Decimal | None = None
+        if kind == "purchase":
+            coinfinity_fiat_total = _coinfinity_purchase_total_eur(
+                amount_eur=amount_eur,
+                amount_btc=amount_btc,
+                rate_eur=price,
+                mining_fee_btc=mining_fee_btc,
+                mining_fee_eur=mining_fee_eur,
+                service_fee_eur=service_fee_eur,
+                total_fee_eur=fee,
+            )
+            if amount_btc and coinfinity_fiat_total is not None and coinfinity_fiat_total > fee:
+                price = (coinfinity_fiat_total - fee) / amount_btc
+            elif price is None and amount_btc and amount_eur is not None:
+                price = amount_eur / amount_btc
+        elif price is None and amount_btc and amount_eur is not None:
+            price = amount_eur / amount_btc
 
         # Sensitive source columns are kept only as optional preview metadata.
         # They are not part of the default note and are persisted only when the
@@ -1336,7 +1456,7 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
         elif transaction_type:
             details.append(transaction_type)
 
-        raw_mining_sats = _number(mining_fee_crypto_raw)
+        raw_mining_sats = _coinfinity_satoshi_number(mining_fee_crypto_raw)
         if raw_mining_sats:
             details.append(f"Mining Fee: {_format_decimal(raw_mining_sats)} sats")
         if mining_fee_eur:
@@ -1349,6 +1469,7 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
             source="Coinfinity", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(_get(row, "date", "timestamp")),
             amount_btc=amount_btc, currency="EUR", price=price, fee=fee,
+            fiat_amount=coinfinity_fiat_total if kind == "purchase" else None,
             note=" · ".join(details), optional_note_fields=optional_note_fields,
         ))
     return output, skipped
