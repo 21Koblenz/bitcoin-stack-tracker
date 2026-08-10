@@ -26,19 +26,23 @@ def test_portfolio_curve_is_derived_on_same_price_grid_as_market_curve():
     assert "const {stackBtc,portfolio} = ledgerStackAndPortfolio(price);" in APP
 
 
-def test_twr_and_xirr_use_real_timestamps_and_cashflows():
-    assert "function externalFlowBetween" in APP
-    assert "const flow = externalFlowBetween(events,previousTime,currentTime);" in APP
+def test_twr_and_xirr_use_exact_cashflow_splits_and_audited_math_module():
+    assert "function performanceLedgerEvents(currency, priceSeries)" in APP
+    assert "math.timeWeightedReturn" in APP
+    assert "math.xirrSolveDetailed" in APP
+    assert "function seriesValuationTimestamp(key)" in APP
     assert "new Date(startTime)" in APP
     assert "new Date(endTime)" in APP
     assert "`${start.day}T12:00:00Z`" not in APP
     assert "function cashflowAdjustedPortfolioChange(currency)" in APP
 
 
-def test_profit_cards_use_cost_basis_not_first_portfolio_point():
+def test_profit_cards_use_cost_basis_and_do_not_invent_roi_from_recycled_capital():
     assert "function currentProfitMetrics(currency)" in APP
     assert "profit.unrealized/profit.invested*100" in APP
-    assert "profit.total/profit.lifetimeCapital*100" in APP
+    assert "profit.total/profit.lifetimeCapital*100" not in APP
+    assert "profit.realized/profit.lifetimeCapital*100" not in APP
+    assert "cumulativePurchaseOutlay" in APP
     assert "cashflowAdjustedPortfolioChange(currency)" in APP
     assert 't("netStackChange")' in APP
     assert 't("endingBalance")' in APP

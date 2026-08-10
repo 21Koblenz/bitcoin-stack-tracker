@@ -168,9 +168,8 @@ def _timestamp_value(timestamp: Any) -> float | None:
 
 
 def _day_key(timestamp: Any) -> str | None:
+    """Return the UTC calendar day for any supported timestamp representation."""
     try:
-        if isinstance(timestamp, str) and len(timestamp) >= 10 and timestamp[4] == "-":
-            return timestamp[:10]
         numeric = _timestamp_value(timestamp)
         if numeric is None:
             return None
@@ -948,25 +947,27 @@ def _daily_fifo_snapshots(
     entries: list[dict[str, Any]], days: list[str], long_term_days: int
 ) -> dict[str, dict[str, Any]]:
     """Build FIFO snapshots in a worker thread, including lot maturation."""
-    ordered = sorted(
-        entries,
-        key=lambda row: (
-            str(row.get("timestamp", "")),
+    def entry_sort_key(row: dict[str, Any]) -> tuple[float, int, str]:
+        numeric = _timestamp_value(row.get("timestamp"))
+        return (
+            numeric if numeric is not None else float("inf"),
             1 if row.get("type") in {"sale", "expense"} else 0,
             str(row.get("id", "")),
-        ),
-    )
+        )
+
+    ordered = sorted(entries, key=entry_sort_key)
     snapshots: dict[str, dict[str, Any]] = {}
     active: list[dict[str, Any]] = []
     position = 0
     for day in sorted(days):
+        as_of = datetime.combine(date.fromisoformat(day), time.max, tzinfo=timezone.utc)
+        cutoff = as_of.timestamp()
         while position < len(ordered):
-            entry_day = str(ordered[position].get("timestamp", ""))[:10]
-            if not entry_day or entry_day > day:
+            numeric = _timestamp_value(ordered[position].get("timestamp"))
+            if numeric is None or numeric > cutoff:
                 break
             active.append(ordered[position])
             position += 1
-        as_of = datetime.combine(date.fromisoformat(day), time.max, tzinfo=timezone.utc)
         snapshots[day] = fifo_result(active, long_term_days=long_term_days, as_of=as_of)
     return snapshots
 
@@ -980,7 +981,7 @@ def _chart_revision(
 ) -> str:
     """Hash every input that changes a locally derived chart value."""
     payload = {
-        "chart_schema": 2,
+        "chart_schema": 3,
         "entries": entries,
         "depots": depots,
         "goals": goals,
@@ -1226,9 +1227,8 @@ def _build_statistics_series(
             series_map["portfolio_value"][day] = float(total["total_btc"] * price)
             series_map["known_cost_market_value"][day] = float(summary["known_btc"] * price)
             series_map["invested"][day] = float(summary["invested"])
-            series_map["average_buy_price"][day] = float(
-                summary["invested"] / summary["known_btc"] if summary["known_btc"] > 0 else 0
-            )
+            if summary["known_btc"] > 0:
+                series_map["average_buy_price"][day] = float(summary["invested"] / summary["known_btc"])
             series_map["unrealized_profit_loss"][day] = float(summary["known_btc"] * price - summary["invested"])
             series_map["realized_profit_loss"][day] = float(summary["realized_gain"])
             series_map["realized_long_term_profit_loss"][day] = float(summary["realized_long_term_gain"])

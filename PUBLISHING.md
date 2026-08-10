@@ -1,4 +1,4 @@
-# Veröffentlichung v0.21.0.0 über GitHub
+# Veröffentlichung v0.21.0.2 über GitHub
 
 Diese Anleitung beschreibt den **ersten öffentlichen Release** des bereinigten Repositorys.
 
@@ -14,15 +14,15 @@ Diese Anleitung beschreibt den **ersten öffentlichen Release** des bereinigten 
 Empfohlener Commit-Titel:
 
 ```text
-Initial public release v0.21.0.0
+Mathematical audit hotfix v0.21.0.2
 ```
 
 ## 3. Release erstellen
 
 1. **Releases → Draft a new release** öffnen.
-2. Neuen Tag erstellen: `v0.21.0.0`.
+2. Neuen Tag erstellen: `v0.21.0.2`.
 3. Target: `main`.
-4. Release-Titel: `Bitcoin Stack Tracker v0.21.0.0`.
+4. Release-Titel: `Bitcoin Stack Tracker v0.21.0.2`.
 5. Inhalt aus `RELEASE-NOTES.md` übernehmen.
 6. Release veröffentlichen.
 
@@ -37,7 +37,7 @@ Nach dem Release unter **Actions** prüfen, dass der Tag-Lauf vollständig erfol
 Für eine zusätzliche Release-ZIP kann verwendet werden:
 
 ```bash
-tools/release-integrity.sh bitcoin-stack-tracker-home-assistant-v0.21.0.0.zip
+tools/release-integrity.sh bitcoin-stack-tracker-home-assistant-v0.21.0.2.zip
 ```
 
 Das Skript erzeugt mindestens eine SHA-256-Datei und optional eine Minisign-Signatur, wenn ein Publisher-Schlüssel angegeben wurde.
@@ -46,8 +46,8 @@ Das Skript erzeugt mindestens eine SHA-256-Datei und optional eine Minisign-Sign
 
 Beim Veröffentlichen eines normalen GitHub-Releases startet `.github/workflows/release-assets.yaml` automatisch. Der Workflow erzeugt aus exakt dem getaggten Git-Stand:
 
-- `bitcoin-stack-tracker-home-assistant-v0.21.0.0.zip`
-- `bitcoin-stack-tracker-home-assistant-v0.21.0.0.zip.sha256`
+- `bitcoin-stack-tracker-home-assistant-v0.21.0.2.zip`
+- `bitcoin-stack-tracker-home-assistant-v0.21.0.2.zip.sha256`
 
 und hängt beide Dateien als Release-Assets an das bereits veröffentlichte GitHub-Release an.
 

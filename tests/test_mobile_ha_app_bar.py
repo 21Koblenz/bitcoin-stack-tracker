@@ -2,8 +2,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
-PANEL = (FRONTEND / "panel-v021000-197f97c6.js").read_text(encoding="utf-8")
-CSS = (FRONTEND / "static" / "style-v021000-197f97c6.css").read_text(encoding="utf-8")
+PANEL = (FRONTEND / "panel-v021002-81aa3197.js").read_text(encoding="utf-8")
+CSS = (FRONTEND / "static" / "style-v021002-81aa3197.css").read_text(encoding="utf-8")
 
 
 def test_mobile_panel_has_home_assistant_style_app_bar():

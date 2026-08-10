@@ -13,14 +13,24 @@ ZERO = Decimal("0")
 
 
 def _sorted_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        entries,
-        key=lambda row: (
-            str(row.get("timestamp", "")),
+    """Sort ledger rows by their real UTC instant, never lexicographically.
+
+    ISO-8601 strings with different offsets can compare in the opposite order
+    from the instants they represent. FIFO must therefore sort parsed UTC
+    datetimes. Incoming BTC rows win ties before outgoing rows.
+    """
+
+    def sort_key(row: dict[str, Any]) -> tuple[datetime, int, str]:
+        parsed = _parse_timestamp(row.get("timestamp"))
+        if parsed is None:
+            parsed = datetime.max.replace(tzinfo=timezone.utc)
+        return (
+            parsed,
             1 if row.get("type") in {"sale", "expense"} else 0,
             str(row.get("id", "")),
-        ),
-    )
+        )
+
+    return sorted(entries, key=sort_key)
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -315,7 +325,8 @@ def fifo_result(
                     "purchase_currency": None,
                     "sale_currency": sale_currency,
                     "cost_basis": None,
-                    "net_proceeds": remaining_sale * sale_price,
+                    "net_proceeds": remaining_sale * sale_price
+                    - (sale_fee * remaining_sale / amount if amount > 0 else ZERO),
                     "realized_gain": None,
                     "status": "insufficient_stack",
                     "holding_days": None,

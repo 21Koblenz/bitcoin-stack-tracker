@@ -11,7 +11,7 @@ INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 
 
 def test_intraday_chart_uses_either_exact_candles_or_whole_daily_fallback():
-    chart = APP.split("function chartValues(currency)", 1)[1].split("function seriesChange", 1)[0]
+    chart = APP.split("function chartValues(currency, analytics = false)", 1)[1].split("function seriesChange", 1)[0]
     assert "history.market_candles?.[currency]" in chart
     assert "const usingExactIntraday = interval < 1440 && exactCount >= 2" in chart
     assert "const dailyFallback = history.prices?.[currency] || {}" in chart

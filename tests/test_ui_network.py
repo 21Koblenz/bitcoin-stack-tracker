@@ -33,7 +33,7 @@ def test_short_chart_auto_bootstraps_real_intraday_prices():
 
 
 def test_cost_basis_is_step_projected_on_uniform_market_grid():
-    chart = APP.split('function chartValues(currency)', 1)[1].split('function seriesChange', 1)[0]
+    chart = APP.split('function chartValues(currency, analytics = false)', 1)[1].split('function seriesChange', 1)[0]
     assert 'costBasis[day] = invested' not in chart
     assert 'projectStepSeries(basisEvents,grid)' in chart
     assert 'knownBtcOnGrid' in chart

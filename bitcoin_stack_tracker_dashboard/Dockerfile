@@ -43,4 +43,4 @@ RUN chmod a+x /run.sh /app/network_agent.py \
     /etc/services.d/bitcoin-stack-tracker/finish \
     && python3 -m py_compile /app/network_agent.py \
     && python3 /usr/local/bin/generate_runtime_sbom.py --version "${BUILD_VERSION}" --output /app/SBOM.runtime.cdx.json \
-    && python3 -c "import sys; sys.path.insert(0, '/app'); import network_agent; assert network_agent.APP_VERSION == '0.21.0.0'"
+    && python3 -c "import sys; sys.path.insert(0, '/app'); import network_agent; assert network_agent.APP_VERSION == '0.21.0.2'"

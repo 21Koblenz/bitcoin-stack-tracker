@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker Tor Gateway v0.21.0.0
+# Bitcoin Stack Tracker Tor Gateway v0.21.0.2
 
 **ONLY TOR · FAIL CLOSED**
 
@@ -241,7 +241,7 @@ Unterstützte Architekturen:
 Öffentliche Referenz des Multi-Arch-Images:
 
 ```text
-ghcr.io/21koblenz/bitcoin-stack-tracker-tor-gateway:0.21.0.0
+ghcr.io/21koblenz/bitcoin-stack-tracker-tor-gateway:0.21.0.2
 ```
 
 Home Assistant wählt anhand der Plattform die passende Architektur aus.

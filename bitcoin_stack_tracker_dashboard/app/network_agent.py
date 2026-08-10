@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.21.0.0"
+APP_VERSION = "0.21.0.2"
 STATUS_FILE = Path(os.environ.get("NETWORK_STATUS_FILE", "/run/bitcoin-stack-network-status.json"))
 STOP_FILE = Path(os.environ.get("NETWORK_STOP_FILE", "/run/bitcoin-stack-network-agent-stop"))
 

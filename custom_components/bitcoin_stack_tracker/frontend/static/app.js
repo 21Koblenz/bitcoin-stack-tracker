@@ -1,7 +1,7 @@
 "use strict";
 
-const BUILD_VERSION = "0.21.0.0";
-const FRONTEND_BUILD = "021000-197f97c6";
+const BUILD_VERSION = "0.21.0.2";
+const FRONTEND_BUILD = "021002-81aa3197";
 const SATS_PER_BTC = 100_000_000;
 const state = {
   lang: localStorage.getItem("bst_lang") || (String(navigator.language || "de").toLowerCase().startsWith("de") ? "de" : "en"),
@@ -110,17 +110,17 @@ const I18N = {
 };
 
 Object.assign(I18N.de, {
-  trueReturn:"Echte Rendite",twr:"TWR",twrLong:"Zeitgewichtete Rendite",xirr:"XIRR p. a.",xirrLong:"Persönliche annualisierte Rendite",twrHint:"TWR entfernt Ein- und Auszahlungen aus der Rendite. XIRR berücksichtigt Zeitpunkt und Höhe deiner persönlichen Cashflows.",shortRangeXirr:"Bei kurzen Zeiträumen kann die annualisierte XIRR stark schwanken.",cashflowAdjusted:"Cashflow-bereinigt",unavailableReturn:"Nicht berechenbar",cashflowAdjustedChange:"Cashflow-bereinigt",netStackChange:"Netto-Veränderung",endingBalance:"Endbestand",currentProfitLoss:"Aktueller Stand",onOpenCostBasis:"Auf offenen Einstand",onInvestedCapital:"Auf investiertes Kapital",
+  trueReturn:"Echte Rendite",twr:"TWR",twrLong:"Zeitgewichtete Rendite",xirr:"XIRR p. a.",xirrLong:"Persönliche annualisierte Rendite",twrHint:"TWR trennt die Rendite an jedem Ein- und Auszahlungszeitpunkt und berücksichtigt Transaktionsgebühren. XIRR berücksichtigt Zeitpunkt und Höhe der persönlichen Cashflows (365-Tage-Konvention).",shortRangeXirr:"Bei kurzen Zeiträumen kann die annualisierte XIRR stark schwanken.",cashflowAdjusted:"Cashflow-bereinigt",unavailableReturn:"Nicht berechenbar",cashflowAdjustedChange:"Cashflow-bereinigt",netStackChange:"Netto-Veränderung",endingBalance:"Endbestand",currentProfitLoss:"Aktueller Stand",onOpenCostBasis:"Auf offenen Einstand",onInvestedCapital:"Auf investiertes Kapital",cumulativePurchaseOutlay:"Kumulierte Kaufaufwendungen",ambiguousReturn:"Mehrdeutig",
   dcaAnalysis:"DCA-Auswertung",purchasesInRange:"Käufe im Zeitraum",weightedAveragePrice:"Gewichteter Kaufkurs",averageSatsPerFiat:"Ø Sats pro Fiat",investedFiat:"Investiertes Fiat",feeRatio:"Gebührenquote",breakEvenPrice:"Break-even-Kurs",bestPurchase:"Bester Kauf",worstPurchase:"Schlechtester Kauf",acquiredStack:"Gekaufter Stack",differentCurrenciesOmitted:"Käufe in anderen Währungen wurden für Fiatkennzahlen nicht eingerechnet.",noPurchasesRange:"Keine passenden Käufe im gewählten Zeitraum.",
-  drawdownAnalysis:"Drawdown im Zeitraum",periodHighDistance:"Abstand zum Zeitraumhoch",maximumDrawdown:"Maximaler Drawdown",bitcoinDrawdown:"Bitcoin",portfolioDrawdown:"Portfolio · TWR-bereinigt",peak:"Hoch",trough:"Tief",drawdownHint:"Der Portfolio-Drawdown basiert auf einem cashflowbereinigten TWR-Index, damit Käufe und Verkäufe den Rückgang nicht verfälschen.",
+  drawdownAnalysis:"Drawdown im Zeitraum",periodHighDistance:"Abstand zum Zeitraumhoch",maximumDrawdown:"Maximaler Drawdown",bitcoinDrawdown:"Bitcoin",portfolioDrawdown:"Portfolio · TWR-bereinigt",peak:"Hoch",trough:"Tief",drawdownHint:"Der Portfolio-Drawdown basiert auf einem an jedem Cashflow getrennten TWR-Index. Die Berechnung nutzt die vollständige verfügbare Kursreihe; die Chart-Verdichtung beeinflusst die Kennzahl nicht.",
   fiatFreeMode:"Fiat-freier Modus",fiatFreeValues:"Nur BTC und Sats anzeigen",fiatFreeHint:"Blendet Fiatwerte in Übersichten, Buchungen und Charts aus. Die Eingabefelder für Käufe bleiben erhalten, damit Berechnungen möglich sind.",showSatsPerFiat:"Kurs als Sats pro Fiat anzeigen",showSatsPerFiatHint:"Zeigt optional, wie viele Sats eine Einheit der gewählten Währung kauft.",satsPerFiat:"Sats pro Fiat",fiatHidden:"Fiat ausgeblendet",
   backupHealth:"Backup-Gesundheit",lastEncryptedBackup:"Letztes verschlüsseltes Backup",lastRestoreTest:"Letzter Wiederherstellungstest",backupAgeLimit:"Backup-Warnung nach",restoreTestAgeLimit:"Test-Erinnerung nach",markRestoreTest:"Wiederherstellungstest als erledigt markieren",backupHealthy:"Backup aktuell",backupStale:"Backup fehlt oder ist zu alt",restoreTestDue:"Wiederherstellungstest ist fällig",restoreTestCurrent:"Wiederherstellungstest aktuell",backupHealthSaved:"Backup-Erinnerungen gespeichert",restoreTestMarked:"Wiederherstellungstest gespeichert",daysUnit:"Tagen",neverStoreSeed:"Seed-Wörter, Passphrases und private Schlüssel niemals in dieser App oder im Backup speichern.",backupCreatedHealth:"Backup-Zeitpunkt wurde in der Gesundheitsanzeige erfasst.",
   currentBtcPurchasingPower:"Aktueller Kurs",purchaseCount:"Anzahl Käufe",fiatSecured:"Fiat in Sicherheit gebracht",lifetimePurchases:"Käufe insgesamt",finePriceSamples:"Adaptive Kurs-Samples",finePriceSamplesHint:"Einheitlich je Zeitraum: 1T 5 Min · 30T 1 Std · 90T 4 Std · YTD/1J 12 Std (Tages-Fallback) · länger einheitlich verdichtete Tagesdaten",enableDiscreetMode:"Diskret-Modus einschalten",disableDiscreetMode:"Diskret-Modus ausschalten",openHaMenu:"Home-Assistant-Menü öffnen"
 });
 Object.assign(I18N.en, {
-  trueReturn:"True return",twr:"TWR",twrLong:"Time-weighted return",xirr:"XIRR p.a.",xirrLong:"Personal annualized return",twrHint:"TWR removes deposits and withdrawals from performance. XIRR includes the timing and size of your personal cash flows.",shortRangeXirr:"Annualized XIRR can be extremely volatile over short ranges.",cashflowAdjusted:"Cash-flow adjusted",unavailableReturn:"Unavailable",cashflowAdjustedChange:"Cash-flow adjusted",netStackChange:"Net change",endingBalance:"Ending balance",currentProfitLoss:"Current result",onOpenCostBasis:"On open cost basis",onInvestedCapital:"On invested capital",
+  trueReturn:"True return",twr:"TWR",twrLong:"Time-weighted return",xirr:"XIRR p.a.",xirrLong:"Personal annualized return",twrHint:"TWR splits performance at every deposit and withdrawal and includes transaction fees. XIRR includes the timing and size of personal cash flows using the 365-day convention.",shortRangeXirr:"Annualized XIRR can be extremely volatile over short ranges.",cashflowAdjusted:"Cash-flow adjusted",unavailableReturn:"Unavailable",cashflowAdjustedChange:"Cash-flow adjusted",netStackChange:"Net change",endingBalance:"Ending balance",currentProfitLoss:"Current result",onOpenCostBasis:"On open cost basis",onInvestedCapital:"On invested capital",cumulativePurchaseOutlay:"Cumulative purchase outlay",ambiguousReturn:"Ambiguous",
   dcaAnalysis:"DCA analysis",purchasesInRange:"Purchases in range",weightedAveragePrice:"Weighted purchase price",averageSatsPerFiat:"Avg sats per fiat",investedFiat:"Invested fiat",feeRatio:"Fee ratio",breakEvenPrice:"Break-even price",bestPurchase:"Best purchase",worstPurchase:"Worst purchase",acquiredStack:"Purchased stack",differentCurrenciesOmitted:"Purchases in other currencies were excluded from fiat metrics.",noPurchasesRange:"No matching purchases in the selected range.",
-  drawdownAnalysis:"Drawdown for selected range",periodHighDistance:"Distance from range high",maximumDrawdown:"Maximum drawdown",bitcoinDrawdown:"Bitcoin",portfolioDrawdown:"Portfolio · TWR adjusted",peak:"Peak",trough:"Trough",drawdownHint:"Portfolio drawdown uses a cash-flow-adjusted TWR index so purchases and sales do not distort the decline.",
+  drawdownAnalysis:"Drawdown for selected range",periodHighDistance:"Distance from range high",maximumDrawdown:"Maximum drawdown",bitcoinDrawdown:"Bitcoin",portfolioDrawdown:"Portfolio · TWR adjusted",peak:"Peak",trough:"Trough",drawdownHint:"Portfolio drawdown uses a TWR index split at every cash flow. It is calculated from the full available price series, independent of display downsampling.",
   fiatFreeMode:"Fiat-free mode",fiatFreeValues:"Show BTC and sats only",fiatFreeHint:"Hides fiat values in summaries, ledger views, and charts. Purchase input fields remain available so calculations continue to work.",showSatsPerFiat:"Show price as sats per fiat",showSatsPerFiatHint:"Optionally shows how many sats one unit of the selected currency buys.",satsPerFiat:"Sats per fiat",fiatHidden:"Fiat hidden",
   backupHealth:"Backup health",lastEncryptedBackup:"Last encrypted backup",lastRestoreTest:"Last restore test",backupAgeLimit:"Backup warning after",restoreTestAgeLimit:"Restore-test reminder after",markRestoreTest:"Mark restore test complete",backupHealthy:"Backup is current",backupStale:"Backup is missing or stale",restoreTestDue:"Restore test is due",restoreTestCurrent:"Restore test is current",backupHealthSaved:"Backup reminders saved",restoreTestMarked:"Restore test recorded",daysUnit:"days",neverStoreSeed:"Never store seed words, passphrases, or private keys in this app or its backup.",backupCreatedHealth:"Backup creation time was recorded in backup health.",
   currentBtcPurchasingPower:"Current price",purchaseCount:"Purchase count",fiatSecured:"Fiat moved into Bitcoin",lifetimePurchases:"Lifetime purchases",finePriceSamples:"Adaptive price samples",finePriceSamplesHint:"Uniform by range: 1d 5 min · 30d 1 h · 90d 4 h · YTD/1y 12 h (daily fallback) · longer uniformly compacted daily data",enableDiscreetMode:"Enable discreet mode",disableDiscreetMode:"Disable discreet mode",openHaMenu:"Open Home Assistant menu"
@@ -1123,8 +1123,8 @@ function renderGoalCards() {
 function firstPortfolioActivityDay() {
   const entries = Array.isArray(state.data?.entries) ? state.data.entries : [];
   const validDay = entry => {
-    const day = String(entry?.timestamp || "").slice(0, 10);
-    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+    const timestamp = chartTimestamp(entry?.timestamp);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0,10) : null;
   };
   const purchaseDays = entries
     .filter(entry => entry?.type === "purchase")
@@ -1157,6 +1157,12 @@ function filterSeriesToSelectedStart(values) {
   return Object.fromEntries(entries);
 }
 
+function seriesValuationTimestamp(key) {
+  const raw = String(key || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return Date.parse(`${raw}T23:59:59.999Z`);
+  return chartTimestamp(raw);
+}
+
 function eventStepSeries(values, endOfDay = true) {
   const result = {};
   for (const [key,value] of Object.entries(values || {})) {
@@ -1170,12 +1176,12 @@ function eventStepSeries(values, endOfDay = true) {
   return result;
 }
 function projectStepSeries(source, targetKeys) {
-  const sourcePoints = sortedNumericPoints(source), targets = [...targetKeys].sort((a,b)=>chartTimestamp(a)-chartTimestamp(b));
+  const sourcePoints = sortedNumericPoints(source), targets = [...targetKeys].sort((a,b)=>seriesValuationTimestamp(a)-seriesValuationTimestamp(b));
   const result = {};
   let position = 0, current = null;
   for (const key of targets) {
-    const target = chartTimestamp(key);
-    while (position < sourcePoints.length && chartTimestamp(sourcePoints[position].day) <= target) {
+    const target = seriesValuationTimestamp(key);
+    while (position < sourcePoints.length && seriesValuationTimestamp(sourcePoints[position].day) <= target) {
       current = sourcePoints[position].value;
       position += 1;
     }
@@ -1191,7 +1197,7 @@ function ledgerStackAndPortfolio(priceSeries) {
   const points = sortedNumericPoints(priceSeries), stackBtc = {}, portfolio = {};
   let position = 0, stack = 0, started = false;
   for (const point of points) {
-    const timestamp = chartTimestamp(point.day);
+    const timestamp = seriesValuationTimestamp(point.day);
     while (position < entries.length && entries[position].time <= timestamp) {
       const {entry,amount} = entries[position];
       if (entry.type === "purchase" || entry.type === "stack") stack += amount;
@@ -1206,7 +1212,71 @@ function ledgerStackAndPortfolio(priceSeries) {
   }
   return {stackBtc,portfolio};
 }
-function chartValues(currency) {
+function fifoMetricEvents(currency) {
+  const selectedCurrency = String(currency || "").toUpperCase();
+  const entries = (state.data?.entries || [])
+    .map((entry,index) => ({entry,index,time:chartTimestamp(entry?.timestamp)}))
+    .filter(item => Number.isFinite(item.time))
+    .sort((left,right) => left.time-right.time
+      || Number(["sale","expense"].includes(left.entry?.type))-Number(["sale","expense"].includes(right.entry?.type))
+      || String(left.entry?.id || "").localeCompare(String(right.entry?.id || ""))
+      || left.index-right.index);
+  const lotsByDepot = new Map();
+  let realized = 0;
+  const result = [];
+  const metricState = () => {
+    let basis = 0, knownBtc = 0;
+    for (const lots of lotsByDepot.values()) {
+      for (const lot of lots) {
+        if (lot.currency !== selectedCurrency || !(lot.remaining > 0) || !(lot.unitBasis >= 0)) continue;
+        basis += lot.remaining * lot.unitBasis;
+        knownBtc += lot.remaining;
+      }
+    }
+    return {basis,realized,knownBtc};
+  };
+  let sequence = 0;
+  for (const item of entries) {
+    const entry = item.entry || {}, kind = String(entry.type || ""), depot = String(entry.depot_id || "main");
+    const amount = Math.max(0,Number(entry.amount_btc || 0));
+    if (!(amount > 0)) continue;
+    const lots = lotsByDepot.get(depot) || [];
+    lotsByDepot.set(depot,lots);
+    if (kind === "purchase" || kind === "stack") {
+      if (kind === "purchase") {
+        const price = Number(entry.price), fee = Math.max(0,Number(entry.fee || 0));
+        const entryCurrency = String(entry.currency || "").toUpperCase();
+        const unitBasis = Number.isFinite(price) && price > 0 ? (amount * price + (Number.isFinite(fee) ? fee : 0)) / amount : null;
+        lots.push({remaining:amount,currency:entryCurrency,unitBasis});
+      } else {
+        lots.push({remaining:amount,currency:null,unitBasis:null});
+      }
+    } else if (kind === "sale" || kind === "expense") {
+      let remaining = amount;
+      const saleCurrency = String(entry.currency || "").toUpperCase();
+      const salePrice = Number(entry.price), saleFee = Math.max(0,Number(entry.fee || 0));
+      for (const lot of lots) {
+        if (!(remaining > 1e-15)) break;
+        if (!(lot.remaining > 0)) continue;
+        const take = Math.min(remaining,lot.remaining);
+        if (kind === "sale" && lot.currency === selectedCurrency && saleCurrency === selectedCurrency && Number.isFinite(salePrice) && salePrice > 0 && Number.isFinite(lot.unitBasis)) {
+          const feeShare = Number.isFinite(saleFee) ? saleFee * (take / amount) : 0;
+          realized += take * salePrice - feeShare - take * lot.unitBasis;
+        }
+        lot.remaining -= take;
+        remaining -= take;
+      }
+    }
+    const stateAfter = metricState();
+    const key = new Date(item.time + sequence).toISOString();
+    result.push({time:item.time,key,...stateAfter});
+    sequence = (sequence + 1) % 997;
+  }
+  return result;
+}
+
+function chartValues(currency, analytics = false) {
+
   const history = state.data.history || {}, chart = history.chart || {}, fifo = state.data.fifo || {};
   const interval = chartIntervalMinutesForRange();
   const marketInterval = Number(history.market_interval_minutes || 0);
@@ -1226,7 +1296,7 @@ function chartValues(currency) {
   const effectiveInterval = usingExactIntraday ? interval : 1440;
   const price = effectiveInterval < 1440
     ? resampleSeriesUniform(rawPrice,effectiveInterval)
-    : resampleLongRangeUniform(rawPrice);
+    : (analytics ? resampleSeriesUniform(rawPrice,1440) : resampleLongRangeUniform(rawPrice));
   const {stackBtc,portfolio} = ledgerStackAndPortfolio(price);
 
   const lots = (fifo.open_lots || []).filter(lot => String(lot.currency || "").toUpperCase() === String(currency).toUpperCase());
@@ -1248,35 +1318,17 @@ function chartValues(currency) {
     knownEvents[intradayGrid?`${cleanDay}T23:59:59.999Z`:cleanDay] = Math.max(0,(basis + unrealized) / dayPrice);
   }
   if (intradayGrid) {
-    // Do not force the current FIFO state onto the artificial "now" point.
-    // That produced a fake vertical correction at the far-right edge whenever
-    // the latest daily FIFO snapshot and the live state differed. If today's
-    // ledger actually changed the state, place that final state at the real
-    // timestamp of the latest relevant booking instead.
     const todayStart = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-    const latestLedgerChange = types => {
-      const allowed = new Set(types);
-      let latest = null;
-      for (const entry of (state.data?.entries || [])) {
-        if (!allowed.has(entry?.type)) continue;
-        const timestamp = chartTimestamp(entry?.timestamp);
-        if (!Number.isFinite(timestamp) || timestamp < todayStart || timestamp > Date.now()) continue;
-        if (latest === null || timestamp > latest) latest = timestamp;
-      }
-      return latest;
-    };
-    const basisChange = latestLedgerChange(["purchase","sale","expense"]);
-    const realizedChange = latestLedgerChange(["sale","expense"]);
-    const stackChange = latestLedgerChange(["purchase","sale","expense","stack"]);
-    if (basisChange !== null || !Object.keys(basisEvents).length) {
-      basisEvents[new Date(basisChange ?? Date.now()).toISOString()] = invested;
+    const now = Date.now();
+    const metricEvents = fifoMetricEvents(currency).filter(item => item.time >= todayStart && item.time <= now);
+    for (const item of metricEvents) {
+      basisEvents[item.key] = item.basis;
+      realizedEvents[item.key] = item.realized;
+      knownEvents[item.key] = item.knownBtc;
     }
-    if (realizedChange !== null || !Object.keys(realizedEvents).length) {
-      realizedEvents[new Date(realizedChange ?? Date.now()).toISOString()] = realizedNow;
-    }
-    if (stackChange !== null || !Object.keys(knownEvents).length) {
-      knownEvents[new Date(stackChange ?? Date.now()).toISOString()] = knownBtc;
-    }
+    if (!Object.keys(basisEvents).length) basisEvents[nowIso] = invested;
+    if (!Object.keys(realizedEvents).length) realizedEvents[nowIso] = realizedNow;
+    if (!Object.keys(knownEvents).length) knownEvents[nowIso] = knownBtc;
   } else {
     const currentMetricKey=nowIso.slice(0,10);
     basisEvents[currentMetricKey] = invested;
@@ -1302,6 +1354,8 @@ function chartValues(currency) {
 
   return {price,portfolio,totalProfitLoss,unrealizedProfitLoss,realizedProfitLoss,costBasis,stackBtc};
 }
+
+function analyticsValues(currency) { return chartValues(currency,true); }
 
 function seriesChange(values) {
   const points = Object.entries(values || {})
@@ -1680,7 +1734,7 @@ function renderAggregateDepot() {
   const portfolioCss = portfolioChange?.absolute > 0 ? "positive" : portfolioChange?.absolute < 0 ? "negative" : "";
   const stackCss = stackChange?.absolute > 0 ? "positive" : stackChange?.absolute < 0 ? "negative" : "";
   const portfolioPerformance = portfolioChange
-    ? `${signedFiat(portfolioChange.absolute, currency)} · ${portfolioChange.roiPercent==null?"–":signedPercent(portfolioChange.roiPercent)}`
+    ? `${signedFiat(portfolioChange.absolute, currency)} · ${portfolioChange.percent==null?"–":signedPercent(portfolioChange.percent)}`
     : "–";
   const stackPerformance = stackChange
     ? `${state.unit === "sats" ? `${signedNumber(stackChange.absolute * SATS_PER_BTC, 0)} sats` : `${signedNumber(stackChange.absolute, 8)} BTC`} · ${signedPercent(stackChange.percent)}`
@@ -1690,7 +1744,7 @@ function renderAggregateDepot() {
     <div class="aggregate-depot-grid">
       <div><span>${esc(t("totalStack"))}</span><strong>${privateHtml(fmtStack(totalBtc))}</strong><small>${esc(t("longTerm"))}: ${privateHtml(fmtStack(fifo.long_term_btc || 0))} · ${esc(t("shortTerm"))}: ${privateHtml(fmtStack(fifo.short_term_btc || 0))}</small></div>
       <div><span>${esc(t("totalValue"))}</span><strong>${privateHtml(fmtFiat(totalValue, currency))}</strong><small>${privateHtml(fmtFiat(livePrice, currency))} / BTC</small></div>
-      <div><span>${esc(t("rangePerformance"))}</span><strong class="${portfolioCss}">${privateHtml(portfolioPerformance)}</strong><small>${portfolioChange ? `${esc(t("onInvestedCapital"))} · ${esc(fmtDate(portfolioChange.startDay))} → ${esc(fmtDate(portfolioChange.endDay))}` : esc(t("comparisonUnavailable"))}</small></div>
+      <div><span>${esc(t("rangePerformance"))}</span><strong class="${portfolioCss}">${privateHtml(portfolioPerformance)}</strong><small>${portfolioChange ? `${esc(t("twr"))} · ${esc(fmtDate(portfolioChange.startDay))} → ${esc(fmtDate(portfolioChange.endDay))}` : esc(t("comparisonUnavailable"))}</small></div>
       <div><span>${esc(t("stackChange"))}</span><strong class="${stackCss}">${privateHtml(stackPerformance)}</strong><small>${stackChange ? `${esc(fmtDate(stackChange.startDay))} → ${esc(fmtDate(stackChange.endDay))}` : esc(t("comparisonUnavailable"))}</small></div>
     </div>
   </article>`;
@@ -1748,7 +1802,7 @@ function renderFifoSaleSummary(matches) {
   const preferred=String(currentCurrency()||"").toUpperCase();
   const currency=currencies.includes(preferred)?preferred:(currencies[0]||preferred||"EUR");
   const currencyMatches=matches.filter(item=>String(item.sale_currency||"").toUpperCase()===currency);
-  const soldBtc=matches.reduce((sum,item)=>sum+Math.max(0,Number(item.amount_btc)||0),0);
+  const soldBtc=currencyMatches.reduce((sum,item)=>sum+Math.max(0,Number(item.amount_btc)||0),0);
   const basis=currencyMatches.reduce((sum,item)=>item.cost_basis==null?sum:sum+(Number(item.cost_basis)||0),0);
   const proceeds=currencyMatches.reduce((sum,item)=>item.net_proceeds==null?sum:sum+(Number(item.net_proceeds)||0),0);
   const gain=currencyMatches.reduce((sum,item)=>item.realized_gain==null?sum:sum+(Number(item.realized_gain)||0),0);
@@ -1757,7 +1811,7 @@ function renderFifoSaleSummary(matches) {
   const gainClass=gain>0?"positive":gain<0?"negative":"";
   const note=t("fifoCurrencyNote").replace("{currency}",currency);
   host.innerHTML=`<article class="aggregate-depot-card fifo-summary-card">
-    <div class="aggregate-depot-head"><div><span class="kicker">FIFO SALES · ${esc(currency)}</span><h3>${esc(t("fifoSummary"))}</h3></div><span class="badge">${fmtNumber(matches.length,0)} FIFO</span></div>
+    <div class="aggregate-depot-head"><div><span class="kicker">FIFO SALES · ${esc(currency)}</span><h3>${esc(t("fifoSummary"))}</h3></div><span class="badge">${fmtNumber(currencyMatches.length,0)} FIFO</span></div>
     <div class="aggregate-depot-grid fifo-summary-grid">
       <div><span>${esc(t("soldAmount"))}</span><strong>${privateHtml(state.unit==="sats"?`${fmtNumber(soldBtc*SATS_PER_BTC,0)} sats`:`${fmtNumber(soldBtc,8)} BTC`)}</strong><small>${unresolvedBtc>0?`${esc(t("fifoUnresolved"))}: ${privateHtml(fmtStack(unresolvedBtc))}`:"FIFO"}</small></div>
       <div class="fifo-fiat-metric"><span>${esc(t("fifoCostBasis"))}</span><strong>${privateHtml(fmtFiat(basis,currency))}</strong><small>${esc(t("fifoCostBasisHint"))}</small></div>
@@ -2509,7 +2563,7 @@ function renderCsvImportPreview() {
   queueCsvHorizontalScrollUpdate();
 }
 function localImportPrice(currency, timestamp) {
-  const code=String(currency||"").toUpperCase(), day=String(timestamp||"").slice(0,10);
+  const code=String(currency||"").toUpperCase(), parsed=chartTimestamp(timestamp), day=Number.isFinite(parsed)?new Date(parsed).toISOString().slice(0,10):String(timestamp||"").slice(0,10);
   const series=state.data?.history?.prices?.[code]||{};
   const exact=Number(series[day]);
   if(Number.isFinite(exact)&&exact>0)return exact;
@@ -3079,8 +3133,9 @@ function resampleLongRangeUniform(values) {
   }
   const result = {};
   for (const [bucket,item] of [...buckets.entries()].sort((a,b)=>a[0]-b[0])) {
-    const bucketEnd = Math.min(origin + (bucket + 1) * bucketMs - dayMs, Date.now());
-    const key = new Date(bucketEnd).toISOString().slice(0,10);
+    // Keep the representative close on its real observation day. Moving the
+    // value to the synthetic bucket end visually shifts market moves in time.
+    const key = new Date(item.timestamp).toISOString().slice(0,10);
     result[key] = item.value;
   }
   // Max must visibly begin at the oldest real cached market close, not at the
@@ -3097,7 +3152,7 @@ function sortedNumericPoints(values) {
     .sort((a,b) => chartTimestamp(a.day) - chartTimestamp(b.day));
 }
 function periodContext(currency) {
-  const values = chartValues(currency), portfolio = sortedNumericPoints(values.portfolio), price = sortedNumericPoints(values.price);
+  const values = analyticsValues(currency), portfolio = sortedNumericPoints(values.portfolio), price = sortedNumericPoints(values.price);
   const source = portfolio.length >= 2 ? portfolio : price;
   if (source.length < 2) return {values,days:[],startDay:null,endDay:null};
   return {values,days:source.map(item=>item.day),startDay:source[0].day,endDay:source.at(-1).day};
@@ -3108,7 +3163,7 @@ function valueOnOrBefore(series, when) {
   const points = sortedNumericPoints(series);
   let current = null;
   for (const item of points) {
-    if (chartTimestamp(item.day) > target) break;
+    if (seriesValuationTimestamp(item.day) > target) break;
     current = item.value;
   }
   return current;
@@ -3117,8 +3172,8 @@ function entryExternalFlow(entry, currency, priceSeries) {
   const amount = Number(entry.amount_btc || 0), timestamp = String(entry.timestamp || "");
   if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(chartTimestamp(timestamp))) return 0;
   const marketPrice = valueOnOrBefore(priceSeries,timestamp);
-  const sameCurrency = String(entry.currency || "").toUpperCase() === currency;
-  const transactionPrice = Number(entry.price), fee = Number(entry.fee || 0);
+  const sameCurrency = String(entry.currency || "").toUpperCase() === String(currency || "").toUpperCase();
+  const transactionPrice = Number(entry.price), fee = Math.max(0,Number(entry.fee || 0));
   if (entry.type === "purchase") {
     if (sameCurrency && Number.isFinite(transactionPrice) && transactionPrice > 0) return amount * transactionPrice + (Number.isFinite(fee) ? fee : 0);
     return Number.isFinite(marketPrice) ? amount * marketPrice : 0;
@@ -3133,76 +3188,60 @@ function entryExternalFlow(entry, currency, priceSeries) {
 }
 function externalFlowEvents(currency, priceSeries) {
   return (state.data?.entries || [])
-    .map(entry => ({time:chartTimestamp(entry?.timestamp),flow:entryExternalFlow(entry,currency,priceSeries),entry}))
+    .map((entry,sequence) => ({time:chartTimestamp(entry?.timestamp),flow:entryExternalFlow(entry,currency,priceSeries),entry,sequence}))
     .filter(item => Number.isFinite(item.time) && Number.isFinite(item.flow) && item.flow !== 0)
-    .sort((a,b)=>a.time-b.time);
+    .sort((a,b)=>a.time-b.time || Number(["sale","expense"].includes(a.entry?.type))-Number(["sale","expense"].includes(b.entry?.type)) || a.sequence-b.sequence);
 }
-function externalFlowBetween(events, startTime, endTime) {
-  return events.reduce((sum,item)=>item.time > startTime && item.time <= endTime ? sum + item.flow : sum,0);
+function performanceLedgerEvents(currency, priceSeries) {
+  const selectedCurrency = String(currency || "").toUpperCase();
+  const events = (state.data?.entries || []).map((entry,sequence) => {
+    const time = chartTimestamp(entry?.timestamp), amount = Math.max(0,Number(entry?.amount_btc || 0));
+    const kind = String(entry?.type || "");
+    if (!Number.isFinite(time) || !(amount > 0) || !["purchase","stack","sale","expense"].includes(kind)) return null;
+    const btcDelta = ["purchase","stack"].includes(kind) ? amount : -amount;
+    const sameCurrency = String(entry?.currency || "").toUpperCase() === selectedCurrency;
+    const transactionPrice = Number(entry?.price);
+    const marketPrice = valueOnOrBefore(priceSeries,entry?.timestamp);
+    const valuationPrice = sameCurrency && ["purchase","sale"].includes(kind) && Number.isFinite(transactionPrice) && transactionPrice > 0
+      ? transactionPrice
+      : marketPrice;
+    return {time,btcDelta,externalFlow:entryExternalFlow(entry,currency,priceSeries),valuationPrice,kind,sourceSequence:sequence};
+  }).filter(Boolean).sort((a,b)=>a.time-b.time || Number(["sale","expense"].includes(a.kind))-Number(["sale","expense"].includes(b.kind)) || a.sourceSequence-b.sourceSequence);
+  return events.map((event,sequence)=>({...event,sequence}));
+}
+function performancePricePoints(priceSeries) {
+  return sortedNumericPoints(priceSeries).map(item => ({time:seriesValuationTimestamp(item.day),value:item.value,key:item.day})).filter(item=>Number.isFinite(item.time));
 }
 function twrAnalysis(currency) {
-  const context = periodContext(currency), points = sortedNumericPoints(context.values.portfolio);
-  if (points.length < 2) return null;
-  const events = externalFlowEvents(currency,context.values.price);
-  let factor = 1, calculated = 0;
-  const index = {[points[0].day]:100};
-  for (let i=1;i<points.length;i++) {
-    const previous = points[i-1].value, current = points[i].value;
-    const previousTime = chartTimestamp(points[i-1].day), currentTime = chartTimestamp(points[i].day);
-    const flow = externalFlowBetween(events,previousTime,currentTime);
-    if (previous > 0) {
-      const subperiod = (current - flow) / previous - 1;
-      if (Number.isFinite(subperiod) && subperiod > -1) {
-        factor *= 1 + subperiod;
-        calculated += 1;
-      }
-    }
-    index[points[i].day] = factor * 100;
-  }
-  return {percent:calculated ? (factor-1)*100 : null,index,startDay:points[0].day,endDay:points.at(-1).day,calculatedDays:calculated,events};
+  const context = periodContext(currency), math = globalThis.BSTPerformanceMath;
+  if (!math || !context.startDay) return null;
+  const result = math.timeWeightedReturn(performancePricePoints(context.values.price),performanceLedgerEvents(currency,context.values.price));
+  if (!result) return null;
+  return {
+    percent: result.percent,
+    index: result.index || {},
+    startDay: Number.isFinite(result.startTime) ? new Date(result.startTime).toISOString() : context.startDay,
+    endDay: Number.isFinite(result.endTime) ? new Date(result.endTime).toISOString() : context.endDay,
+    calculatedDays: result.calculatedPeriods || 0,
+    invalid: Boolean(result.invalid),
+    reason: result.reason || null,
+  };
 }
 function xnpv(rate, flows) {
-  if (rate <= -1) return Number.POSITIVE_INFINITY;
-  const start = flows[0].date.getTime();
-  return flows.reduce((sum,item)=>sum+item.amount/((1+rate)**((item.date.getTime()-start)/31557600000)),0);
+  const math = globalThis.BSTPerformanceMath;
+  if (!math) return Number.NaN;
+  return math.xnpv(rate,(flows || []).map(item=>({time:item.date instanceof Date?item.date.getTime():Number(item.time),amount:Number(item.amount)})));
 }
-function xirrSolve(flows) {
-  const clean = flows
-    .filter(item=>Number.isFinite(item.amount) && item.date instanceof Date && !Number.isNaN(item.date.getTime()))
-    .sort((a,b)=>a.date-b.date);
-  if (!clean.some(item=>item.amount>0) || !clean.some(item=>item.amount<0)) return null;
-  const scale = clean.reduce((sum,item)=>sum+Math.abs(item.amount),0) || 1;
-  const atZero = xnpv(0,clean);
-  if (Number.isFinite(atZero) && Math.abs(atZero) <= scale * 1e-10) return 0;
-
-  // Scan rates on a log scale. This remains stable for very short periods,
-  // where a perfectly valid annualized result can be far above 5,000%.
-  const candidates = [];
-  for (let exponent=-16; exponent<=20; exponent+=0.25) candidates.push(Math.exp(exponent)-1);
-  candidates.push(0);
-  candidates.sort((a,b)=>a-b);
-  let left=null,right=null,leftValue=null;
-  for (const candidate of candidates) {
-    const value = xnpv(candidate,clean);
-    if (!Number.isFinite(value)) continue;
-    if (Math.abs(value) <= scale * 1e-10) return candidate;
-    if (left !== null && Math.sign(value) !== Math.sign(leftValue)) { right=candidate; break; }
-    left=candidate; leftValue=value;
-  }
-  if (left === null || right === null) return null;
-  for (let i=0;i<220;i++) {
-    const middle=(left+right)/2, value=xnpv(middle,clean);
-    if (!Number.isFinite(value)) return null;
-    if (Math.abs(value) <= scale * 1e-10) return middle;
-    if (Math.sign(value) === Math.sign(leftValue)) { left=middle; leftValue=value; }
-    else right=middle;
-  }
-  return (left+right)/2;
+function xirrSolveDetailed(flows) {
+  const math = globalThis.BSTPerformanceMath;
+  if (!math) return {rate:null,roots:[],ambiguous:false};
+  return math.xirrSolveDetailed((flows || []).map(item=>({time:item.date instanceof Date?item.date.getTime():Number(item.time),amount:Number(item.amount)})));
 }
+function xirrSolve(flows) { return xirrSolveDetailed(flows).rate; }
 function xirrAnalysis(currency) {
   const context=periodContext(currency), portfolio=sortedNumericPoints(context.values.portfolio);
   if(portfolio.length<2)return null;
-  const start=portfolio[0],end=portfolio.at(-1),startTime=chartTimestamp(start.day),endTime=chartTimestamp(end.day),flows=[];
+  const start=portfolio[0],end=portfolio.at(-1),startTime=seriesValuationTimestamp(start.day),endTime=seriesValuationTimestamp(end.day),flows=[];
   if(!Number.isFinite(startTime)||!Number.isFinite(endTime)||endTime<=startTime)return null;
   if(start.value>0)flows.push({date:new Date(startTime),amount:-start.value});
   for(const event of externalFlowEvents(currency,context.values.price)){
@@ -3210,37 +3249,29 @@ function xirrAnalysis(currency) {
     flows.push({date:new Date(event.time),amount:-event.flow});
   }
   if(end.value>0)flows.push({date:new Date(endTime),amount:end.value});
-  const rate=xirrSolve(flows);
-  return {percent:rate===null?null:rate*100,startDay:start.day,endDay:end.day,flowCount:flows.length};
+  const solved=xirrSolveDetailed(flows);
+  return {percent:solved.rate===null?null:solved.rate*100,startDay:start.day,endDay:end.day,flowCount:flows.length,ambiguous:solved.ambiguous,rootCount:solved.roots.length};
 }
 function cashflowAdjustedPortfolioChange(currency) {
   const context=periodContext(currency), points=sortedNumericPoints(context.values.portfolio);
   if(points.length<2)return null;
-  const start=points[0],end=points.at(-1),startTime=chartTimestamp(start.day),endTime=chartTimestamp(end.day);
+  const start=points[0],end=points.at(-1),startTime=seriesValuationTimestamp(start.day),endTime=seriesValuationTimestamp(end.day);
   const events=externalFlowEvents(currency,context.values.price).filter(item=>item.time>startTime&&item.time<=endTime);
   const flow=events.reduce((sum,item)=>sum+item.flow,0);
-  const positiveFlows=events.reduce((sum,item)=>sum+(item.flow>0?item.flow:0),0);
   const absolute=end.value-start.value-flow;
-  // This percentage belongs to the same absolute P/L shown beside it: use the
-  // capital that was actually put at risk in the selected period. TWR remains
-  // a separate return metric in the dedicated "Echte Rendite" section.
-  const capitalBase=Math.max(0,start.value)+positiveFlows;
-  const roiPercent=capitalBase>0?absolute/capitalBase*100:null;
   const twr=twrAnalysis(currency);
-  return {startDay:start.day,endDay:end.day,start:start.value,end:end.value,absolute,percent:twr?.percent ?? null,roiPercent,capitalBase,externalFlow:flow};
+  return {startDay:start.day,endDay:end.day,start:start.value,end:end.value,absolute,percent:twr?.percent ?? null,externalFlow:flow};
 }
-
 function maximumDrawdown(values) {
-  const points=sortedNumericPoints(values).filter(item=>item.value>0);
-  if(points.length<2)return null;
-  let peak=points[0],maxDrawdown=0,maxPeak=peak,maxTrough=peak;
-  for(const point of points){
-    if(point.value>peak.value)peak=point;
-    const drawdown=(point.value/peak.value-1)*100;
-    if(drawdown<maxDrawdown){maxDrawdown=drawdown;maxPeak=peak;maxTrough=point;}
-  }
-  const final=points.at(-1),periodPeak=points.reduce((best,item)=>item.value>best.value?item:best,points[0]);
-  return {current:(final.value/periodPeak.value-1)*100,maximum:maxDrawdown,peakDay:maxPeak.day,troughDay:maxTrough.day,periodPeakDay:periodPeak.day,endDay:final.day};
+  const math = globalThis.BSTPerformanceMath;
+  if (!math) return null;
+  const result = math.maximumDrawdown(sortedNumericPoints(values).map(item=>({time:seriesValuationTimestamp(item.day),value:item.value,key:item.day})));
+  if (!result) return null;
+  return {
+    current:result.current,maximum:result.maximum,
+    peakDay:new Date(result.peakTime).toISOString(),troughDay:new Date(result.troughTime).toISOString(),
+    periodPeakDay:new Date(result.periodPeakTime).toISOString(),endDay:new Date(result.endTime).toISOString(),
+  };
 }
 function analysisCard(label,value,sub="",css="") {
   return `<article class="analysis-card"><span>${esc(label)}</span><strong class="${css}">${privateHtml(value)}</strong>${sub?`<small>${sub}</small>`:""}</article>`;
@@ -3251,14 +3282,14 @@ function renderReturnAnalytics(currency) {
   const twrCss=(twr?.percent||0)>0?"positive":(twr?.percent||0)<0?"negative":"";
   const xirrCss=(xirr?.percent||0)>0?"positive":(xirr?.percent||0)<0?"negative":"";
   const days=twr?.startDay&&twr?.endDay?Math.max(0,(chartTimestamp(twr.endDay)-chartTimestamp(twr.startDay))/86400000):0;
-  element.innerHTML=`<div class="return-head"><div><span class="kicker">TWR · XIRR</span><h3>${esc(t("trueReturn"))}</h3></div><small>${esc(t("twrHint"))}</small></div><div class="analysis-grid return-grid">${analysisCard(t("twrLong"),twr?.percent==null?t("unavailableReturn"):signedPercent(twr.percent),twr?`${esc(fmtDate(twr.startDay))} → ${esc(fmtDate(twr.endDay))}`:"",twrCss)}${analysisCard(t("xirrLong"),xirr?.percent==null?t("unavailableReturn"):signedPercent(xirr.percent),`${esc(t("xirr"))}${days<30?` · ${esc(t("shortRangeXirr"))}`:""}`,xirrCss)}</div>`;
+  element.innerHTML=`<div class="return-head"><div><span class="kicker">TWR · XIRR</span><h3>${esc(t("trueReturn"))}</h3></div><small>${esc(t("twrHint"))}</small></div><div class="analysis-grid return-grid">${analysisCard(t("twrLong"),twr?.percent==null?t("unavailableReturn"):signedPercent(twr.percent),twr?`${esc(fmtDate(twr.startDay))} → ${esc(fmtDate(twr.endDay))}`:"",twrCss)}${analysisCard(t("xirrLong"),xirr?.ambiguous?t("ambiguousReturn"):(xirr?.percent==null?t("unavailableReturn"):signedPercent(xirr.percent)),`${esc(t("xirr"))}${days<30?` · ${esc(t("shortRangeXirr"))}`:""}`,xirrCss)}</div>`;
 }
 function purchasesForPeriod(currency) {
   const context=periodContext(currency);
   if(!context.startDay)return {all:[],matching:[],context};
   let startTime=chartTimestamp(context.startDay),endTime=chartTimestamp(context.endDay);
   if(state.historyRange==="first_purchase"){
-    const first=(state.data?.entries||[]).map(entry=>chartTimestamp(entry?.timestamp)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
+    const first=(state.data?.entries||[]).filter(entry=>entry?.type==="purchase").map(entry=>chartTimestamp(entry?.timestamp)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
     if(Number.isFinite(first))startTime=first;
   }
   const all=(state.data?.entries||[]).filter(entry=>{const time=chartTimestamp(entry?.timestamp);return entry.type==="purchase"&&Number.isFinite(time)&&time>=startTime&&time<=endTime;});
@@ -3266,25 +3297,25 @@ function purchasesForPeriod(currency) {
 }
 function addPersonalYears(date, years) {
   const next = new Date(date.getTime());
-  const month = next.getMonth(), day = next.getDate();
-  next.setFullYear(next.getFullYear() + years);
-  if (next.getMonth() !== month) next.setDate(0);
-  else next.setDate(day);
+  const month = next.getUTCMonth(), day = next.getUTCDate();
+  next.setUTCFullYear(next.getUTCFullYear() + years);
+  if (next.getUTCMonth() !== month) next.setUTCDate(0);
+  else next.setUTCDate(day);
   return next;
 }
 function personalMonthsStarted(start, end) {
   if (!(start instanceof Date) || !(end instanceof Date) || end < start) return 0;
-  let months = (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth();
+  let months = (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth();
   const boundary = new Date(start.getTime());
-  boundary.setMonth(boundary.getMonth() + months);
+  boundary.setUTCMonth(boundary.getUTCMonth() + months);
   if (boundary > end) months -= 1;
   return Math.max(1, months + 1);
 }
 function dcaPersonalYearCards(currency) {
   const entries = (state.data?.entries || []).map(entry => ({...entry, time:new Date(entry.timestamp || "").getTime()})).filter(entry => Number.isFinite(entry.time)).sort((a,b)=>a.time-b.time);
-  if (!entries.length) return [];
-  const start = new Date(entries[0].time), now = new Date();
   const purchases = entries.filter(entry => entry.type === "purchase" && String(entry.currency || "").toUpperCase() === currency);
+  if (!purchases.length) return [];
+  const start = new Date(purchases[0].time), now = new Date();
   const outlay = rows => rows.reduce((sum,entry) => {
     const amount=Number(entry.amount_btc||0),price=Number(entry.price||0),fee=Number(entry.fee||0);
     return sum + (Number.isFinite(amount)&&amount>0&&Number.isFinite(price)&&price>0 ? amount*price : 0) + (Number.isFinite(fee)&&fee>0 ? fee : 0);
@@ -3310,6 +3341,11 @@ function dcaPersonalYearCards(currency) {
   return cards;
 }
 
+function effectivePurchaseUnitCost(entry) {
+  const amount=Number(entry?.amount_btc||0),price=Number(entry?.price||0),fee=Math.max(0,Number(entry?.fee||0));
+  if(!(amount>0)||!(price>0))return Number.POSITIVE_INFINITY;
+  return (amount*price+(Number.isFinite(fee)?fee:0))/amount;
+}
 function renderDcaAnalytics(currency) {
   const element=$("#dcaAnalytics"),note=$("#dcaNote");if(!element)return;
   const {all,matching}=purchasesForPeriod(currency);
@@ -3319,16 +3355,16 @@ function renderDcaAnalytics(currency) {
     const cards=[analysisCard(t("purchaseCount"),fmtNumber(all.length,0)),analysisCard(t("acquiredStack"),fmtStack(totalBtc))];
     if(state.satsPerFiat&&matching.length){
       const gross=matching.reduce((sum,item)=>sum+Number(item.amount_btc||0)*Number(item.price||0),0),fees=matching.reduce((sum,item)=>sum+Number(item.fee||0),0),btc=matching.reduce((sum,item)=>sum+Number(item.amount_btc||0),0);
-      const sorted=[...matching].sort((a,b)=>Number(a.price)-Number(b.price));
+      const sorted=[...matching].sort((a,b)=>effectivePurchaseUnitCost(a)-effectivePurchaseUnitCost(b));
       cards.push(analysisCard(t("averageSatsPerFiat"),gross+fees>0?`${fmtNumber(btc*SATS_PER_BTC/(gross+fees),0)} sats/${currency}`:"–"));
-      cards.push(analysisCard(t("bestPurchase"),fmtSatsPerFiat(sorted[0].price,currency),esc(fmtDate(sorted[0].timestamp))));
-      cards.push(analysisCard(t("worstPurchase"),fmtSatsPerFiat(sorted.at(-1).price,currency),esc(fmtDate(sorted.at(-1).timestamp))));
+      cards.push(analysisCard(t("bestPurchase"),fmtSatsPerFiat(effectivePurchaseUnitCost(sorted[0]),currency),esc(fmtDate(sorted[0].timestamp))));
+      cards.push(analysisCard(t("worstPurchase"),fmtSatsPerFiat(effectivePurchaseUnitCost(sorted.at(-1)),currency),esc(fmtDate(sorted.at(-1).timestamp))));
     }
     element.innerHTML=cards.join("");if(note)note.textContent=all.length!==matching.length?t("differentCurrenciesOmitted"):"";return;
   }
   if(!matching.length){element.innerHTML=`<p class="storage-note">${esc(t("noPurchasesRange"))}</p>`;if(note)note.textContent=t("differentCurrenciesOmitted");return;}
   const btc=matching.reduce((sum,item)=>sum+Number(item.amount_btc||0),0),gross=matching.reduce((sum,item)=>sum+Number(item.amount_btc||0)*Number(item.price||0),0),fees=matching.reduce((sum,item)=>sum+Number(item.fee||0),0),invested=gross+fees;
-  const sorted=[...matching].sort((a,b)=>Number(a.price)-Number(b.price)),best=sorted[0],worst=sorted.at(-1);
+  const sorted=[...matching].sort((a,b)=>effectivePurchaseUnitCost(a)-effectivePurchaseUnitCost(b)),best=sorted[0],worst=sorted.at(-1);
   element.innerHTML=[
     analysisCard(t("purchasesInRange"),fmtNumber(matching.length,0),privateHtml(fmtStack(btc))),
     analysisCard(t("weightedAveragePrice"),btc>0?fmtFiat(gross/btc,currency):"–"),
@@ -3336,8 +3372,8 @@ function renderDcaAnalytics(currency) {
     analysisCard(t("investedFiat"),fmtFiat(invested,currency)),
     analysisCard(t("feeRatio"),gross>0?`${fmtNumber(fees/gross*100,2)} %`:"–",privateHtml(fmtFiat(fees,currency))),
     analysisCard(t("breakEvenPrice"),btc>0?fmtFiat(invested/btc,currency):"–"),
-    analysisCard(t("bestPurchase"),fmtFiat(best.price,currency),`${esc(fmtDate(best.timestamp))} · ${privateHtml(fmtStack(best.amount_btc))}`),
-    analysisCard(t("worstPurchase"),fmtFiat(worst.price,currency),`${esc(fmtDate(worst.timestamp))} · ${privateHtml(fmtStack(worst.amount_btc))}`),
+    analysisCard(t("bestPurchase"),fmtFiat(effectivePurchaseUnitCost(best),currency),`${esc(fmtDate(best.timestamp))} · ${privateHtml(fmtStack(best.amount_btc))}`),
+    analysisCard(t("worstPurchase"),fmtFiat(effectivePurchaseUnitCost(worst),currency),`${esc(fmtDate(worst.timestamp))} · ${privateHtml(fmtStack(worst.amount_btc))}`),
     ...dcaPersonalYearCards(currency)
   ].join("");
   if(note)note.textContent=all.length!==matching.length?t("differentCurrenciesOmitted"):"";
@@ -3378,17 +3414,17 @@ function currentProfitMetrics(currency){
   const unrealized=Number.isFinite(marketValue)?marketValue-invested:null;
   const realized=Number(fifo.realized?.[currency]||0);
   const total=Number.isFinite(unrealized)?unrealized+realized:realized;
-  const lifetimeCapital=(state.data?.entries||[]).reduce((sum,entry)=>{
+  const cumulativePurchaseOutlay=(state.data?.entries||[]).reduce((sum,entry)=>{
     if(entry?.type!=="purchase"||String(entry.currency||"").toUpperCase()!==String(currency).toUpperCase())return sum;
     const amount=Number(entry.amount_btc||0),price=Number(entry.price||0),fee=Number(entry.fee||0);
     if(!Number.isFinite(amount)||amount<=0||!Number.isFinite(price)||price<=0)return sum;
     return sum+amount*price+(Number.isFinite(fee)&&fee>0?fee:0);
   },0);
-  return {invested,knownBtc,marketValue,unrealized,realized,total,lifetimeCapital};
+  return {invested,knownBtc,marketValue,unrealized,realized,total,cumulativePurchaseOutlay};
 }
 function renderPerformanceSummary(currency){
   const element=$("#performanceSummary");if(!element)return;
-  const values=chartValues(currency),priceChange=seriesChange(values.price),stackChange=seriesChange(values.stackBtc);
+  const values=analyticsValues(currency),priceChange=seriesChange(values.price),stackChange=seriesChange(values.stackBtc);
   const rangeFooter=change=>change?`${esc(fmtDate(change.startDay))} → ${esc(fmtDate(change.endDay))}`:esc(t("comparisonUnavailable"));
   const twoMetricCard=(label,leftLabel,leftValue,rightLabel,rightValue,{css="",footer="",rightCss=css}={})=>`<article class="performance-card"><span>${esc(label)}</span><div class="performance-change"><div><small>${esc(leftLabel)}</small><strong class="${css}">${privateHtml(leftValue)}</strong></div><div><small>${esc(rightLabel)}</small><strong class="${rightCss}">${privateHtml(rightValue)}</strong></div></div>${footer?`<small>${footer}</small>`:""}</article>`;
   const unavailable=label=>`<article class="performance-card"><span>${esc(label)}</span><strong>–</strong><small>${esc(t("comparisonUnavailable"))}</small></article>`;
@@ -3417,11 +3453,9 @@ function renderPerformanceSummary(currency){
 
   const profit=currentProfitMetrics(currency),bookCss=(profit.unrealized||0)>0?"positive":(profit.unrealized||0)<0?"negative":"",realizedCss=profit.realized>0?"positive":profit.realized<0?"negative":"",totalCss=profit.total>0?"positive":profit.total<0?"negative":"";
   const bookPercent=profit.unrealized!=null&&profit.invested>0?profit.unrealized/profit.invested*100:null;
-  const realizedPercent=profit.lifetimeCapital>0?profit.realized/profit.lifetimeCapital*100:null;
-  const totalPercent=profit.lifetimeCapital>0?profit.total/profit.lifetimeCapital*100:null;
   cards.push(twoMetricCard(t("bookProfitLossPerformance"),t("currentProfitLoss"),fmtFiat(profit.unrealized,currency),t("onOpenCostBasis"),bookPercent==null?"–":signedPercent(bookPercent),{css:bookCss,footer:`${esc(t("openCostBasis"))}: ${privateHtml(fmtFiat(profit.invested,currency))}`}));
-  cards.push(twoMetricCard(t("realizedProfitLossPerformance"),t("currentProfitLoss"),fmtFiat(profit.realized,currency),t("onInvestedCapital"),realizedPercent==null?"–":signedPercent(realizedPercent),{css:realizedCss,footer:`${esc(t("investedFiat"))}: ${privateHtml(fmtFiat(profit.lifetimeCapital,currency))}`}));
-  cards.push(twoMetricCard(t("profitLossPerformance"),t("currentProfitLoss"),fmtFiat(profit.total,currency),t("onInvestedCapital"),totalPercent==null?"–":signedPercent(totalPercent),{css:totalCss,footer:`${esc(t("investedFiat"))}: ${privateHtml(fmtFiat(profit.lifetimeCapital,currency))}`}));
+  cards.push(twoMetricCard(t("realizedProfitLossPerformance"),t("currentProfitLoss"),fmtFiat(profit.realized,currency),t("cumulativePurchaseOutlay"),fmtFiat(profit.cumulativePurchaseOutlay,currency),{css:realizedCss,rightCss:""}));
+  cards.push(twoMetricCard(t("profitLossPerformance"),t("currentProfitLoss"),fmtFiat(profit.total,currency),t("cumulativePurchaseOutlay"),fmtFiat(profit.cumulativePurchaseOutlay,currency),{css:totalCss,rightCss:""}));
   element.innerHTML=cards.join("");
   renderAdvancedAnalytics(currency);
 }
@@ -3460,7 +3494,7 @@ function renderOverview(){
 function renderAggregateDepot(){
   const element=$("#aggregateDepotSummary");if(!element)return;const data=state.data||{},fifo=data.fifo||{},currency=currentCurrency(),totalBtc=Number(fifo.total_btc||0),values=chartValues(currency),stackChange=seriesChange(values.stackBtc),rangeLabel=$("#historyRange option:checked")?.textContent||t("selectedRange"),stackCss=stackChange?.absolute>0?"positive":stackChange?.absolute<0?"negative":"",stackPerformance=stackChange?`${state.unit==="sats"?`${signedNumber(stackChange.absolute*SATS_PER_BTC,0)} sats`:`${signedNumber(stackChange.absolute,8)} BTC`} · ${signedPercent(stackChange.percent)}`:"–";
   let cells=`<div><span>${esc(t("totalStack"))}</span><strong>${privateHtml(fmtStack(totalBtc))}</strong><small>${esc(t("longTerm"))}: ${privateHtml(fmtStack(fifo.long_term_btc||0))} · ${esc(t("shortTerm"))}: ${privateHtml(fmtStack(fifo.short_term_btc||0))}</small></div>`;
-  if(state.fiatFree){const twr=twrAnalysis(currency);cells+=`<div><span>${esc(t("twrLong"))}</span><strong class="${(twr?.percent||0)>0?"positive":(twr?.percent||0)<0?"negative":""}">${privateHtml(twr?.percent==null?"–":signedPercent(twr.percent))}</strong><small>${esc(t("cashflowAdjusted"))}</small></div>`;}else{const livePrice=Number(data.prices?.[currency]),totalValue=Number.isFinite(livePrice)?totalBtc*livePrice:null,portfolioChange=cashflowAdjustedPortfolioChange(currency),portfolioCss=portfolioChange?.absolute>0?"positive":portfolioChange?.absolute<0?"negative":"",portfolioPerformance=portfolioChange?`${signedFiat(portfolioChange.absolute,currency)} · ${portfolioChange.roiPercent==null?"–":signedPercent(portfolioChange.roiPercent)}`:"–";cells+=`<div><span>${esc(t("totalValue"))}</span><strong>${privateHtml(fmtFiat(totalValue,currency))}</strong><small>${privateHtml(fmtFiat(livePrice,currency))} / BTC</small></div><div><span>${esc(t("rangePerformance"))}</span><strong class="${portfolioCss}">${privateHtml(portfolioPerformance)}</strong><small>${portfolioChange?`${esc(fmtDate(portfolioChange.startDay))} → ${esc(fmtDate(portfolioChange.endDay))}`:esc(t("comparisonUnavailable"))}</small></div>`;}
+  if(state.fiatFree){const twr=twrAnalysis(currency);cells+=`<div><span>${esc(t("twrLong"))}</span><strong class="${(twr?.percent||0)>0?"positive":(twr?.percent||0)<0?"negative":""}">${privateHtml(twr?.percent==null?"–":signedPercent(twr.percent))}</strong><small>${esc(t("cashflowAdjusted"))}</small></div>`;}else{const livePrice=Number(data.prices?.[currency]),totalValue=Number.isFinite(livePrice)?totalBtc*livePrice:null,portfolioChange=cashflowAdjustedPortfolioChange(currency),portfolioCss=portfolioChange?.absolute>0?"positive":portfolioChange?.absolute<0?"negative":"",portfolioPerformance=portfolioChange?`${signedFiat(portfolioChange.absolute,currency)} · ${portfolioChange.percent==null?"–":signedPercent(portfolioChange.percent)}`:"–";cells+=`<div><span>${esc(t("totalValue"))}</span><strong>${privateHtml(fmtFiat(totalValue,currency))}</strong><small>${privateHtml(fmtFiat(livePrice,currency))} / BTC</small></div><div><span>${esc(t("rangePerformance"))}</span><strong class="${portfolioCss}">${privateHtml(portfolioPerformance)}</strong><small>${portfolioChange?`${esc(fmtDate(portfolioChange.startDay))} → ${esc(fmtDate(portfolioChange.endDay))}`:esc(t("comparisonUnavailable"))}</small></div>`;}
   cells+=`<div><span>${esc(t("stackChange"))}</span><strong class="${stackCss}">${privateHtml(stackPerformance)}</strong><small>${stackChange?`${esc(fmtDate(stackChange.startDay))} → ${esc(fmtDate(stackChange.endDay))}`:esc(t("comparisonUnavailable"))}</small></div>`;
   element.innerHTML=`<article class="aggregate-depot-card"><div class="aggregate-depot-head"><div><span class="kicker">${esc(t("allDepotsCombined"))}</span><h3>${esc(t("totalDepot"))}</h3></div><span class="badge">${esc(rangeLabel)}</span></div><div class="aggregate-depot-grid">${cells}</div></article>`;
 }

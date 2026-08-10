@@ -2,10 +2,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021000-197f97c6.js").read_text(encoding="utf-8")
-PANEL = (COMP / "frontend/panel-v021000-197f97c6.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021002-81aa3197.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel-v021002-81aa3197.js").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021000-197f97c6.css").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021002-81aa3197.css").read_text(encoding="utf-8")
 
 
 def function_block(source: str, start: str, end: str) -> str:
@@ -122,10 +122,10 @@ def test_cost_and_profit_loss_charts_keep_the_same_filled_visual_language():
     assert '? y(0,0)' in render
 
 
-def test_intraday_fifo_state_is_not_forced_to_artificial_now_point():
-    block = function_block(APP, "function chartValues(currency)", "function seriesChange")
-    assert 'const latestLedgerChange = types =>' in block
-    assert 'basisEvents[new Date(basisChange ?? Date.now()).toISOString()] = invested;' in block
-    assert 'realizedEvents[new Date(realizedChange ?? Date.now()).toISOString()] = realizedNow;' in block
-    assert 'knownEvents[new Date(stackChange ?? Date.now()).toISOString()] = knownBtc;' in block
-    assert 'const currentMetricKey=intradayGrid?nowIso:nowIso.slice(0,10);' not in block
+def test_intraday_fifo_state_is_replayed_after_every_booking():
+    block = function_block(APP, "function chartValues(currency, analytics = false)", "function seriesChange")
+    assert 'const metricEvents = fifoMetricEvents(currency)' in block
+    assert 'basisEvents[item.key] = item.basis;' in block
+    assert 'realizedEvents[item.key] = item.realized;' in block
+    assert 'knownEvents[item.key] = item.knownBtc;' in block
+    assert 'const latestLedgerChange = types =>' not in block

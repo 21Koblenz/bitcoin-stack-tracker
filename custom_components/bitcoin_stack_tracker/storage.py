@@ -77,14 +77,37 @@ def _build_fifo_cache(
     return cache
 
 
+def _normalized_utc_timestamp(value: Any) -> str:
+    """Normalize a ledger timestamp to one canonical UTC ISO-8601 value."""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _ledger_sort_key(row: dict[str, Any]) -> tuple[datetime, int, str]:
+    try:
+        parsed = datetime.fromisoformat(str(row.get("timestamp") or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        parsed = datetime.max.replace(tzinfo=timezone.utc)
+    return (
+        parsed,
+        1 if row.get("type") in {"sale", "expense"} else 0,
+        str(row.get("id", "")),
+    )
+
+
 def _transaction_fingerprint(item: dict[str, Any]) -> tuple[str, ...]:
     """Return a stable duplicate key without retaining import-file metadata."""
     timestamp = str(item.get("timestamp") or "")
     try:
-        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(timezone.utc)
-        timestamp = parsed.isoformat()
+        timestamp = _normalized_utc_timestamp(timestamp)
     except (TypeError, ValueError):
         pass
     return (
@@ -608,7 +631,7 @@ class BitcoinLedgerStore:
         item = {
             "id": uuid4().hex,
             "type": kind,
-            "timestamp": timestamp.isoformat(),
+            "timestamp": _normalized_utc_timestamp(timestamp),
             "depot_id": depot_id,
             "amount_btc": btc_string(amount),
             "currency": currency.upper(),
@@ -632,7 +655,7 @@ class BitcoinLedgerStore:
         item = {
             "id": uuid4().hex,
             "type": "stack",
-            "timestamp": timestamp.isoformat(),
+            "timestamp": _normalized_utc_timestamp(timestamp),
             "depot_id": depot_id,
             "amount_btc": btc_string(amount),
             "note": clean_note,
@@ -645,13 +668,7 @@ class BitcoinLedgerStore:
             if len(self._data.get("entries", [])) >= MAX_LEDGER_ENTRIES:
                 raise ValueError(f"A maximum of {MAX_LEDGER_ENTRIES} ledger entries is allowed")
             self._data.setdefault("entries", []).append(item)
-            self._data["entries"].sort(
-                key=lambda row: (
-                    row.get("timestamp", ""),
-                    1 if row.get("type") in {"sale", "expense"} else 0,
-                    row.get("id", ""),
-                )
-            )
+            self._data["entries"].sort(key=_ledger_sort_key)
             await self._async_save()
 
     async def async_bulk_import(
@@ -708,7 +725,7 @@ class BitcoinLedgerStore:
                 item = {
                     "id": uuid4().hex,
                     "type": kind,
-                    "timestamp": timestamp.isoformat(),
+                    "timestamp": _normalized_utc_timestamp(timestamp),
                     "depot_id": depot_id,
                     "amount_btc": btc_string(amount),
                     "note": str(raw.get("note") or "").strip()[:MAX_NOTE_LENGTH],
@@ -734,13 +751,7 @@ class BitcoinLedgerStore:
                 )
 
             combined = current + additions
-            combined.sort(
-                key=lambda row: (
-                    row.get("timestamp", ""),
-                    1 if row.get("type") in {"sale", "expense"} else 0,
-                    row.get("id", ""),
-                )
-            )
+            combined.sort(key=_ledger_sort_key)
             days = int(
                 self._data.get("tax_settings", {}).get(
                     "long_term_days", DEFAULT_LONG_TERM_DAYS
@@ -908,6 +919,8 @@ class BitcoinLedgerStore:
             updated = deepcopy(replacement)
             updated["id"] = item_id
             updated["note"] = str(updated.get("note") or "").strip()[:MAX_NOTE_LENGTH]
+            if updated.get("timestamp"):
+                updated["timestamp"] = _normalized_utc_timestamp(updated["timestamp"])
             fingerprint = _transaction_fingerprint(updated)
             if any(
                 idx != index and _transaction_fingerprint(item) == fingerprint
@@ -915,13 +928,7 @@ class BitcoinLedgerStore:
             ):
                 raise ValueError("Another ledger entry already has the same transaction values")
             entries[index] = updated
-            entries.sort(
-                key=lambda row: (
-                    row.get("timestamp", ""),
-                    1 if row.get("type") in {"sale", "expense"} else 0,
-                    row.get("id", ""),
-                )
-            )
+            entries.sort(key=_ledger_sort_key)
             self._data["entries"] = entries
             self._data["chart_cache"] = {}
             await self._async_save()

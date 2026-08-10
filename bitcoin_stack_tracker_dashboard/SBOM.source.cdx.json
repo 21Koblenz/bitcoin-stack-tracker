@@ -4,7 +4,7 @@
     {
       "name": "bitcoin-stack-tracker-tor-gateway",
       "type": "application",
-      "version": "0.21.0.0"
+      "version": "0.21.0.2"
     },
     {
       "name": "Tor",
@@ -43,7 +43,7 @@
     "component": {
       "name": "bitcoin-stack-tracker-tor-gateway",
       "type": "application",
-      "version": "0.21.0.0"
+      "version": "0.21.0.2"
     },
     "properties": [
       {
@@ -59,7 +59,7 @@
         "value": "none"
       }
     ],
-    "timestamp": "2026-08-08T01:56:25.937421+00:00"
+    "timestamp": "2026-08-10T02:14:22.147086+00:00"
   },
   "serialNumber": "urn:uuid:f68417a6-1b7c-4408-9896-d3a56b256d71",
   "specVersion": "1.7",

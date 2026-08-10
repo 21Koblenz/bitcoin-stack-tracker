@@ -12,7 +12,8 @@ def test_performance_separates_profit_loss_types():
     assert 'chart.realized_profit_loss?.[currency]' in APP
     assert 'function currentProfitMetrics(currency)' in APP
     assert 'profit.unrealized/profit.invested*100' in APP
-    assert 'profit.realized/profit.lifetimeCapital*100' in APP
+    assert 'profit.realized/profit.lifetimeCapital*100' not in APP
+    assert 'cumulativePurchaseOutlay' in APP
 
 
 def test_portfolio_explanation_is_explicit():

@@ -21,12 +21,12 @@ def test_long_ranges_are_compacted_uniformly_across_the_entire_visible_window():
     assert "Math.ceil(spanDays / 520)" in APP
     assert "(gaps.length-1)*0.85" in APP
     assert "function resampleLongRangeUniform(values)" in APP
-    chart = APP.split("function chartValues(currency)", 1)[1].split("function seriesChange", 1)[0]
+    chart = APP.split("function chartValues(currency, analytics = false)", 1)[1].split("function seriesChange", 1)[0]
     assert "resampleLongRangeUniform(rawPrice)" in chart
 
 
 def test_ytd_and_one_year_never_go_blank_when_12h_provider_is_unavailable():
-    chart = APP.split("function chartValues(currency)", 1)[1].split("function seriesChange", 1)[0]
+    chart = APP.split("function chartValues(currency, analytics = false)", 1)[1].split("function seriesChange", 1)[0]
     assert "const dailyFallback = history.prices?.[currency] || {}" in chart
     assert "usingExactIntraday ? {...exactMarket} : {...dailyFallback}" in chart
     assert 'interval === 720 && dailyFallbackCount >= 2' in APP

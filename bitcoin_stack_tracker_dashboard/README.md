@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker Tor Gateway v0.21.0.0
+# Bitcoin Stack Tracker Tor Gateway v0.21.0.2
 
 **ONLY TOR · FAIL CLOSED**
 

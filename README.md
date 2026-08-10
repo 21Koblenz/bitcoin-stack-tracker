@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.0
+# Bitcoin Stack Tracker v0.21.0.2
 
 **Bitcoin Stack Tracker** ist ein lokaler, Bitcoin-only Portfolio- und Stack-Tracker für Home Assistant. Er verwaltet Käufe, Verkäufe, Depots, Ziele, historische Kurse, FIFO-Zuordnungen und Performance-Auswertungen, ohne Wallet-Schlüssel oder Seed-Wörter zu benötigen.
 
@@ -134,7 +134,7 @@ Kurzfassung:
 
 ## Release
 
-Aktueller Projektstand: **v0.21.0.0**. Dies ist der erste öffentliche Release des Repositorys.
+Aktueller Projektstand: **v0.21.0.2**. Mathematischer Audit-Hotfix auf Basis von v0.21.0.1.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)

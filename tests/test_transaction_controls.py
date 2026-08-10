@@ -33,7 +33,7 @@ def test_csv_export_includes_fiat_total_control_column() -> None:
 
 def test_frontend_has_three_way_transaction_calculator_and_csv_controls() -> None:
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    js = (FRONTEND / "static" / "app-v021000-197f97c6.js").read_text(encoding="utf-8")
+    js = (FRONTEND / "static" / "app-v021002-81aa3197.js").read_text(encoding="utf-8")
     assert 'name="fiat_total"' in html
     assert 'data-i18n="fiatTotal"' in html
     assert 'data-field="fiat_total"' in js

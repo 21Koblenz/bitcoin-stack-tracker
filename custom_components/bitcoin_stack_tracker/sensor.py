@@ -352,16 +352,13 @@ class BitcoinCurrencySensor(BitcoinBaseSensor):
         if metric == "invested":
             return float(invested)
         if metric == "average_buy_price":
-            return float(invested / known) if known > 0 else 0.0
+            return float(invested / known) if known > 0 else None
         if metric == "unrealized_profit_loss":
             return float(known * price - invested) if price is not None else None
         if metric == "unrealized_profit_loss_percent":
             if price is None:
                 return None
-            return float(
-                ((known * price - invested) / invested * Decimal("100"))
-                if invested > 0 else Decimal("0")
-            )
+            return float((known * price - invested) / invested * Decimal("100")) if invested > 0 else None
         if metric == "realized_profit_loss":
             return float(summary["realized_gain"])
         if metric == "realized_long_term_profit_loss":

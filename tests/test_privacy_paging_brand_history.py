@@ -4,8 +4,8 @@ ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-APP = (COMP / "frontend/static/app-v021000-197f97c6.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021000-197f97c6.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021002-81aa3197.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021002-81aa3197.css").read_text(encoding="utf-8")
 
 
 def test_discreet_switch_only_rerenders_visible_sensitive_tab():

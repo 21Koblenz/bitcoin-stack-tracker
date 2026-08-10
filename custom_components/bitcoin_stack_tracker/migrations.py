@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
 from urllib.parse import urlparse
 from typing import Any
@@ -34,6 +35,22 @@ from .const import (
 ENCRYPTION_NONE = "none"
 VALID_ENCRYPTION_MODES = {"none", "password", "installation_key_legacy"}
 LATEST_CONFIG_VERSION = 10
+
+
+def _entry_sort_key(row: dict[str, Any]) -> tuple[datetime, int, str]:
+    """Sort legacy rows by the represented UTC instant, not ISO text."""
+    try:
+        parsed = datetime.fromisoformat(str(row.get("timestamp") or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        parsed = datetime.max.replace(tzinfo=timezone.utc)
+    return (
+        parsed,
+        1 if row.get("type") in {"sale", "expense"} else 0,
+        str(row.get("id", "")),
+    )
 
 
 def _legacy_local_url(url: str) -> bool:
@@ -188,13 +205,7 @@ def migrate_ledger_data(data: dict[str, Any] | None) -> tuple[dict[str, Any], bo
         if str(item.get("depot_id") or "") not in seen:
             item["depot_id"] = DEFAULT_DEPOT_ID
         normalized_entries.append(item)
-    normalized_entries.sort(
-        key=lambda row: (
-            str(row.get("timestamp", "")),
-            1 if row.get("type") in {"sale", "expense"} else 0,
-            str(row.get("id", "")),
-        )
-    )
+    normalized_entries.sort(key=_entry_sort_key)
     migrated["entries"] = normalized_entries
 
     normalized_goals: list[dict[str, Any]] = []

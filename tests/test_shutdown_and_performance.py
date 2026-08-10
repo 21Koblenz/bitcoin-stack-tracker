@@ -25,12 +25,9 @@ def test_overview_book_profit_includes_matching_percentage():
     assert '`${t("onOpenCostBasis")}: ${unrealizedPercent==null?"–":signedPercent(unrealizedPercent)}' in APP
 
 
-def test_depot_range_performance_uses_roi_matching_the_absolute_profit():
-    assert "const positiveFlows=events.reduce((sum,item)=>sum+(item.flow>0?item.flow:0),0);" in APP
-    assert "const capitalBase=Math.max(0,start.value)+positiveFlows;" in APP
-    assert "const roiPercent=capitalBase>0?absolute/capitalBase*100:null;" in APP
-    assert "roiPercent,capitalBase" in APP
-    assert 'portfolioChange.roiPercent==null?"–":signedPercent(portfolioChange.roiPercent)' in APP
-    # Dedicated return analytics must still use TWR rather than the simple ROI.
+def test_depot_range_performance_uses_true_twr_not_simple_cashflow_roi():
+    assert "const positiveFlows=events.reduce" not in APP
+    assert "roiPercent" not in APP
+    assert "const twr=twrAnalysis(currency);" in APP
     assert 't("twr")' in APP
-    assert "portfolioChange.percent==null?\"–\":signedPercent(portfolioChange.percent)" in APP
+    assert 'portfolioChange.percent==null?"–":signedPercent(portfolioChange.percent)' in APP

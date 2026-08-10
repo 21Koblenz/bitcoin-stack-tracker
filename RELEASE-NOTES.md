@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.0
+# Bitcoin Stack Tracker v0.21.0.2
 
 ## App- und Funktionsübersicht
 
@@ -8,8 +8,8 @@
 
 - mehrere Depots und Gesamtdepot
 - Käufe, Verkäufe, Gebühren, Notizen und depotweises FIFO
-- Verkaufsübersicht mit FIFO-Einstand, Erlös, Gewinn/Verlust und Rendite
-- historische Kurse, Stack-, Portfolio- und P/L-Charts
+- Verkaufsübersicht mit FIFO-Einstand, Nettoerlös, Gewinn/Verlust und Rendite
+- historische Kurs-, Stack-, Portfolio-, Einstands- und Gewinn/Verlust-Charts
 - TWR, XIRR, DCA und Drawdown
 - Ziele, Milestones, Halving- und Netzwerk-Markierungen
 - CSV-Import mit prüfbarer Vorschau
@@ -25,16 +25,21 @@
 - Das Gateway verwendet nftables Fail Closed und hat keinen Zugriff auf Portfolio, Passwörter oder Home-Assistant-API-Tokens.
 - Lokale private Node-Ziele dürfen direkt im LAN angesprochen werden.
 
-## Changelog v0.21.0.0
+## Changelog v0.21.0.2
 
-Dies ist der **erste öffentliche Release** des Repositorys.
+Dieser Hotfix korrigiert die beim mathematischen Audit gefundenen Rechen- und Chartfehler auf Basis von **v0.21.0.1**.
 
-- vollständiger Bitcoin-only Portfolio-/FIFO-/Chart-/Ziel-Funktionsumfang
-- mobile Home-Assistant-Companion-Kompatibilität
-- versionierte Frontend-Assets gegen veraltete Browser-/WebView-Caches
-- automatische Erkennung des Supervisor-internen Tor-Gateway-Alias für GitHub- und lokale Installationen
-- fail-closed DNS-/SOCKS-/Gateway-Prüfung ohne öffentlichen Fallback
-- portable verschlüsselte Backups mit bewusst begrenztem Restore-Umfang
-- gehärtete Panel-Kommunikation, CSP und Netzwerkgrenzen
-- SBOM und Release-Integritätswerkzeuge
-- Lizenzwechsel des neuen öffentlichen Repository-Stands auf **AGPL-3.0-only**
+- **TWR:** Cashflows werden am Buchungszeitpunkt getrennt; Teilperioden werden geometrisch verknüpft. Gebühren bleiben Performancekosten. Komplette Auszahlungen werden korrekt behandelt.
+- **XIRR:** 365-Tage-Konvention mit ganzen Zahlungstagen; sehr große annualisierte Kurzfrist-Raten werden unterstützt; mehrere gültige Lösungen werden als mehrdeutig angezeigt.
+- **Drawdown:** Berechnung auf der vollständigen verfügbaren Analyse-Reihe statt auf der verdichteten Display-Reihe.
+- **Intraday-P/L:** Einstand, realisierter Gewinn und bekannte BTC werden nach jeder einzelnen Buchung fortgeschrieben.
+- **Tagesgrenzen:** Tageskurse und FIFO-Snapshots werden konsistent als Tagesendzustände verarbeitet.
+- **UTC/FIFO:** Sortierung, Migration, neue und bearbeitete Buchungen verwenden echte UTC-Zeitpunkte; Offset-Strings können die FIFO-Reihenfolge nicht mehr verdrehen.
+- **FIFO-Verkäufe:** Multiwährungs-Summen sind konsistent; anteilige Verkaufsgebühren werden auch bei unaufgelösten/überverkauften Anteilen im Nettoerlös berücksichtigt.
+- **DCA:** Bester/schlechtester Kauf basiert auf effektivem Einstand inklusive Kaufgebühren; persönliche Sparjahre beginnen beim ersten passenden Kauf.
+- **Gewinnkennzahlen:** Der irreführende pseudo-ROI auf kumulierte Kaufaufwendungen wurde entfernt. Offener Buchgewinn-Prozent bleibt an den offenen Einstand gebunden.
+- **Sensoren:** Mathematisch undefinierte Durchschnitts-/Prozentwerte werden als nicht verfügbar statt als 0 ausgegeben.
+- **Chartdarstellung:** Langzeitpunkte behalten ihren realen Beobachtungstag; Display-Verdichtung beeinflusst die Analytics nicht.
+- **Tests:** Golden- und Regressionstests decken TWR, XIRR, Drawdown, FIFO-Zeitzonen, Gebühren, DCA und Intraday-Zustände ab.
+
+Ausführliche Formeln und Prüffälle stehen in `MATH-AUDIT.md`.
