@@ -1,23 +1,25 @@
 {
   "domain": "bitcoin_stack_tracker",
   "name": "Bitcoin Stack Tracker",
-  "codeowners": [],
+  "codeowners": [
+    "@21Koblenz"
+  ],
   "config_flow": true,
+  "dependencies": [
+    "recorder",
+    "http",
+    "frontend",
+    "panel_custom"
+  ],
   "documentation": "https://github.com/21koblenz/bitcoin-stack-tracker",
-  "issue_tracker": "https://github.com/21koblenz/bitcoin-stack-tracker/issues",
   "integration_type": "service",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/21koblenz/bitcoin-stack-tracker/issues",
   "requirements": [
     "aiohttp-socks==0.11.0",
     "argon2-cffi==25.1.0",
     "python-socks==2.8.2",
     "argon2-cffi-bindings==25.1.0"
   ],
-  "version": "0.21.0.6",
-  "dependencies": [
-    "recorder",
-    "http",
-    "frontend",
-    "panel_custom"
-  ]
+  "version": "0.21.0.6"
 }
