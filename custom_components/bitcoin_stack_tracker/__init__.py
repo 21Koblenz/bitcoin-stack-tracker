@@ -94,6 +94,8 @@ from .security import (
 
 _LOGGER = logging.getLogger(__name__)
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 SERVICE_ADD_PURCHASE = "add_purchase"
 SERVICE_ADD_SALE = "add_sale"
 SERVICE_ADD_STACK = "add_stack"
