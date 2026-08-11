@@ -1,72 +1,64 @@
-# Security Model · Bitcoin Stack Tracker v0.21.0.5
+# Security Model · Bitcoin Stack Tracker v0.21.0.6
+
+Dieses Dokument beschreibt die Schutzgrenzen des Projekts. Das Audit für v0.21.0.6 ist ein **Code-, Datenfluss- und Regressionstest-Audit** und kein externer Penetrationstest.
+
 ## Identität und Mehrbenutzerzugriff
 
-Portfoliozugriffe werden einer **echten Home-Assistant-Benutzer-ID aus dem authentifizierten Request-Kontext** zugeordnet. Ein Client kann keine fremde `requester_user_id` vorgeben. System-generierte HA-Nutzer werden für Portfoliozugriffe abgewiesen.
+Portfoliozugriffe werden ausschließlich einer echten Home-Assistant-Benutzer-ID aus dem authentifizierten Request-/Service-Kontext zugeordnet. Ein Client kann keine fremde `requester_user_id` als Identität vorgeben. System-generierte HA-Nutzer werden für Portfoliozugriffe abgewiesen.
 
-Der Portfolio-Eigentümer kann weitere reale Home-Assistant-Nutzer freigeben. Im Passwortmodus muss jeder freigegebene Nutzer den Tresor in seiner eigenen Sitzung zusätzlich entsperren.
+Der Eigentümer kann reale Home-Assistant-Nutzer freigeben. Im Passwortmodus muss ein freigegebener Nutzer den Tresor zusätzlich in seiner eigenen Sitzung entsperren. Owner-only-Funktionen bleiben separat geschützt.
 
 ## Browser-/Panel-Grenze
 
-Das native Home-Assistant-Panel und das Tracker-iframe kommunizieren über einen begrenzten `window.postMessage`-RPC-Kanal. Die Panel-Seite akzeptiert RPC-Nachrichten nur, wenn:
+Das native Home-Assistant-Panel und das Tracker-iframe kommunizieren über einen begrenzten `window.postMessage`-RPC-Kanal. Nachrichten werden nur akzeptiert, wenn `event.source` dem aktuell eingebetteten iframe entspricht, `event.origin` exakt der Home-Assistant-Origin entspricht und die interne RPC-Kennung stimmt.
 
-- `event.source` exakt dem aktuell eingebetteten Tracker-iframe entspricht,
-- `event.origin` exakt der Home-Assistant-Origin entspricht,
-- die interne RPC-Kennung stimmt.
+Das Tracker-Dokument verwendet eine restriktive Content Security Policy mit unter anderem `default-src 'none'`, `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'` und `frame-ancestors 'self'`. Direkte öffentliche Netzwerkaufrufe aus dem Tracker-JavaScript sind damit blockiert; Datenzugriffe laufen über Home Assistant Core.
 
-Antworten werden nur an dieselbe Home-Assistant-Origin gesendet. Das Tracker-Dokument besitzt zusätzlich eine restriktive CSP mit `default-src 'none'`, `connect-src 'none'`, `form-action 'none'`, `object-src 'none'`, `base-uri 'none'` und `frame-ancestors 'self'`. Direkte Netzwerkaufrufe des Tracker-JavaScripts sind dadurch blockiert; Datenzugriffe laufen über Home Assistant Core.
+Das iframe ist bewusst Bestandteil derselben vertrauenswürdigen Home-Assistant-Origin und **keine separate opaque-origin Sandbox**. Ein kompromittierter Home-Assistant-Host oder kompromittierter Browser während einer entsperrten Sitzung liegt außerhalb dieser Schutzgrenze.
 
-Die Browser-Grenze setzt voraus, dass die Home-Assistant-Frontend-Origin selbst vertrauenswürdig ist. Ein kompromittierter Browser oder ein kompromittierter Home-Assistant-Host liegt außerhalb dieser Schutzgrenze.
+## Datenminimierung im Frontend
+
+Nach dem Entsperren wird zunächst nur eine kompakte Dashboard-Zusammenfassung geladen.
+
+- **Übersicht/Charts:** reduzierte Rechenereignisse ohne Notizen, Provider-/Order-IDs, `import_ref_hash` oder interne Ledger-UUIDs.
+- **Buchungen:** vollständige für die Buchungsansicht nötige Ledger-Felder werden erst beim Öffnen dieses Reiters geladen. Eine Allow-List verhindert, dass interne Felder wie `import_ref_hash` oder `fee_btc` versehentlich mitgesendet werden.
+- **FIFO/Haltezeit:** display-only FIFO-Daten; interne Ledger-IDs werden für die Anzeige nicht benötigt.
+- **CSV-Dublettenprüfung:** findet seit v0.21.0.6 vollständig in Home Assistant Core statt. Bestehende Import-Hashes verlassen Core nicht; das Frontend erhält nur boolesche Dubletten-Flags. Die Prüfanfrage ist zusätzlich rate-limitiert.
+
+Authentifizierte Panel-Antworten werden mit `Cache-Control: no-store, private, max-age=0`, `Pragma: no-cache`, `Cross-Origin-Resource-Policy: same-origin`, `Referrer-Policy: no-referrer` und `X-Content-Type-Options: nosniff` ausgeliefert. Veraltete Lazy-Responses werden anhand einer lokalen Revision verworfen.
+
+## Lokaler Browser-Speicher
+
+`localStorage` wird nur für UI-/Sitzungspräferenzen verwendet, zum Beispiel Sprache, Theme, BTC/Sats-Einheit, Chartmodus/-skalen, aktiven Reiter, Diskretmodus, Auto-Lock-Minuten und die ausgewählte Portfolio-ID.
+
+Nicht in `localStorage` gespeichert werden Master-/Backup-Passwörter, Ledgerzeilen, Notizen, Import-Hashes, Provider-IDs oder konkrete Transaktionsbeträge. Während einer entsperrten Sitzung liegen die für die aktuelle Ansicht benötigten Daten zwangsläufig im Browser-RAM.
 
 ## Kryptografie
 
-- Ledger: AES-256-GCM mit zufälligen 96-Bit-Nonces und AAD.
-- Passwort-KDF: Argon2id mit validierten Parametern.
-- Envelope-Verschlüsselung: zufälliger Datenverschlüsselungsschlüssel (DEK), zusätzlich an einen separaten Core-Geräteschlüssel gebunden.
-- Gerätegeheimnis: getrennt gespeichert und mit restriktiven Dateirechten geschützt.
-- Portable Backups: eigenständig passwortverschlüsselt und nicht an eine bestimmte HA-Installation gebunden.
-- Master- und Backup-Passwörter werden nicht dauerhaft gespeichert.
+- Ledger-Verschlüsselung: AES-256-GCM mit zufälligen 96-Bit-Nonces, 128-Bit-Tag und AAD.
+- Passwort-KDF: Argon2id; das aktuelle Profil verwendet 128 MiB Speicher, drei Iterationen und Parallelität 1.
+- Schlüsseltrennung: HKDF-SHA-512; ein zufälliger 256-Bit-DEK verschlüsselt die Nutzdaten und wird durch einen KEK geschützt.
+- Geräteschlüssel: separat in Home Assistant gespeichert und mit restriktiven Dateirechten angelegt. Ein fehlender Geräteschlüssel wird nicht stillschweigend neu erzeugt.
+- Portable `.bstbackup`-Backups besitzen absichtlich eine eigene passwortbasierte, geräteunabhängige Verschlüsselung, damit sie auf einer anderen Installation wiederhergestellt werden können.
+- Neue Tresorpasswörter müssen mindestens 16 Zeichen lang sein.
 
-Ein Angreifer mit Root-/Hostkontrolle oder Schadcode im Browser eines gerade entsperrten Nutzers liegt außerhalb dieser Schutzgrenze.
-
-## Portable Backups
-
-Neue Backups enthalten ausschließlich:
-
-1. Käufe und Verkäufe
-2. Depots
-3. Ziele
-4. lokale Historie
-
-Netzwerkziele, Tor-/Mempool-Einstellungen, HA-Zugriffslisten und Verschlüsselungseinstellungen werden nicht wiederhergestellt. Ältere Backup-Schemata können aus Kompatibilitätsgründen gelesen werden; darin enthaltene Installations-/Zugriffseinstellungen werden beim Restore ignoriert.
+Master- und Backup-Passwörter werden nicht dauerhaft gespeichert. Seed-Wörter, Wallet-Passphrasen oder Private Keys gehören niemals in den Tracker.
 
 ## Netzwerk und Tor
 
-Öffentliche Datenabfragen sind fail-closed und benutzen Tor. Das Netzwerk-App-Modul besitzt keinen HA-API-Token und keinen Zugriff auf Portfolio-Dateien. nftables verwendet für `OUTPUT` und `INPUT` Default-Drop-Regeln.
+Portfolio-, Ledger-, Ziel- und Tresordaten werden nicht an öffentliche Kursanbieter gesendet. Öffentliche Kurs-/Historienquellen werden über das getrennte Tor Gateway angesprochen. Explizit konfigurierte lokale Node-/Mempool-Ziele dürfen direkt im LAN angesprochen werden.
 
-- **9050/tcp:** ausschließlich Home Assistant Core / Bitcoin Stack Tracker.
-- **9051/tcp:** bewusst geteilter interner Tor-SOCKS5-Port für andere Home-Assistant-Apps.
-- **8099/tcp:** interner Health-Endpunkt.
+Das Tor Gateway ist ein getrenntes Modul und hat keinen Zugriff auf Tracker-Ledger, Tresorpasswort oder Home-Assistant-API-Token. Seine eigene Version bleibt bei diesem Integrationsrelease **v0.21.0.3**.
 
-Nur der Tor-Prozess darf öffentlichen Egress initiieren. Private/LAN- und Link-Local-Ziele werden auch für den Tor-Egress geblockt. Der Health-Agent darf selbst keinen neuen öffentlichen Egress initiieren. AppArmor beschränkt zusätzlich Host-/HA-Dateizugriffe und andere gefährliche Ressourcen.
+## Eingabe-/Mutationsschutz
 
-## HTTP-Ressourcenlimits
+- maximale Ledger-, Depot-, Ziel- und Statistikgrößen sind begrenzt;
+- Bulk-Import und Dublettenprüfung sind auf 5.000 Zeilen pro Aufruf begrenzt;
+- sicherheitsrelevante/schwere Endpunkte besitzen Rate-Limits;
+- Add/Edit/Delete/Bulk-Import werden vor dem Persistieren gegen FIFO-Oversell validiert und bleiben atomar;
+- neue oder bearbeitete Ledgerbuchungen dürfen nicht mehr als fünf Minuten in der Zukunft liegen, da der Tracker keine geplanten zukünftigen Buchungen modelliert;
+- Backup-Importe werden strukturell validiert und dürfen keine Netzwerk-/Tor-/Berechtigungskonfiguration aus dem portablen Backup überschreiben.
 
-Externe Providerantworten werden begrenzt eingelesen:
+## Verbleibende Annahmen
 
-- JSON/Text: maximal 8 MiB
-- Bulk-/ZIP-Daten: maximal 32 MiB
-- Fehlertexte: maximal 4 KiB
-
-Die Reader begrenzen auch Antworten ohne beziehungsweise mit falschem `Content-Length`. Native Panel-RPC-Requests werden ebenfalls hart begrenzt.
-
-## Supply Chain
-
-Die Integration pinnt ihre direkten Python-Abhängigkeiten exakt in `manifest.json` und `DEPENDENCIES.lock`. Von Home Assistant bereitgestellte Laufzeitpakete werden nicht unnötig überschrieben.
-
-Das Tor Gateway pinnt die Home-Assistant-Base-Images auf konkrete OCI-SHA256-Digests. Die SBOM enthält dieselben Referenzen. Das GitHub-Release baut amd64 und aarch64 über den Home-Assistant-Builder und veröffentlicht ein signiertes Multi-Arch-Manifest über GitHub OIDC/Cosign.
-
-## Schutzgrenzen
-
-Geschützt wird insbesondere gegen nicht freigegebene HA-Nutzer, manipulierte verschlüsselte Dateien, direkten Clearnet-Fallback, ungewollte Backup-Wiederherstellung von Netzwerk-/Zugriffsparametern und mehrere Klassen von Ressourcen-/Importangriffen.
-
-Nicht vollständig geschützt werden kann gegen einen kompromittierten HA-Host/Root-Account, einen kompromittierten Browser während einer entsperrten Sitzung oder die Weitergabe von Master-/Backup-Passwörtern.
+Die Sicherheitsarchitektur setzt einen vertrauenswürdigen Home-Assistant-Core, dessen Dateisystem, die HA-Frontend-Origin und das Endgerät voraus. Der Tracker schützt nicht gegen einen bereits kompromittierten Host, Browser oder Administrator. Für eine unabhängige Sicherheitszertifizierung wären zusätzlich externe Penetrationstests und eine getrennte Codeprüfung durch Dritte nötig.

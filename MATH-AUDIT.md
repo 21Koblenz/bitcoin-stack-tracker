@@ -1,106 +1,61 @@
-# Mathematical audit · v0.21.0.2
+# Berechnungs-Audit · Bitcoin Stack Tracker v0.21.0.6
 
-Dieses Dokument beschreibt die im Tracker verwendeten Rechenregeln. Es ist eine technische Dokumentation, keine Steuer- oder Anlageberatung.
+Stand: 11.08.2026. Das Audit prüft die mathematischen Kernpfade des Trackers mit deterministischen und randomisierten Regressionstests. Es ist keine Steuerberatung.
 
-## 1. Bitcoin und Sats
+## FIFO und Abgänge
 
-- `1 BTC = 100,000,000 sats`
-- Ledger-Beträge werden intern mit `Decimal` verarbeitet.
-- BTC wird auf 8 Nachkommastellen serialisiert.
+FIFO läuft **pro Depot** und sortiert nach dem realen UTC-Zeitpunkt. Bei identischem Zeitpunkt werden BTC-Zugänge (`purchase`, `stack`) vor BTC-Abgängen (`sale`, `expense`) verarbeitet; danach dient die stabile Entry-ID als Tie-Breaker.
 
-## 2. FIFO und Einstand
+Ein Abgang verbraucht das älteste noch offene Lot. Wird ein Lot nur teilweise verbraucht, bleibt exakt der Rest dieses Lots offen und wird beim nächsten Abgang zuerst verwendet. Kaufgebühren sind Bestandteil der Kostenbasis des jeweiligen Lots. Verkaufs-/Ausgabegebühren werden proportional auf die tatsächlich aus den Lots verwendeten BTC verteilt.
 
-Für jeden Kauf:
+Bewertete `expense`-Buchungen, etwa Kartenzahlungen, bleiben im Ledger **Ausgaben**, werden mathematisch aber als FIFO-Abgänge mit Einstand, Netto-Gegenwert und realisiertem Ergebnis ausgewertet. Unbewertete Ausgaben verbrauchen Lots, ohne einen Fiat-Gegenwert oder Gewinn zu erfinden.
 
-`Gesamteinstand = BTC × Kaufpreis + Kaufgebühr`
+Zusätzlich wird je bewerteten Abgang ein **historischer Durchschnittsvergleich** berechnet. In der Oberfläche bleibt dieser Rechenweg sowohl pro FIFO-Abgangszeile als auch in der Gesamtübersicht sichtbar getrennt von FIFO: FIFO-Einstand/Gewinn/Rendite einerseits und historischer Ø-Vergleichseinstand/Gewinn/Rendite andererseits. Dafür werden alle `purchase`-Buchungen derselben Fiatwährung bis zum Abgangszeitpunkt BTC-gewichtet zusammengefasst. Der effektive Durchschnitt enthält die Kaufgebühren. Bereits zuvor verkaufte Käufe bleiben Teil des historischen Durchschnitts; `stack`-Einträge ohne Kaufpreis werden nicht einbezogen. Bei identischem Zeitstempel gilt dieselbe Reihenfolge wie FIFO: Zugänge vor Abgängen. Der daraus berechnete `Ø-P/L` verwendet den Netto-Gegenwert des jeweiligen FIFO-Anteils, ist aber **kein FIFO-, Steuer- oder offener Einstandswert**. Unterschiedliche Fiatwährungen werden nicht umgerechnet.
 
-`Einstand je BTC = Gesamteinstand / BTC`
+Neue, bearbeitete und per CSV importierte Buchungen dürfen keinen Oversell erzeugen oder einen bereits vorhandenen Legacy-Oversell vergrößern. Die Mutation wird erst nach erfolgreicher Kandidatenberechnung gespeichert.
 
-Verkäufe verbrauchen innerhalb jedes Depots zuerst das älteste noch offene Lot. Für einen FIFO-Match:
+## Haltezeit und Stack-Alter
 
-`anteilige Verkaufsgebühr = Verkaufsgebühr × Match-BTC / gesamte Verkaufs-BTC`
+Die **Haltezeit-Regel** ist eine frei einstellbare exakte Tageszahl, standardmäßig 365 Tage. Sie ist bewusst getrennt von der rein visuellen Altersverteilung.
 
-`Nettoerlös = Match-BTC × Verkaufspreis − anteilige Verkaufsgebühr`
+Für die Altersanzeige verwendet der Tracker 365,2425 Tage pro Jahr. Ausgewiesen werden unter anderem: über/unter Haltezeit-Regel, in 30/90 Tagen zusätzlich über der Regel, BTC-gewichtetes Stack-Alter, ältestes offenes Lot und die Altersbuckets `<1`, `1–2`, `2–4`, `>4 Jahre`.
 
-`realisierter G/V = Nettoerlös − FIFO-Einstand`
+## Gewinn, Einstand und Gebühren
 
-Ein Fiat-Gewinn wird nur berechnet, wenn Kauf- und Verkaufs-Lot dieselbe Fiatwährung verwenden. Ohne FX-Kostenbasis bleibt der Match bewusst ungeklärt.
+- **Realisierter Gewinn/Verlust:** Summe der bekannten FIFO-Ergebnisse abgeschlossener Verkäufe und bewerteter Ausgaben.
+- **Unrealisierter Gewinn/Verlust:** aktueller Marktwert der offenen bekannten Lots minus deren offene Kostenbasis.
+- **Gesamt:** realisiert + unrealisiert, sofern ein aktueller Preis vorliegt.
+- **Netto investiertes Fiat:** Kaufaufwand inklusive Kaufgebühren minus Nettoerlöse aus Verkäufen. Kartenausgaben werden nicht fälschlich als an den Nutzer zurückgezahltes Fiat behandelt.
 
-## 3. Unrealisierter und Gesamt-G/V
+Gebührenquoten sind volumengewichtet. Die **Kaufgebührenquote** ist Kaufgebühren / Kaufvolumen. Die **Abgangsgebührenquote** umfasst Verkäufe und bewertete Ausgaben und ist Abgangsgebühren / Abgangsvolumen. Absolute Durchschnittsgebühren pro Trade werden nicht als Vergleichskennzahl verwendet. Eindeutig in BTC/Sats bekannte On-Chain-/Mining-/sonstige BTC-Gebühren werden separat als `BTC-Gebühren (gesamt)` aggregiert; unbekannte historische BTC-Gebühren werden nicht geraten.
 
-Nur offene Lots mit bekannter Kostenbasis gehen in den Buchgewinn ein:
+## TWR, XIRR und BTC-CAGR
 
-`unrealisierter G/V = bekannte offene BTC × Marktpreis − offener Einstand`
+- **TWR:** zeitgewichtete Portfoliorendite; externe Cashflows werden aus der Strategieperformance herausgerechnet.
+- **XIRR:** persönliche annualisierte Rendite auf Basis realer Cashflow-Zeitpunkte. Enthält der betrachtete Zeitraum bewertete Cashflows in mehreren Fiatwährungen, wird ohne vorhandene FX-Reihe **keine XIRR erfunden**.
+- **BTC-CAGR:** annualisierte BTC-Marktpreisentwicklung seit der ersten bewerteten Buchung. Sie ist ausdrücklich keine persönliche Portfoliorendite und ergänzt TWR/XIRR.
 
-`Gesamt-G/V = realisierter G/V + unrealisierter G/V`
+## HODL-Benchmark
 
-BTC ohne bekannte Kostenbasis bleiben im Portfoliowert enthalten, erzeugen aber keinen erfundenen Buchgewinn.
+Der Benchmark ist cashflow-neutral: Beim Kauf investiert die Benchmark denselben externen Fiataufwand; bei Verkauf oder bewerteter Ausgabe entnimmt sie denselben Netto-Fiatgegenwert. Dadurch werden Strategie und HODL-Pfad mit denselben externen Cashflows verglichen. Bei gemischten Fiatwährungen ohne FX-Daten wird der Vergleich als unvollständig markiert statt stillschweigend umgerechnet.
 
-## 4. DCA
+## Drawdown
 
-`gewichteter Kaufkurs = Σ(BTC × Kaufpreis) / Σ(BTC)`
+Drawdowns werden aus der cashflow-bereinigten Performance-Reihe abgeleitet. v0.21.0.6 korrigiert zwei Randfälle:
 
-`Fiat-Aufwand inkl. Gebühren = Σ(BTC × Kaufpreis + Gebühr)`
+1. Ein erneutes Erreichen exakt desselben ATH setzt `Tage seit ATH` korrekt zurück.
+2. Ein Rückgang von einem positiven Hoch auf exakt 0 wird als **-100 % Drawdown** erkannt; ein Null-Tief wird nicht mehr aus der Reihe herausgefiltert.
 
-`Ø sats pro Fiat = Σ(BTC) × 100,000,000 / Fiat-Aufwand inkl. Gebühren`
+## Historische FIFO-Snapshots und Performance
 
-`Break-even-Kurs = Fiat-Aufwand inkl. Gebühren / Σ(BTC)`
+Die optimierte Tages-Snapshot-Engine wurde gegen die vollständige `fifo_result`-Berechnung auf gemischten, randomisierten Kauf-/Verkauf-/Ausgabe-Ledgers verglichen. Offener Bestand, Kostenbasis, realisierte Ergebnisse, Haltezeitbestände und Gebühren stimmen bis auf vernachlässigbares Decimal-Rundungsrauschen weit unter Satoshi-/Cent-Präzision überein.
 
-`effektiver Einstand eines Kaufs = (BTC × Kaufpreis + Gebühr) / BTC`
+Zusätzlich wurde die optimierte FIFO-Implementierung gegen eine unabhängige Queue-Referenz auf einem randomisierten Ledger verglichen: Lot-Zuordnung, Teil-Lot-Reste, Kostenbasis, Nettoerlös und offener Restbestand stimmen überein.
 
-Bester und schlechtester Kauf werden nach diesem effektiven Einstand bestimmt.
+## Zeitstempel
 
-## 5. TWR
+Ledger-Zeitstempel werden kanonisch auf UTC normalisiert. Die Rechenpfade verwenden echte Zeitpunkte statt lexikographischer ISO-Strings. Neue oder bearbeitete Ledgerbuchungen, die mehr als fünf Minuten in der Zukunft liegen, werden abgewiesen, weil zukünftige geplante Orders kein Ledgerkonzept des Trackers sind.
 
-TWR entfernt externe Zu- und Abflüsse aus der Rendite. Der Zeitraum wird an jedem Cashflow in Teilperioden getrennt und die Teilperioden werden geometrisch verknüpft:
+## Audit-Fazit
 
-`TWR = Π(1 + r_i) − 1`
-
-Käufe/Stack-Zugänge sind externe Zuflüsse, Verkäufe/Ausgaben externe Abflüsse. Transaktionsgebühren sind keine externen Cashflows und bleiben deshalb als Performancekosten sichtbar.
-
-Für Einzahlungen wird der Cashflow vor der anschließenden Transaktion berücksichtigt. Für Auszahlungen wird die Transaktion vor dem externen Abfluss berücksichtigt. Dadurch führt eine vollständige Auszahlung nicht fälschlich zu −100 % Rendite.
-
-## 6. XIRR / XNPV
-
-XIRR löst den Zinssatz `r`, für den gilt:
-
-`XNPV(r) = Σ(CF_i / (1 + r)^((d_i − d_0)/365)) = 0`
-
-- 365-Tage-Konvention.
-- Zahlungstage werden als ganze UTC-Kalendertage verarbeitet.
-- Einzahlungen aus Sicht des Anlegers sind negativ, Auszahlungen positiv, der Endwert positiv.
-- Bei mehreren mathematisch gültigen Wurzeln zeigt der Tracker die Kennzahl als mehrdeutig statt eine beliebige Wurzel auszugeben.
-
-## 7. Cashflow-bereinigte absolute Veränderung
-
-`absoluter G/V = Endwert − Startwert − Nettozuflüsse`
-
-Dabei sind Zuflüsse positiv und Abflüsse negativ. Die Prozentangabe daneben ist TWR, kein pseudo-ROI auf kumulierte Käufe.
-
-## 8. Drawdown
-
-Für jeden Punkt der vollständigen verfügbaren Analyse-Reihe:
-
-`Drawdown_t = Wert_t / bisheriges Hoch_t − 1`
-
-Der maximale Drawdown ist der kleinste Wert dieser Reihe. Die visuelle Langzeit-Verdichtung wird erst für die Darstellung angewandt und beeinflusst die Kennzahl nicht.
-
-## 9. Tages- und Intraday-Zustände
-
-- Tageskurse und tägliche FIFO-Snapshots repräsentieren den Tagesendzustand in UTC.
-- Intraday-Reihen verwenden die tatsächlichen Buchungszeitpunkte.
-- Einstand, realisierter Gewinn und bekannte BTC werden intraday nach jeder Buchung neu berechnet.
-- Langzeit-Displaypunkte behalten den tatsächlichen Beobachtungstag des ausgewählten Kurses.
-
-## 10. Golden-Tests
-
-Die Release-Tests enthalten unter anderem:
-
-- TWR mit Cashflow mitten im Zeitraum: `+200 %` statt der früher möglichen `+250 %`.
-- kompletter Verkauf bei unverändertem Marktpreis und 1 % Verkaufsgebühr: `−1 %` statt `−100 %`.
-- XIRR mit 365-Tage-Basis über ein Schaltjahr.
-- XIRR-Cashflows am selben Kalendertag ohne künstliche Intraday-Abzinsung.
-- klassischer Cashflow mit zwei IRR-Wurzeln: Ergebnis wird als mehrdeutig erkannt.
-- maximaler Drawdown aus `110 → 70`: `−36.3636… %`.
-- mehrere TWR-Cashflows mit exakt identischem Zeitstempel bleiben getrennte Zustände.
-- FIFO-Reihenfolge mit gemischten ISO-Zeitzonen und deterministischer Tie-Break-Reihenfolge.
+Die im erneuten Audit gefundenen Rechenfehler und Inkonsistenzen wurden vor v0.21.0.6 korrigiert und mit Regressionstests abgesichert. Das Audit bestätigt die getesteten Rechenregeln; es ist keine Garantie dafür, dass außerhalb des geprüften Codes niemals weitere Fehler existieren können.

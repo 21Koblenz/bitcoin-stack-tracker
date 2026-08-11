@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.5
+# Bitcoin Stack Tracker v0.21.0.6
 
 **Bitcoin Stack Tracker** ist ein lokaler, Bitcoin-only Portfolio- und Stack-Tracker für Home Assistant. Er verwaltet Käufe, Verkäufe, Depots, Ziele, historische Kurse, FIFO-Zuordnungen und Performance-Auswertungen, ohne Wallet-Schlüssel oder Seed-Wörter zu benötigen.
 
@@ -33,7 +33,8 @@ Das Tor Gateway hat keinen Zugriff auf Kaufbuch, Depotdaten, Tracker-Passwörter
 - Bestand ohne bekannten Einstand
 - Plausibilitätsprüfung vor dem Speichern
 - frei einstellbare Haltezeit, standardmäßig 365 Tage
-- Verkaufsübersicht mit FIFO-Einstand, Verkaufserlös, Gewinn/Verlust und Rendite
+- FIFO-Abgänge für Verkäufe und bewertete Ausgaben mit Lot-Zuordnung, Einstand, Gegenwert, Gewinn/Verlust und Haltezeit
+- Zusätzlich je Abgang: **Ø Einkauf bis dahin** als BTC-gewichteter historischer Einstand aller Käufe bis zu diesem Zeitpunkt sowie ein separater Ø-P/L-Vergleich; dieser Vergleich ersetzt FIFO nicht
 - Pagination und mobile Kartenansicht
 
 Die FIFO-/Haltezeitanzeige ist eine Rechenhilfe und keine Steuerberatung.
@@ -59,9 +60,10 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - Gesamtgewinn/-verlust
 - Einstand + Buchgewinn/-verlust
 - kombinierte Overlays
-- lineare/logarithmische Skala
+- linke und rechte Y-Achse unabhängig linear/logarithmisch
 - Zeiträume von Heute bis Max
-- TWR, XIRR, DCA- und Drawdown-Auswertungen
+- TWR, XIRR, BTC-CAGR, DCA-, Drawdown- und cashflow-neutraler HODL-Benchmark
+- Stacking-Geschwindigkeit, Netto-Fiat-Investment, Gebührenquoten und Stack-Altersverteilung
 - Bitcoin-Netzwerk-, Milestone- und Halving-Markierungen
 
 ## Backup und Datenportabilität
@@ -134,9 +136,24 @@ Kurzfassung:
 
 ## Release
 
-Aktueller Integrationsstand: **v0.21.0.5**. Schema-Hotfix für den ID-basierten CSV-Dublettenimport; die in v0.21.0.4 eingeführte Order-/Trade-/TXID-Identität kann jetzt auch beim Speichern über `bulk_import` verarbeitet werden.
+Aktueller Projektstand: **v0.21.0.6**. Dieser Release bündelt **alle Änderungen seit v0.21.0.5**.
 
-Das **Tor Gateway bleibt v0.21.0.3**, da dieser Hotfix keine Gateway-Änderung enthält.
+### Änderungen seit v0.21.0.5
+
+- **Large-Ledger-Performance:** große CSV-Imports, Tresor-Unlock, Dashboard, Charts und FIFO wurden für Ledgers mit vielen Buchungen optimiert; FIFO-Caches werden wiederverwendet, historische Tagesstände chronologisch aufgebaut und Preisreihen per Binärsuche aufgelöst.
+- **Lazy Loading & Browser-Performance:** Ledger, FIFO und große Historienreihen werden erst bei Bedarf geladen; schwere Overview-Berechnungen laufen verzögert/abbrechbar und wiederholte Vollsuchen wurden durch Indizes/Caches ersetzt.
+- **FIFO-Abgänge:** Verkäufe und bewertete Ausgaben/Kartenzahlungen werden vollständig ausgewertet. Teil-Lot-Reste bleiben erhalten und werden beim nächsten Abgang zuerst verbraucht; mehrere Kauf-Lots behalten jeweils ihre eigene historische Kostenbasis.
+- **Ø Einkauf bis dahin:** Zusätzlich zum steuer-/lotbezogenen FIFO-Ergebnis zeigt jeder Abgang den BTC-gewichteten durchschnittlichen Einstand **aller Käufe in derselben Fiatwährung bis zu diesem Zeitpunkt** inklusive Kaufgebühren. Bereits zuvor verkaufte Käufe bleiben bewusst Teil dieses historischen Durchschnitts. Daraus wird ein separater Ø-P/L-Vergleich berechnet, damit sofort sichtbar ist, ob der Abgang gegenüber dem damaligen Gesamt-Durchschnitt im Plus oder Minus lag. Es findet keine FX-Umrechnung statt. In den einzelnen FIFO-Abgangszeilen werden **FIFO-Gewinn/FIFO-Rendite** und **Ø-Gewinn/Ø-Rendite** getrennt ausgewiesen. Die Kopfübersicht enthält ebenfalls zwei getrennte Blöcke: die echte FIFO-Gesamtrechnung und den historischen Durchschnittsvergleich mit BTC-gewichtetem Vergleichskaufkurs, Vergleichseinstand sowie absolutem und relativem Ø-Ergebnis.
+- **Berechnungs-Audit:** Drawdown-, ATH-, XIRR-, Zeitstempel-, Oversell- und Gebühren-Randfälle wurden erneut geprüft und korrigiert.
+- **Neue Kennzahlen:** BTC-CAGR, Stacking-Geschwindigkeit, realisierter/unrealisierter/gesamter Gewinn, Netto-Fiat-Investment, Drawdown/Recovery, Haltezeit-/Stack-Alter-Auswertung und cashflow-neutraler HODL-Benchmark.
+- **Gebühren:** Kauf- und Abgangsgebühren werden als volumengewichtete Quoten ausgewiesen; echte BTC-/On-Chain-Gebühren werden in Sats berücksichtigt, unbekannte historische Werte nicht geraten.
+- **Charts:** linke und rechte Y-Achse können unabhängig Linear oder Logarithmisch dargestellt werden.
+- **Datenschutz/Privatsphäre:** CSV-Dublettenabgleich läuft vollständig in Home Assistant Core; bestehende Import-Hashes verlassen Core nicht. Ledger-, Chart- und FIFO-Payloads wurden minimiert und sensible Antworten gegen Browser-/Proxy-Caching gehärtet.
+- **FIFO-Oberfläche:** `FIFO SALES / Verkaufsübersicht` wurde zu **FIFO ABGÄNGE / FIFO-Abgänge**; Verkauf und Ausgabe werden getrennt gekennzeichnet und die Kopfzahl zählt echte Abgänge statt Lot-Matches.
+
+Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.6 ausschließlich die Custom Integration betrifft.
+
+Auditbericht: [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md)
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)

@@ -1,16 +1,16 @@
-# Veröffentlichung v0.21.0.5 über GitHub
+# Veröffentlichung v0.21.0.6 über GitHub
 
-Dieser Release ist ein **Integrations-Hotfix**. Das Tor Gateway bleibt auf **v0.21.0.3**.
+1. Finales Projekt und `CHANGELOG.md`, `RELEASE-NOTES.md`, `AUDIT-v0.21.0.6.md` prüfen.
+2. Sicherstellen, dass das Tor Gateway weiterhin `v0.21.0.3` meldet.
+3. Versionsgleichheit prüfen:
+   - `VERSION.txt` = `0.21.0.6`
+   - `custom_components/bitcoin_stack_tracker/manifest.json` = `0.21.0.6`
+   - `custom_components/bitcoin_stack_tracker/const.py` = `0.21.0.6`
+   - Frontend `BUILD_VERSION` = `0.21.0.6`
+4. Änderungen auf `main` veröffentlichen.
+5. Git-Tag **exakt `v0.21.0.6`** auf diesem Commit erstellen.
+6. Release-Titel: `Bitcoin Stack Tracker v0.21.0.6 – Calculation, Privacy & Performance Audit`.
+7. Release Notes aus `RELEASE-NOTES.md` verwenden.
+8. Release veröffentlichen; der bestehende Release-Asset-Workflow baut ZIP + SHA-256.
 
-1. Geänderte Dateien auf `main` hochladen.
-2. Alte v0.21.0.4 Cache-Busting-Assets löschen (siehe `DELETE-OLD-FILES.txt` im Changed-Files-Paket).
-3. Prüfen:
-   - `VERSION.txt` = `0.21.0.5`
-   - `custom_components/bitcoin_stack_tracker/manifest.json` = `0.21.0.5`
-   - `custom_components/bitcoin_stack_tracker/const.py` = `0.21.0.5`
-   - Frontend `BUILD_VERSION` = `0.21.0.5`
-4. Tag `v0.21.0.5` auf `main` erstellen.
-5. Release-Titel: `Bitcoin Stack Tracker v0.21.0.5 Hotfix`.
-6. Release veröffentlichen.
-
-Der Release-Asset-Workflow erzeugt ZIP und SHA-256.
+Der Tor-Gateway-Workflow darf bei diesem Integrationstag keinen neuen Gateway-Build veröffentlichen, weil dessen `config.yaml` weiter `0.21.0.3` enthält.

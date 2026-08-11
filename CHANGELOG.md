@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.21.0.6 — Calculation, Privacy & Large-Ledger Performance Audit
+
+### Berechnung und FIFO
+
+- Verkäufe **und bewertete Ausgaben** werden vollständig als FIFO-Abgänge verarbeitet; Wavespace-/Kartenzahlungen erscheinen korrekt in der FIFO-Abgangsübersicht.
+- FIFO-Abgänge zeigen zusätzlich **Ø Einkauf bis dahin** und einen separaten Ø-P/L-Vergleich. Pro Abgangszeile werden FIFO-Gewinn/FIFO-Rendite und Ø-Gewinn/Ø-Rendite als eigene Felder angezeigt; die Kopfübersicht enthält ebenfalls einen separaten historischen Durchschnittsblock mit Vergleichskaufkurs, Vergleichseinstand und absolutem/relativem Ergebnis. Grundlage ist der BTC-gewichtete effektive Einstand aller Käufe derselben Fiatwährung bis zum Abgangszeitpunkt inklusive Kaufgebühren; der Wert ist ausdrücklich kein FIFO-/Steuerwert und verändert die FIFO-Zuordnung nicht.
+- Teilweise verbrauchte Kauf-Lots behalten ihren exakten Rest. Der nächste Verkauf oder die nächste Ausgabe verwendet zuerst den Rest des ältesten noch offenen Lots.
+- Kostenbasis inklusive anteiliger Kaufgebühren und proportionale Abgangsgebühren wurden erneut mit unabhängigen und randomisierten Referenztests gegengeprüft.
+- Mehrere Kauf-Lots innerhalb eines größeren Abgangs werden einzeln zum jeweiligen historischen Einstand ausgewertet; die Gesamt-Kostenbasis ergibt sich aus der Summe der tatsächlich verbrauchten Lot-Anteile.
+- Gleichzeitige Buchungen verwenden konsistent dieselbe UTC-Tie-Reihenfolge: BTC-Zugang vor BTC-Abgang.
+- Add/Edit/Delete/Bulk-Import validieren atomar und verhindern neuen oder größeren Oversell.
+- Drawdown-Randfälle korrigiert: ein Tief bei 0 entspricht -100 %, ein erneutes gleich hohes ATH setzt `Tage seit ATH` zurück.
+- XIRR verweigert gemischte Fiat-Cashflows ohne FX-Daten, statt eine nicht vorhandene Währungsumrechnung zu unterstellen.
+- Altersbuckets verwenden 365,2425 Tage/Jahr; die konfigurierbare Haltezeit-Regel bleibt eine separate exakte Tagesregel.
+- Neue oder bearbeitete Buchungen mit mehr als fünf Minuten Zukunftsabweichung werden abgewiesen.
+
+### Kennzahlen und Charts
+
+- BTC-CAGR seit erster bewerteter Buchung mit klarer Abgrenzung zu TWR und XIRR.
+- Stacking-Geschwindigkeit für 30 Tage, 365 Tage und seit Beginn.
+- Realisierter, unrealisierter und gesamter Gewinn/Verlust getrennt.
+- Netto investiertes Fiat.
+- Aktueller/maximaler Drawdown, Tage seit letztem Hoch und längste abgeschlossene Erholungsdauer.
+- Haltezeit-Block mit über/unter Haltezeit-Regel, nächste 30/90 Tage, gewichtetem Stack-Alter, ältestem offenen Lot und Altersverteilung.
+- Volumengewichtete Kauf- und Abgangsgebührenquote; Abgänge umfassen Verkauf und bewertete Ausgabe.
+- BTC-/On-Chain-Gebühren werden nur dann als Sats ausgewiesen, wenn ein tatsächlicher BTC-Gebührenwert vorhanden oder exakt rekonstruierbar ist; unbekannte Altwerte werden nicht geraten.
+- Cashflow-neutraler HODL-Benchmark mit denselben externen Ein- und Auszahlungen wie die tatsächliche Strategie.
+- Linke und rechte Chart-Y-Achse können unabhängig Linear oder Logarithmisch dargestellt werden.
+
+### Large-Ledger-Performance
+
+- Behebt die `Zeitüberschreitung bei Home Assistant Core`-Probleme nach großen CSV-Imports bzw. beim anschließenden Öffnen und Navigieren im Tresor.
+- `bulk_import` verwendet den bereits zur Oversell-Prüfung berechneten FIFO-Cache weiter, statt denselben kompletten FIFO-Lauf unmittelbar erneut auszuführen.
+- FIFO nutzt pro Rechenlauf einen lokalen Lot-Cursor und scannt vollständig verbrauchte Lots nicht bei jedem späteren Abgang erneut. Jeder neue Rechenlauf startet trotzdem nach kompletter chronologischer Sortierung wieder vorne, sodass nachträglich eingefügte ältere Trades die FIFO-Zuordnung korrekt verändern können.
+- Historische Tagesstände werden in einem chronologischen Durchlauf aufgebaut, statt für jeden Kurstag FIFO komplett neu zu berechnen.
+- Historische Preiszuordnung verwendet vorbereitete Reihen und Binärsuche; TWR, XIRR, Chartserien und Performancewerte werden pro Dashboard-Snapshot wiederverwendet.
+- XIRR normalisiert/sortiert Cashflows nur einmal pro Rechenlauf.
+- Intraday-FIFO verwendet laufende Summen und lokale Lot-Zeiger.
+- Schwere Overview-Berechnungen laufen erst nach dem sichtbaren Chart in einer Browser-Idle-Phase und werden beim Reiterwechsel verworfen.
+- Dashboard-Sektionen werden lazy geladen; Einstellungen und Sicherheit benötigen kein vollständiges Ledger.
+- Ledger-/FIFO-Indizes reduzieren wiederholte lineare Browser-Suchen.
+- Das bestätigte CSV-Import-Timeout wurde zusätzlich auf 300 Sekunden erhöht; die eigentliche Lösung sind die Performance-Optimierungen.
+
+### Datenschutz, Privatsphäre und Sicherheit
+
+- CSV-Dublettenprüfung findet vollständig in Home Assistant Core statt; bestehende `import_ref_hash`-Werte werden nicht mehr in den Browser geladen.
+- Der Core-Dubletten-Endpunkt liefert nur boolesche Dubletten-Flags und ist mengenbegrenzt/rate-limitiert.
+- Dashboard, Chart, FIFO und Ledger verwenden minimierte Payloads bzw. Allow-Lists; Notizen, Provider-IDs und interne Import-/BTC-Fee-Metadaten werden nur dort übertragen, wo sie tatsächlich benötigt werden.
+- Authentifizierte Panel-Antworten verwenden `Cache-Control: no-store, private`, `Pragma: no-cache`, same-origin/no-referrer-Härtung und `X-Content-Type-Options: nosniff`.
+- Die restriktive CSP blockiert direkte Netzwerkverbindungen des Tracker-Frontends.
+- Veraltete Lazy-Responses können keinen neueren Dashboard-Zustand überschreiben.
+- Nicht-Owner erhalten weiterhin redigierte Verbindungsinformationen.
+- Verschlüsselungsmodell (Argon2id, AES-256-GCM, HKDF-SHA-512/Envelope-Keying) wurde im Code-/Datenfluss-Audit erneut geprüft; der Audit ist kein externer Penetrationstest.
+
+### CSV/FIFO-Oberfläche und Kompatibilität
+
+- `FIFO SALES / Verkaufsübersicht` heißt jetzt **FIFO ABGÄNGE / FIFO-Abgänge**.
+- Verkauf und Ausgabe werden als Art angezeigt; die Kopfzahl zählt echte Abgangsbuchungen statt einzelne Lot-Matches.
+- ID-basierte Dublettenerkennung aus v0.21.0.4/v0.21.0.5 bleibt aktiv.
+- Frontend Cache-Busting: `v021006-733b783d`.
+- **Tor Gateway bleibt v0.21.0.3**; v0.21.0.6 betrifft ausschließlich die Custom Integration.
+
+### Audit und Tests
+
+- Neuer Berechnungs-, Datenschutz-, Privatsphäre- und Security-Code-Audit: [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md).
+- Berechnungsdetails: [`MATH-AUDIT.md`](MATH-AUDIT.md).
+- Finale Testsuite: **351 Tests + 8 Subtests**; JavaScript-Numerik- und Syntaxprüfungen bestanden.
+
 ## v0.21.0.5 — Bulk-Import-Schema Hotfix
 
 - Behebt den Fehler `extra keys not allowed @ data['transactions'][0]['import_ref_hash']` beim Bestätigen von CSV-Imports.
