@@ -79,6 +79,33 @@ def _build_fifo_cache(
     return cache
 
 
+
+
+def _oversold_by_depot(cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Return oversold BTC per real depot (the ALL_DEPOTS aggregate is omitted)."""
+    return {
+        depot_id: max(decimal_value(result.get("oversold_btc")), decimal_value(0))
+        for depot_id, result in cache.items()
+        if depot_id != ALL_DEPOTS
+    }
+
+
+def _oversold_increased(
+    before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Return depots whose oversold amount increased after a tentative edit.
+
+    Legacy ledgers may already contain an oversold state. Editing must never make
+    that state worse, while an older purchase that repairs it must remain possible.
+    """
+    before_amounts = _oversold_by_depot(before)
+    after_amounts = _oversold_by_depot(after)
+    return sorted(
+        depot_id
+        for depot_id, amount in after_amounts.items()
+        if amount > before_amounts.get(depot_id, decimal_value(0))
+    )
+
 def _normalized_utc_timestamp(value: Any) -> str:
     """Normalize a ledger timestamp to one canonical UTC ISO-8601 value."""
     if isinstance(value, datetime):
@@ -88,6 +115,27 @@ def _normalized_utc_timestamp(value: Any) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+MAX_LEDGER_FUTURE_SKEW = timedelta(minutes=5)
+
+def _validated_ledger_timestamp(value: Any, *, now: datetime | None = None) -> str:
+    """Normalize a ledger timestamp and reject genuinely future bookings.
+
+    The tracker has no scheduled/future-order ledger semantics.  Accepting a
+    future purchase would otherwise make the current FIFO stack include BTC
+    before the booking actually happened.  A small skew window avoids false
+    rejects from clocks that differ by a few minutes.
+    """
+    normalized = _normalized_utc_timestamp(value)
+    parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    reference = reference.astimezone(timezone.utc)
+    if parsed > reference + MAX_LEDGER_FUTURE_SKEW:
+        raise ValueError("Ledger timestamp must not be in the future")
+    return normalized
 
 
 def _ledger_sort_key(row: dict[str, Any]) -> tuple[datetime, int, str]:
@@ -120,6 +168,7 @@ def _transaction_fingerprint(item: dict[str, Any]) -> tuple[str, ...]:
         str(item.get("currency") or "").upper(),
         money_string(decimal_value(item.get("price"))),
         money_string(decimal_value(item.get("fee"))),
+        btc_string(decimal_value(item.get("fee_btc"))),
     )
 
 
@@ -136,6 +185,92 @@ def _same_transaction_identity(left: dict[str, Any], right: dict[str, Any]) -> b
     if left_ref and right_ref:
         return left_ref == right_ref
     return _transaction_fingerprint(left) == _transaction_fingerprint(right)
+
+
+def _preview_import_item(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize one reviewed preview row exactly enough for duplicate matching."""
+    try:
+        kind = str(raw.get("type") or "").strip().lower()
+        if kind not in {"purchase", "sale", "expense"}:
+            return None
+        timestamp = _normalized_utc_timestamp(str(raw.get("timestamp") or "").strip())
+        amount = decimal_value(raw.get("amount_btc"))
+        price = decimal_value(raw.get("price"))
+        fee = decimal_value(raw.get("fee"))
+        fee_btc = decimal_value(raw.get("fee_btc"))
+        if amount <= 0 or fee < 0 or fee_btc < 0:
+            return None
+        currency = str(raw.get("currency") or "").strip().upper()[:16]
+        if kind != "expense" and (not currency or price <= 0):
+            return None
+        if kind == "expense" and (bool(currency) != (price > 0)):
+            return None
+        item: dict[str, Any] = {
+            "type": kind,
+            "timestamp": timestamp,
+            "depot_id": str(raw.get("depot_id") or DEFAULT_DEPOT_ID),
+            "amount_btc": btc_string(amount),
+        }
+        if kind != "expense" or (currency and price > 0):
+            item.update({
+                "currency": currency,
+                "price": money_string(price),
+                "fee": money_string(fee),
+            })
+        if fee_btc > 0:
+            item["fee_btc"] = btc_string(fee_btc)
+        ref_hash = str(raw.get("import_ref_hash") or "").strip().lower()
+        if ref_hash and not re.fullmatch(r"[0-9a-f]{64}", ref_hash):
+            return None
+        if ref_hash:
+            item["import_ref_hash"] = ref_hash
+        return item
+    except (TypeError, ValueError):
+        return None
+
+
+def _import_duplicate_flags(
+    existing: list[dict[str, Any]], transactions: list[dict[str, Any]]
+) -> list[bool]:
+    """Match preview rows against the private ledger without exposing its hashes.
+
+    This intentionally mirrors ``async_bulk_import``.  Source-ID hashes with
+    different values remain distinct even if time/amount/price are identical;
+    rows without a source ID use the financial fingerprint fallback.
+    """
+    existing_fingerprints = {_transaction_fingerprint(item) for item in existing}
+    existing_ref_hashes = {
+        ref_hash for item in existing if (ref_hash := _import_ref_hash(item))
+    }
+    legacy_fingerprint_counts = Counter(
+        _transaction_fingerprint(item)
+        for item in existing
+        if not _import_ref_hash(item)
+    )
+    pending_fingerprints: set[tuple[str, ...]] = set()
+    pending_ref_hashes: set[str] = set()
+    flags: list[bool] = []
+    for raw in transactions:
+        item = _preview_import_item(raw) if isinstance(raw, dict) else None
+        if item is None:
+            flags.append(False)
+            continue
+        fingerprint = _transaction_fingerprint(item)
+        ref_hash = _import_ref_hash(item)
+        duplicate = False
+        if ref_hash:
+            duplicate = ref_hash in existing_ref_hashes or ref_hash in pending_ref_hashes
+            if not duplicate and legacy_fingerprint_counts[fingerprint] > 0:
+                legacy_fingerprint_counts[fingerprint] -= 1
+                duplicate = True
+            pending_ref_hashes.add(ref_hash)
+            if not duplicate:
+                pending_fingerprints.add(fingerprint)
+        else:
+            duplicate = fingerprint in existing_fingerprints or fingerprint in pending_fingerprints
+            pending_fingerprints.add(fingerprint)
+        flags.append(duplicate)
+    return flags
 
 
 class BitcoinLedgerStore:
@@ -511,6 +646,43 @@ class BitcoinLedgerStore:
             _build_fifo_cache, entries, depots, days
         )
 
+    async def _async_fifo_cache_for_entries(
+        self, entries: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Build a tentative FIFO cache without mutating the live ledger."""
+        days = int(
+            self._data.get("tax_settings", {}).get(
+                "long_term_days", DEFAULT_LONG_TERM_DAYS
+            )
+        )
+        return await self.hass.async_add_executor_job(
+            _build_fifo_cache,
+            deepcopy(entries),
+            deepcopy(self._data.get("depots", [])),
+            days,
+        )
+
+    async def _async_validate_fifo_change(
+        self, before_entries: list[dict[str, Any]], after_entries: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Validate a tentative mutation and return its already-built FIFO cache.
+
+        The operation is atomic: nothing is assigned to ``self._data`` before
+        this function succeeds.  A pre-existing legacy oversell may be repaired,
+        but no edit/import is allowed to create or increase one.
+        """
+        before_cache = self._fifo_cache
+        if not before_cache:
+            before_cache = await self._async_fifo_cache_for_entries(before_entries)
+        after_cache = await self._async_fifo_cache_for_entries(after_entries)
+        worsened = _oversold_increased(before_cache, after_cache)
+        if worsened:
+            raise ValueError(
+                "Transaction would create or increase an oversold BTC balance in depot: "
+                + ", ".join(worsened)
+            )
+        return after_cache
+
     def password_crypto_status(self) -> dict[str, Any] | None:
         """Return non-secret cryptographic architecture details for owner UI."""
         if self.security.encryption_mode != ENCRYPTION_PASSWORD or self._password_kdf is None:
@@ -543,9 +715,10 @@ class BitcoinLedgerStore:
             raise RuntimeError("FIFO cache is unavailable")
         return summary
 
-    async def _async_save(self) -> None:
+    async def _async_save(self, *, refresh_fifo_cache: bool = True) -> None:
         self.require_unlocked()
-        await self._async_refresh_fifo_cache_without_lock()
+        if refresh_fifo_cache:
+            await self._async_refresh_fifo_cache_without_lock()
         mode = self.security.encryption_mode
         if mode == ENCRYPTION_PASSWORD:
             if self._session_key is None or self._password_envelope is None:
@@ -612,7 +785,10 @@ class BitcoinLedgerStore:
                 "revision": str(revision),
                 "data": deepcopy(data),
             }
-            await self._async_save()
+            # Updating derived chart data does not change FIFO inputs.  Keep the
+            # already-valid FIFO cache instead of recomputing it during chart
+            # persistence.
+            await self._async_save(refresh_fifo_cache=False)
 
     def has_depot(self, depot_id: str) -> bool:
         self.require_unlocked()
@@ -648,7 +824,7 @@ class BitcoinLedgerStore:
         item = {
             "id": uuid4().hex,
             "type": kind,
-            "timestamp": _normalized_utc_timestamp(timestamp),
+            "timestamp": _validated_ledger_timestamp(timestamp),
             "depot_id": depot_id,
             "amount_btc": btc_string(amount),
             "currency": currency.upper(),
@@ -672,7 +848,7 @@ class BitcoinLedgerStore:
         item = {
             "id": uuid4().hex,
             "type": "stack",
-            "timestamp": _normalized_utc_timestamp(timestamp),
+            "timestamp": _validated_ledger_timestamp(timestamp),
             "depot_id": depot_id,
             "amount_btc": btc_string(amount),
             "note": clean_note,
@@ -682,11 +858,30 @@ class BitcoinLedgerStore:
 
     async def _async_append(self, item: dict[str, Any]) -> None:
         async with self._lock:
-            if len(self._data.get("entries", [])) >= MAX_LEDGER_ENTRIES:
+            self.require_unlocked()
+            before = list(self._data.get("entries", []))
+            if len(before) >= MAX_LEDGER_ENTRIES:
                 raise ValueError(f"A maximum of {MAX_LEDGER_ENTRIES} ledger entries is allowed")
-            self._data.setdefault("entries", []).append(item)
-            self._data["entries"].sort(key=_ledger_sort_key)
-            await self._async_save()
+            candidate = before + [deepcopy(item)]
+            candidate.sort(key=_ledger_sort_key)
+            fifo_cache = await self._async_validate_fifo_change(before, candidate)
+            self._data["entries"] = candidate
+            self._data["chart_cache"] = {}
+            self._fifo_cache = fifo_cache
+            await self._async_save(refresh_fifo_cache=False)
+
+    async def async_import_duplicate_flags(
+        self, transactions: list[dict[str, Any]]
+    ) -> list[bool]:
+        """Return duplicate flags while keeping existing ledger identities in Core."""
+        if not isinstance(transactions, list) or len(transactions) > 5_000:
+            raise ValueError("A maximum of 5000 transactions can be checked at once")
+        async with self._lock:
+            self.require_unlocked()
+            existing = deepcopy(self._data.get("entries", []))
+        return await self.hass.async_add_executor_job(
+            _import_duplicate_flags, existing, deepcopy(transactions)
+        )
 
     async def async_bulk_import(
         self, transactions: list[dict[str, Any]]
@@ -738,6 +933,7 @@ class BitcoinLedgerStore:
                 amount = decimal_value(raw.get("amount_btc"))
                 price = decimal_value(raw.get("price"))
                 fee = decimal_value(raw.get("fee"))
+                fee_btc = decimal_value(raw.get("fee_btc"))
                 currency = str(raw.get("currency") or "").strip().upper()[:16]
                 import_ref_hash = str(raw.get("import_ref_hash") or "").strip().lower()
                 if import_ref_hash and not re.fullmatch(r"[0-9a-f]{64}", import_ref_hash):
@@ -748,6 +944,8 @@ class BitcoinLedgerStore:
                     raise ValueError(f"Import row {index}: price must be greater than zero")
                 if fee < 0:
                     raise ValueError(f"Import row {index}: fee must not be negative")
+                if fee_btc < 0:
+                    raise ValueError(f"Import row {index}: BTC fee must not be negative")
                 if kind != "expense" and not currency:
                     raise ValueError(f"Import row {index}: currency is required")
                 expense_has_fiat_value = kind == "expense" and bool(currency) and price > 0
@@ -758,7 +956,7 @@ class BitcoinLedgerStore:
                 item = {
                     "id": uuid4().hex,
                     "type": kind,
-                    "timestamp": _normalized_utc_timestamp(timestamp),
+                    "timestamp": _validated_ledger_timestamp(timestamp),
                     "depot_id": depot_id,
                     "amount_btc": btc_string(amount),
                     "note": str(raw.get("note") or "").strip()[:MAX_NOTE_LENGTH],
@@ -769,6 +967,8 @@ class BitcoinLedgerStore:
                         "price": money_string(price),
                         "fee": money_string(fee),
                     })
+                if fee_btc > 0:
+                    item["fee_btc"] = btc_string(fee_btc)
                 if import_ref_hash:
                     item["import_ref_hash"] = import_ref_hash
                 fingerprint = _transaction_fingerprint(item)
@@ -803,26 +1003,15 @@ class BitcoinLedgerStore:
 
             combined = current + additions
             combined.sort(key=_ledger_sort_key)
-            days = int(
-                self._data.get("tax_settings", {}).get(
-                    "long_term_days", DEFAULT_LONG_TERM_DAYS
-                )
-            )
-            fifo_cache = await self.hass.async_add_executor_job(
-                _build_fifo_cache, combined, deepcopy(self._data.get("depots", [])), days
-            )
-            oversold = [
-                depot_id for depot_id, result in fifo_cache.items()
-                if depot_id != ALL_DEPOTS and decimal_value(result.get("oversold_btc")) > 0
-            ]
-            if oversold:
-                raise ValueError(
-                    "Import contains a sale before enough BTC is available in depot: "
-                    + ", ".join(sorted(oversold))
-                )
+            fifo_cache = await self._async_validate_fifo_change(current, combined)
 
             self._data["entries"] = combined
-            await self._async_save()
+            self._data["chart_cache"] = {}
+            # The FIFO cache above was already built against exactly this combined
+            # ledger in order to validate overselling. Reuse it for persistence
+            # instead of rebuilding the same expensive cache a second time.
+            self._fifo_cache = fifo_cache
+            await self._async_save(refresh_fifo_cache=False)
             return {
                 "imported": len(additions),
                 "duplicates": duplicates,
@@ -974,31 +1163,41 @@ class BitcoinLedgerStore:
             original_ref_hash = _import_ref_hash(entries[index])
             if original_ref_hash:
                 updated["import_ref_hash"] = original_ref_hash
+            original_fee_btc = decimal_value(entries[index].get("fee_btc"))
+            if original_fee_btc > 0:
+                updated["fee_btc"] = btc_string(original_fee_btc)
             updated["note"] = str(updated.get("note") or "").strip()[:MAX_NOTE_LENGTH]
             if updated.get("timestamp"):
-                updated["timestamp"] = _normalized_utc_timestamp(updated["timestamp"])
+                updated["timestamp"] = _validated_ledger_timestamp(updated["timestamp"])
             if any(
                 idx != index and _same_transaction_identity(updated, item)
                 for idx, item in enumerate(entries)
             ):
                 raise ValueError("Another ledger entry already has the same transaction identity")
+            before = list(self._data.get("entries", []))
             entries[index] = updated
             entries.sort(key=_ledger_sort_key)
+            fifo_cache = await self._async_validate_fifo_change(before, entries)
             self._data["entries"] = entries
             self._data["chart_cache"] = {}
-            await self._async_save()
+            self._fifo_cache = fifo_cache
+            await self._async_save(refresh_fifo_cache=False)
             return True
 
     async def async_delete(self, item_id: str) -> bool:
         async with self._lock:
-            before = len(self._data.get("entries", []))
-            self._data["entries"] = [
-                item for item in self._data.get("entries", []) if item.get("id") != item_id
-            ]
-            changed = len(self._data["entries"]) != before
-            if changed:
-                await self._async_save()
-            return changed
+            self.require_unlocked()
+            before_entries = list(self._data.get("entries", []))
+            candidate = [item for item in before_entries if item.get("id") != item_id]
+            changed = len(candidate) != len(before_entries)
+            if not changed:
+                return False
+            fifo_cache = await self._async_validate_fifo_change(before_entries, candidate)
+            self._data["entries"] = candidate
+            self._data["chart_cache"] = {}
+            self._fifo_cache = fifo_cache
+            await self._async_save(refresh_fifo_cache=False)
+            return True
 
     async def async_export(self) -> dict[str, Any]:
         async with self._lock:

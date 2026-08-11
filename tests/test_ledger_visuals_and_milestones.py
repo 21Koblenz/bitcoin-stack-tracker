@@ -2,8 +2,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
-APP = (FRONTEND / "static" / "app-v021005-28d54128.js").read_text(encoding="utf-8")
-CSS = (FRONTEND / "static" / "style-v021005-28d54128.css").read_text(encoding="utf-8")
+APP = (FRONTEND / "static" / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+CSS = (FRONTEND / "static" / "style-v021006-733b783d.css").read_text(encoding="utf-8")
 
 
 def test_ledger_notes_start_after_date_column_and_date_stays_separate():

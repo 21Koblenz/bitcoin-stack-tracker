@@ -2,9 +2,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021005-28d54128.js").read_text(encoding="utf-8")
-PANEL = (COMP / "frontend/panel-v021005-28d54128.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021005-28d54128.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021006-733b783d.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel-v021006-733b783d.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021006-733b783d.css").read_text(encoding="utf-8")
 
 def test_sidebar_animation_does_not_force_csv_layout_on_every_resize():
     assert 'window.addEventListener("resize",updateCsvHorizontalScroll);' not in APP

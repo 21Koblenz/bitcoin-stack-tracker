@@ -25,6 +25,7 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "backup": (3, 600),
     "restore": (3, 600),
     "import_preview": (10, 60),
+    "import_duplicates": (60, 60),
     "export_csv": (5, 600),
     "bulk_import": (5, 600),
     "delete_all_entries": (2, 600),

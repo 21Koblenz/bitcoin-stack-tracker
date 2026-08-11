@@ -2,14 +2,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021005-28d54128.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021005-28d54128.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021006-733b783d.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021006-733b783d.css").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 
 
 def test_fifo_sales_shows_full_performance_columns_summary_and_pagination():
-    for label in ("Kaufkurs damals", "FIFO-Einstand", "Verkaufskurs", "Verkaufserlös", "Gewinn/Verlust", "Rendite"):
+    for label in ("Kaufkurs damals", "FIFO-Einstand", "Abgangskurs", "Erlös / Gegenwert", "Gewinn/Verlust", "Rendite"):
         assert label in INDEX
     assert 'id="fifoSaleSummary"' in INDEX
     assert 'id="fifoPagination"' in INDEX

@@ -147,3 +147,41 @@ const close = (actual, expected, tolerance = 1e-9) => {
 }
 
 console.log("performance math numeric tests: ok");
+
+// Recovery duration and days since the latest period high are reported without extra scans in the UI.
+{
+  const result = math.maximumDrawdown([
+    {time:0*math.DAY_MS,value:100,key:"a"},
+    {time:1*math.DAY_MS,value:80,key:"b"},
+    {time:5*math.DAY_MS,value:101,key:"c"},
+    {time:6*math.DAY_MS,value:90,key:"d"},
+    {time:9*math.DAY_MS,value:102,key:"e"},
+    {time:11*math.DAY_MS,value:95,key:"f"},
+  ]);
+  close(result.longestRecoveryDays,5,1e-12);
+  close(result.daysSincePeriodPeak,2,1e-12);
+}
+
+// Retesting the exact same ATH resets "days since ATH" to the latest occurrence.
+{
+  const result = math.maximumDrawdown([
+    {time:0*math.DAY_MS,value:100,key:"a"},
+    {time:3*math.DAY_MS,value:100,key:"b"},
+    {time:5*math.DAY_MS,value:90,key:"c"},
+  ]);
+  close(result.daysSincePeriodPeak,2,1e-12);
+  assert.strictEqual(result.periodPeakTime,3*math.DAY_MS);
+}
+
+// A real fall from a positive peak to zero is a complete (-100%) drawdown,
+// not an invalid data point that may be filtered away.
+{
+  const result = math.maximumDrawdown([
+    {time:0*math.DAY_MS,value:100,key:"a"},
+    {time:1*math.DAY_MS,value:0,key:"b"},
+    {time:2*math.DAY_MS,value:25,key:"c"},
+  ]);
+  close(result.maximum,-100,1e-12);
+  close(result.current,-75,1e-12);
+  assert.strictEqual(result.troughTime,1*math.DAY_MS);
+}

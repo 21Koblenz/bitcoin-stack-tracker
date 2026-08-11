@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 import asyncio
@@ -65,7 +66,7 @@ from .crypto import (
     decrypt_backup_envelope,
 )
 from .export import write_csv_export
-from .fifo import fifo_result
+from .fifo import cumulative_average_entry_price_by_disposition, currency_summary_from_result, fifo_result
 from .helpers import configured_currencies, effective_settings, parse_timestamp
 from .http_limits import MAX_ERROR_RESPONSE_BYTES, async_json_limited, async_text_limited
 from .history import (
@@ -78,6 +79,7 @@ from .history import (
 from .limits import MAX_DEPOTS, MAX_GOALS, MAX_LEDGER_ENTRIES, RATE_LIMITS
 from .migrations import LATEST_CONFIG_VERSION, migrate_config_data
 from .models import amount_to_btc, btc_string, decimal_value, goal_reached_at, money_string
+from .metrics import build_dashboard_metrics
 from .network import async_routed_session, async_tor_gateway_host, mempool_source_uses_tor, network_security_snapshot, rotate_tor_isolation, tor_proxy_from_settings
 from .rate_limit import OperationRateLimiter
 from .csv_import import MAX_IMPORT_BYTES, parse_transaction_upload
@@ -204,6 +206,7 @@ IMPORT_TRANSACTION_SCHEMA = vol.Schema({
     vol.Optional(CONF_CURRENCY, default=""): cv.string,
     vol.Optional(CONF_PRICE, default=0): vol.Any(str, int, float),
     vol.Optional(CONF_FEE, default=0): vol.Any(str, int, float),
+    vol.Optional("fee_btc", default=0): vol.Any(str, int, float),
     vol.Optional(CONF_NOTE, default=""): cv.string,
     vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,
     # One-way SHA-256 source-row identity used only for duplicate detection.
@@ -275,6 +278,10 @@ EXPORT_CSV_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
     vol.Optional(CONF_DELIMITER, default=";"): vol.In([";", ","]),
 })
+CONF_DASHBOARD_SECTION = "dashboard_section"
+DASHBOARD_SECTIONS = {"all", "summary", "chart", "ledger", "fifo"}
+
+
 DASHBOARD_DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
     # 0 means every locally cached day. This setting changes only the view;
@@ -285,6 +292,10 @@ DASHBOARD_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_HISTORY_INTERVAL, default=1440): vol.All(
         vol.Coerce(int), vol.In([5, 15, 30, 60, 120, 240, 720, 1440])
     ),
+    # The native panel asks for sensitive/heavy sections only when the
+    # corresponding tab actually needs them. Manual service calls keep the
+    # legacy all-in-one response by default.
+    vol.Optional(CONF_DASHBOARD_SECTION, default="all"): vol.In(DASHBOARD_SECTIONS),
 })
 SET_HISTORY_SETTINGS_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
@@ -380,14 +391,22 @@ def _build_dashboard_calculations(
     goals: list[dict[str, Any]],
     prices: dict[str, Any],
     long_term_days: int,
+    fifo: dict[str, Any] | None = None,
+    depot_results: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    fifo = fifo_result(entries, long_term_days=long_term_days)
+    # Storage already maintains FIFO summaries for the current ledger revision.
+    # Reuse them for dashboard rendering instead of recalculating the complete
+    # ledger after every unlock, import, or page refresh.  The optional fallback
+    # keeps this pure helper usable in tests and migration tooling.
+    fifo = fifo or fifo_result(entries, long_term_days=long_term_days)
     depot_summaries = []
-    depot_results: dict[str, dict[str, Any]] = {}
+    depot_results = depot_results or {}
     for depot in depots:
         depot_id = str(depot["id"])
-        scoped = fifo_result(entries, depot_id, long_term_days=long_term_days)
-        depot_results[depot_id] = scoped
+        scoped = depot_results.get(depot_id)
+        if scoped is None:
+            scoped = fifo_result(entries, depot_id, long_term_days=long_term_days)
+            depot_results[depot_id] = scoped
         depot_summaries.append({
             **depot,
             "total_btc": scoped["total_btc"],
@@ -424,6 +443,210 @@ def _build_dashboard_calculations(
             "remaining_fiat": remaining * price if price is not None else None,
         })
     return {"fifo": fifo, "depot_summaries": depot_summaries, "goals": goal_overview}
+
+
+def _dashboard_fifo_summary(
+    fifo: dict[str, Any], currencies: list[str]
+) -> dict[str, Any]:
+    """Return aggregate FIFO values without exposing individual lots/trades."""
+    keys = (
+        "total_btc", "known_btc", "unknown_btc", "long_term_btc",
+        "short_term_btc", "unknown_holding_btc", "next_long_term_date",
+        "next_long_term_btc", "realized", "realized_long_term",
+        "realized_short_term", "purchase_fees", "sale_fees",
+        "unresolved_btc", "oversold_btc", "long_term_days", "as_of",
+    )
+    result = {key: deepcopy(fifo.get(key)) for key in keys}
+    result["currency_summaries"] = {
+        str(currency).upper(): currency_summary_from_result(fifo, str(currency).upper())
+        for currency in currencies
+    }
+    return result
+
+
+def _dashboard_purchase_totals(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Return only overview purchase aggregates, never notes or source IDs."""
+    totals: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if entry.get("type") != "purchase":
+            continue
+        currency = str(entry.get("currency") or "").upper()
+        if not currency:
+            continue
+        amount = max(decimal_value(entry.get("amount_btc")), Decimal("0"))
+        price = max(decimal_value(entry.get("price")), Decimal("0"))
+        fee = max(decimal_value(entry.get("fee")), Decimal("0"))
+        if amount <= 0 or price <= 0:
+            continue
+        item = totals.setdefault(
+            currency,
+            {"fiat": Decimal("0"), "btc": Decimal("0"), "fees": Decimal("0"), "count": 0},
+        )
+        item["fiat"] += amount * price
+        item["btc"] += amount
+        item["fees"] += fee
+        item["count"] += 1
+    for item in totals.values():
+        item["total_outlay"] = item["fiat"] + item["fees"]
+    return totals
+
+
+def _dashboard_depot_entry_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in entries:
+        depot_id = str(entry.get("depot_id") or DEFAULT_DEPOT_ID)
+        counts[depot_id] = counts.get(depot_id, 0) + 1
+    return counts
+
+
+def _dashboard_ledger_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return only fields required to render/edit the booking ledger.
+
+    In particular, persisted source-identity hashes and exact BTC-fee metadata
+    stay in Home Assistant Core.  Edit operations preserve those fields
+    server-side, so the browser never needs them.
+    """
+    allowed = (
+        "id", "type", "timestamp", "depot_id", "amount_btc",
+        "currency", "price", "fee", "note",
+    )
+    return [
+        {key: deepcopy(entry.get(key)) for key in allowed if key in entry}
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+def _dashboard_ledger_fifo(fifo: dict[str, Any]) -> dict[str, Any]:
+    """Return the minimum FIFO detail required by the ledger tab."""
+    match_statuses: dict[str, list[str]] = {}
+    for match in fifo.get("matches", []):
+        sale_id = str(match.get("sale_id") or "")
+        status = str(match.get("status") or "")
+        if not sale_id or not status:
+            continue
+        values = match_statuses.setdefault(sale_id, [])
+        if status not in values:
+            values.append(status)
+    return {
+        "open_lots": [
+            {
+                "entry_id": lot.get("entry_id"),
+                "holding_status": lot.get("holding_status", "unknown"),
+                "long_term_date": lot.get("long_term_date"),
+            }
+            for lot in fifo.get("open_lots", [])
+        ],
+        "sales": {
+            str(entry_id): {
+                "status": value.get("status", "unknown"),
+                "holding_status": value.get("holding_status", "unknown"),
+            }
+            for entry_id, value in fifo.get("sales", {}).items()
+        },
+        "expenses": {
+            str(entry_id): {
+                "status": value.get("status", "unknown"),
+                "holding_status": value.get("holding_status", "unknown"),
+            }
+            for entry_id, value in fifo.get("expenses", {}).items()
+        },
+        "match_statuses_by_sale": match_statuses,
+    }
+
+
+def _dashboard_fifo_matches(
+    fifo: dict[str, Any], entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return FIFO disposal rows without exposing full ledger records or notes.
+
+    Sales and priced BTC expenses both dispose of FIFO lots. The tax/FIFO view
+    needs prices and currencies for display, but it does not
+    need provider/import identifiers, notes, or the internal transaction IDs
+    used to link the stored ledger. Resolve those links server-side and return
+    a display-only row instead.
+    """
+    by_id = {str(entry.get("id")): entry for entry in entries if entry.get("id")}
+    average_entry_by_disposition = cumulative_average_entry_price_by_disposition(entries)
+    result: list[dict[str, Any]] = []
+    # The UI may need to know whether several FIFO rows belong to one outgoing
+    # booking, but it must not receive the internal ledger UUID. Map every
+    # outgoing entry to a short response-local sequence number instead.
+    disposition_indexes: dict[str, int] = {}
+    for raw in fifo.get("matches", []):
+        if not isinstance(raw, dict):
+            continue
+        purchase = by_id.get(str(raw.get("purchase_id") or ""), {})
+        outgoing_id = str(raw.get("disposition_id") or raw.get("sale_id") or "")
+        sale = by_id.get(outgoing_id, {})
+        if outgoing_id and outgoing_id not in disposition_indexes:
+            disposition_indexes[outgoing_id] = len(disposition_indexes) + 1
+        row = {
+            key: deepcopy(value)
+            for key, value in raw.items()
+            if key not in {"purchase_id", "sale_id", "disposition_id"}
+        }
+        row["disposition_index"] = disposition_indexes.get(outgoing_id)
+        row["purchase_price"] = purchase.get("price")
+        row["sale_price"] = sale.get("price")
+        # Currency already exists on FIFO matches, but keep a safe fallback for
+        # legacy cached rows without the newer fields.
+        row["purchase_currency"] = raw.get("purchase_currency") or purchase.get("currency")
+        row["sale_currency"] = raw.get("sale_currency") or sale.get("currency")
+
+        # Separate, non-FIFO comparison: use the BTC-weighted effective average
+        # acquisition price of every purchase in the same fiat currency up to
+        # this disposal.  This answers whether the outgoing booking was above or
+        # below the portfolio's average buy-in at that moment without changing
+        # the legal/accounting FIFO result.  Only aggregate numbers cross the
+        # panel boundary; no additional ledger identifiers are exposed.
+        average_entry_price = average_entry_by_disposition.get(outgoing_id)
+        row["average_entry_price_to_date"] = average_entry_price
+        amount = decimal_value(raw.get("amount_btc"))
+        net_proceeds = raw.get("net_proceeds")
+        if average_entry_price is not None and amount > 0 and net_proceeds is not None:
+            average_basis = amount * average_entry_price
+            average_gain = decimal_value(net_proceeds) - average_basis
+            row["average_entry_gain"] = average_gain
+            row["average_entry_return_percent"] = (
+                average_gain / average_basis * Decimal("100")
+                if average_basis > 0
+                else None
+            )
+        else:
+            row["average_entry_gain"] = None
+            row["average_entry_return_percent"] = None
+        result.append(row)
+    return result
+
+
+def _dashboard_chart_ledger_events(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return note-free ledger events needed for local chart/performance math.
+
+    The browser never needs notes, import fingerprints, provider transaction IDs
+    or internal entry UUIDs to draw charts. Omitting them reduces both payload
+    size and the amount of sensitive data present in the overview tab.
+    """
+    result: list[dict[str, Any]] = []
+    for sequence, entry in enumerate(entries):
+        kind = str(entry.get("type") or "")
+        if kind not in {"purchase", "stack", "sale", "expense"}:
+            continue
+        event = {
+            "sequence": sequence,
+            "type": kind,
+            "timestamp": entry.get("timestamp"),
+            "amount_btc": entry.get("amount_btc"),
+            "depot_id": entry.get("depot_id", DEFAULT_DEPOT_ID),
+        }
+        if kind != "stack":
+            event.update({
+                "currency": entry.get("currency"),
+                "price": entry.get("price"),
+                "fee": entry.get("fee", 0),
+            })
+        result.append(event)
+    return result
 
 
 def _with_requester(schema: vol.Schema) -> vol.Schema:
@@ -1848,7 +2071,15 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 "INFO",
                 f"route={route or '-'} method={method} status=200 duration_ms={int((monotonic() - request_started) * 1000)}",
             )
-            return self.json(payload)
+            response = self.json(payload)
+            # Portfolio, ledger, FIFO and chart responses are authenticated but
+            # financially sensitive. Never permit browser/proxy disk caching.
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
 
         if route == "api/whoami" and method == "GET":
             user = request["hass_user"]
@@ -1862,24 +2093,34 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             entry_id = q("entry_id")
             if not entry_id:
                 raise web.HTTPBadRequest(text="entry_id is required")
+            section = q("section", "summary") or "summary"
+            if section not in DASHBOARD_SECTIONS:
+                raise web.HTTPBadRequest(text="invalid dashboard section")
             result = await _panel_call_service(
                 self.hass, request, SERVICE_DASHBOARD_DATA,
                 {
                     CONF_CONFIG_ENTRY_ID: entry_id,
                     CONF_HISTORY_DAYS: int(q("history_days", "365") or 365),
                     CONF_HISTORY_INTERVAL: int(q("history_interval", "1440") or 1440),
+                    CONF_DASHBOARD_SECTION: section,
                 }, requester,
             )
             if isinstance(result, dict):
                 result["addon_version"] = VERSION
                 result["integration_version"] = VERSION
                 result["architecture"] = "native-core-panel"
-                result["connection_inventory"] = _connection_inventory(
-                    effective_settings(self.hass.config_entries.async_get_entry(entry_id)),
-                    _runtime(self.hass, entry_id)["history_storage"].data,
-                    network_security_snapshot(self.hass),
-                    (self.hass.data[DOMAIN][entry_id]["coordinator"].data or {}).get("price_details", {}),
-                )
+                # Never overwrite the redacted non-owner inventory produced by
+                # dashboard_data. This used to reintroduce internal source
+                # details after the authorization-aware service returned.
+                if section in {"summary", "all"}:
+                    security = _runtime(self.hass, entry_id)["security"]
+                    if security.is_owner(requester):
+                        result["connection_inventory"] = _connection_inventory(
+                            effective_settings(self.hass.config_entries.async_get_entry(entry_id)),
+                            _runtime(self.hass, entry_id)["history_storage"].data,
+                            network_security_snapshot(self.hass),
+                            (self.hass.data[DOMAIN][entry_id]["coordinator"].data or {}).get("price_details", {}),
+                        )
             return respond(result)
 
         if route == "api/security/users" and method == "GET":
@@ -2026,14 +2267,50 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 self.hass, entry_id=entry_id, user_id=requester, operation="import_preview"
             )
             filename, upload = _panel_file_part(parts, "file", MAX_IMPORT_BYTES)
+            depot_id = _panel_text_part(parts, "depot_id") or DEFAULT_DEPOT_ID
+            if not runtime["storage"].has_depot(depot_id):
+                raise web.HTTPBadRequest(text="Unknown depot")
             try:
                 result = await self.hass.async_add_executor_job(parse_transaction_upload, upload, filename)
+                preview_rows = [
+                    {**row, "depot_id": depot_id}
+                    for row in result.get("rows", [])
+                    if isinstance(row, dict)
+                ]
+                flags = await runtime["storage"].async_import_duplicate_flags(preview_rows)
+                for row, duplicate in zip(result.get("rows", []), flags, strict=False):
+                    if isinstance(row, dict):
+                        row["duplicate"] = bool(duplicate)
             except ValueError as err:
                 raise web.HTTPBadRequest(text=str(err)) from err
             finally:
                 upload = b""
             result["entry_id"] = entry_id
             return respond(result)
+
+        if route == "api/import/duplicates" and method == "POST":
+            payload = _panel_json_body(body_text)
+            entry_id = str(payload.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Access denied") from err
+            rows = payload.get("rows")
+            if not isinstance(rows, list) or len(rows) > 5_000:
+                raise web.HTTPBadRequest(text="Invalid import duplicate-check payload")
+            try:
+                _enforce_rate_limit(
+                    self.hass, entry_id=entry_id, user_id=requester,
+                    operation="import_duplicates",
+                )
+            except vol.Invalid as err:
+                raise web.HTTPTooManyRequests(text=str(err)) from err
+            # Only normalized financial/import-identity fields are accepted by
+            # the storage checker; notes and optional source fields are neither
+            # required nor returned. Existing ledger hashes remain Core-only.
+            flags = await runtime["storage"].async_import_duplicate_flags(rows)
+            return respond({"duplicates": flags})
 
         if route == "api/download" and method == "GET":
             entry_id, delimiter = q("entry_id"), q("delimiter", ";")
@@ -2308,28 +2585,20 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         storage: BitcoinLedgerStore = runtime["storage"]
         amount_btc = amount_to_btc(call.data[CONF_AMOUNT], call.data[CONF_AMOUNT_UNIT])
         _validate_positive_transaction(amount_btc, call.data[CONF_PRICE])
-        candidate = _candidate_sale(call, amount_btc)
-        entries = storage.entries
-        long_term_days = int(storage.tax_settings.get("long_term_days", 365))
-        test = await hass.async_add_executor_job(
-            partial(
-                fifo_result,
-                entries + [candidate],
-                candidate["depot_id"],
-                long_term_days=long_term_days,
+        try:
+            # Storage performs the atomic FIFO validation and reuses that exact
+            # cache for persistence. Avoid an expensive duplicate pre-flight.
+            item = await storage.async_add_sale(
+                timestamp=parse_timestamp(call.data.get(CONF_TIMESTAMP)),
+                amount_btc=amount_btc,
+                currency=call.data[CONF_CURRENCY],
+                price=call.data[CONF_PRICE],
+                fee=call.data.get(CONF_FEE, 0),
+                note=call.data.get(CONF_NOTE, ""),
+                depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
             )
-        )
-        if test["oversold_btc"] > 0:
-            raise vol.Invalid("Sale exceeds the available BTC stack at this timestamp")
-        item = await storage.async_add_sale(
-            timestamp=parse_timestamp(call.data.get(CONF_TIMESTAMP)),
-            amount_btc=amount_btc,
-            currency=call.data[CONF_CURRENCY],
-            price=call.data[CONF_PRICE],
-            fee=call.data.get(CONF_FEE, 0),
-            note=call.data.get(CONF_NOTE, ""),
-            depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
-        )
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
         _notify_entities(runtime)
         return _json_safe(item)
 
@@ -2358,6 +2627,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             # ``Bitcoin Stack Tracker action failed: ValueError``.
             raise vol.Invalid(str(err)) from err
         _notify_entities(runtime)
+        if isinstance(result.get("entries"), list):
+            result["entries"] = _dashboard_ledger_entries(result["entries"])
         return _json_safe(result)
 
     async def add_depot(call: ServiceCall) -> dict[str, Any]:
@@ -2485,26 +2756,14 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                     "fee": money_string(fee),
                 })
 
-        candidate_entries = [replacement if item.get("id") == item_id else item for item in entries]
-        candidate_entries.sort(
-            key=lambda row: (
-                row.get("timestamp", ""),
-                1 if row.get("type") in {"sale", "expense"} else 0,
-                row.get("id", ""),
-            )
-        )
-        check = await hass.async_add_executor_job(
-            partial(
-                fifo_result,
-                candidate_entries,
-                long_term_days=int(storage.tax_settings.get("long_term_days", 365)),
-            )
-        )
-        if check["oversold_btc"] > 0:
-            raise vol.Invalid(
-                "Changing this entry would leave a sale or expense without enough earlier BTC"
-            )
-        await storage.async_update_entry(item_id, replacement)
+        try:
+            # Storage validates the candidate atomically against the previous
+            # oversold state. This also allows an old oversold ledger to be
+            # repaired instead of rejecting every edit merely because it was
+            # already inconsistent before the edit.
+            await storage.async_update_entry(item_id, replacement)
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
         _notify_entities(runtime)
         return {"updated": True, "ledger_entry_id": item_id, "entry": _json_safe(replacement)}
 
@@ -2513,21 +2772,12 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         storage: BitcoinLedgerStore = runtime["storage"]
         item_id = call.data[CONF_LEDGER_ENTRY_ID]
         entries = storage.entries
-        remaining = [item for item in entries if item.get("id") != item_id]
-        if len(remaining) == len(entries):
+        if not any(item.get("id") == item_id for item in entries):
             raise vol.Invalid("Ledger entry was not found")
-        delete_check = await hass.async_add_executor_job(
-            partial(
-                fifo_result,
-                remaining,
-                long_term_days=int(storage.tax_settings.get("long_term_days", 365)),
-            )
-        )
-        if delete_check["oversold_btc"] > 0:
-            raise vol.Invalid(
-                "Deleting this entry would leave a later sale without enough earlier BTC"
-            )
-        await storage.async_delete(item_id)
+        try:
+            await storage.async_delete(item_id)
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
         _notify_entities(runtime)
         return {"deleted": True, "ledger_entry_id": item_id}
 
@@ -2662,6 +2912,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
     async def dashboard_data(call: ServiceCall) -> dict[str, Any]:
         entry_id = call.data[CONF_CONFIG_ENTRY_ID]
+        section = str(call.data.get(CONF_DASHBOARD_SECTION, "all") or "all")
         requester = await _authorize_call(
             hass, call, entry_id, require_unlocked=False
         )
@@ -2674,6 +2925,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             status["setup_required"] = storage.setup_required
             return {
                 "locked": True,
+                "section": section,
                 "portfolio": {
                     "config_entry_id": entry_id,
                     "title": entry.title if entry else "Bitcoin Stack",
@@ -2688,32 +2940,113 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 "security": status,
                 "vault_crypto": storage.password_crypto_status(),
             }
+
         history: BitcoinHistoryStore = runtime["history_storage"]
         prices = (runtime["coordinator"].data or {}).get("prices", {})
+        price_details = (runtime["coordinator"].data or {}).get("price_details", {})
+        price_errors = (runtime["coordinator"].data or {}).get("errors", [])
         history_days = int(call.data.get(CONF_HISTORY_DAYS, 365))
         history_interval = int(call.data.get(CONF_HISTORY_INTERVAL, 1440))
+        history_data = history.data
+        current_settings = effective_settings(entry) if entry else {}
+        currencies = configured_currencies(current_settings) if entry else []
+
+        # Heavy/sensitive data is deliberately separated. The native browser
+        # requests only the section needed by the visible tab, keeping unlock
+        # and tab switching fast while reducing how much private ledger data is
+        # present in browser memory at any one time.
+        if section == "ledger":
+            entries = storage.entries
+            fifo = storage.fifo_summary()
+            return _json_safe({
+                "locked": False,
+                "section": "ledger",
+                "entries": _dashboard_ledger_entries(entries),
+                "fifo": _dashboard_ledger_fifo(fifo),
+                "depot_entry_counts": _dashboard_depot_entry_counts(entries),
+            })
+
+        if section == "fifo":
+            fifo = storage.fifo_summary()
+            return _json_safe({
+                "locked": False,
+                "section": "fifo",
+                # Resolve transaction links server-side. The tax view receives
+                # only display fields: no notes, provider/import IDs or ledger
+                # entry UUIDs, and it therefore does not require the full ledger.
+                "fifo": {"matches": _dashboard_fifo_matches(fifo, storage.entries)},
+            })
+
         cutoff = None
         if history_days > 0:
             cutoff = (
                 dt_util.utcnow().date() - timedelta(days=history_days)
             ).isoformat()
-        history_data = history.data
 
         def _filter_days(values: dict[str, Any]) -> dict[str, Any]:
             if cutoff is None:
                 return dict(values)
             return {day: value for day, value in values.items() if day >= cutoff}
 
-        limited_prices = {
-            currency: _filter_days(values)
-            for currency, values in history_data.get("prices", {}).items()
-        }
-        limited_price_samples = history.price_samples_for_days(history_days)
-        limited_market_candles = history.market_candles_for_days(history_days, history_interval)
+        async def _chart_payload() -> dict[str, Any]:
+            limited_prices = {
+                currency: _filter_days(values)
+                for currency, values in history_data.get("prices", {}).items()
+            }
+            limited_price_samples = history.price_samples_for_days(history_days)
+            limited_market_candles = history.market_candles_for_days(
+                history_days, history_interval
+            )
+            chart_cache = await async_ensure_chart_cache(hass, storage, history)
+            limited_chart: dict[str, Any] = {}
+            for metric, value in chart_cache.items():
+                if not isinstance(value, dict):
+                    continue
+                if metric in {
+                    "portfolio_value",
+                    "open_cost_basis",
+                    "unrealized_profit_loss",
+                    "realized_profit_loss",
+                    "total_profit_loss",
+                }:
+                    limited_chart[metric] = {
+                        currency: _filter_days(series)
+                        for currency, series in value.items()
+                        if isinstance(series, dict)
+                    }
+                else:
+                    limited_chart[metric] = _filter_days(value)
+            entries = storage.entries
+            return {
+                "locked": False,
+                "section": "chart",
+                # Sanitized chart events intentionally omit notes, entry UUIDs,
+                # provider order IDs and import fingerprints.
+                "chart_ledger_events": _dashboard_chart_ledger_events(entries),
+                "history": {
+                    "prices": limited_prices,
+                    "price_samples": limited_price_samples,
+                    "market_candles": limited_market_candles,
+                    "market_interval_minutes": history_interval,
+                    "chart": limited_chart,
+                    "days_requested": history_days,
+                    "all_cached": history_days == 0,
+                    "series_loaded": True,
+                },
+            }
+
+        if section == "chart":
+            return _json_safe(await _chart_payload())
+
         tax_settings = storage.tax_settings
         entries = storage.entries
         depots = storage.depots
         goals = storage.goals
+        cached_fifo = storage.fifo_summary()
+        cached_depot_fifo = {
+            str(depot["id"]): storage.fifo_summary(str(depot["id"]))
+            for depot in depots
+        }
         calculations = await hass.async_add_executor_job(
             _build_dashboard_calculations,
             entries,
@@ -2721,30 +3054,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             goals,
             prices,
             int(tax_settings.get("long_term_days", 365)),
+            cached_fifo,
+            cached_depot_fifo,
         )
-        chart_cache = await async_ensure_chart_cache(hass, storage, history)
-        limited_chart: dict[str, Any] = {}
-        for metric, value in chart_cache.items():
-            if not isinstance(value, dict):
-                continue
-            # Currency-grouped metrics have one additional dictionary level.
-            if metric in {
-                "portfolio_value",
-                "open_cost_basis",
-                "unrealized_profit_loss",
-                "realized_profit_loss",
-                "total_profit_loss",
-            }:
-                limited_chart[metric] = {
-                    currency: _filter_days(series)
-                    for currency, series in value.items()
-                    if isinstance(series, dict)
-                }
-            else:
-                limited_chart[metric] = _filter_days(value)
-        fifo = calculations["fifo"]
-        depot_summaries = calculations["depot_summaries"]
-        current_settings = effective_settings(entry) if entry else {}
         dashboard_settings = dict(current_settings)
         if not security.is_owner(requester):
             dashboard_settings.pop(CONF_HISTORY_TOR_PROXY, None)
@@ -2758,8 +3070,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             network_security["connections"] = []
         connection_inventory = (
             _connection_inventory(
-                current_settings, history_data, network_security,
-                (runtime["coordinator"].data or {}).get("price_details", {}),
+                current_settings, history_data, network_security, price_details,
             )
             if security.is_owner(requester)
             else {
@@ -2769,7 +3080,53 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 "observed_connections": [],
             }
         )
-        return _json_safe({
+        summary_fifo = _dashboard_fifo_summary(calculations["fifo"], currencies)
+        history_summary = {
+            "enabled": bool(current_settings.get(CONF_HISTORY_ENABLED, True)),
+            "auto_sync": bool(current_settings.get(CONF_HISTORY_AUTO_SYNC, True)),
+            "auto_sync_runtime_active": bool(runtime.get("history_auto_timer_active")),
+            "auto_sync_check_interval_hours": runtime.get("history_auto_check_interval_hours", 6),
+            "auto_sync_last_attempt": runtime.get("history_auto_last_attempt"),
+            "auto_sync_last_success": runtime.get("history_auto_last_success"),
+            "auto_sync_last_result": runtime.get("history_auto_last_result"),
+            "tor_proxy": visible_tor_proxy,
+            "public_route": "Bundled Tor only; own private local node direct",
+            "last_sync": history_data.get("last_sync"),
+            "errors": history_data.get("errors", []),
+            "cached_daily_values": {
+                currency: len(values)
+                for currency, values in history_data.get("prices", {}).items()
+            },
+            "cached_price_samples": {
+                currency: len(values)
+                for currency, values in history_data.get("price_samples", {}).items()
+                if isinstance(values, dict)
+            },
+            "cached_market_candles": {
+                currency: {
+                    str(interval): len(values)
+                    for interval, values in tiers.items()
+                    if isinstance(values, dict)
+                }
+                for currency, tiers in history_data.get("market_candles", {}).items()
+                if isinstance(tiers, dict)
+            },
+            "bootstrap_complete": history_data.get("bootstrap_complete", {}),
+            "source_metadata": history_data.get("source_metadata", {}),
+            # Raw price/chart series are fetched only when the overview/chart is
+            # visible. Empty containers keep settings rendering backwards-safe.
+            "prices": {},
+            "price_samples": {},
+            "market_candles": {},
+            "chart": {},
+            "market_interval_minutes": history_interval,
+            "days_requested": history_days,
+            "all_cached": history_days == 0,
+            "series_loaded": False,
+        }
+        result: dict[str, Any] = {
+            "locked": False,
+            "section": "summary",
             "portfolio": {
                 "config_entry_id": entry_id,
                 "title": entry.title if entry else "Bitcoin Stack",
@@ -2783,64 +3140,38 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             },
             "settings": dashboard_settings,
             "tax_settings": tax_settings,
-            "entries": entries,
             "depots": depots,
             "goals": calculations["goals"],
-            "fifo": fifo,
-            "depot_summaries": depot_summaries,
+            "fifo": summary_fifo,
+            "depot_summaries": calculations["depot_summaries"],
+            "depot_entry_counts": _dashboard_depot_entry_counts(entries),
+            "purchase_totals": _dashboard_purchase_totals(entries),
+            "metrics": build_dashboard_metrics(entries, calculations["fifo"], prices, currencies),
             "prices": prices,
-            "price_details": (runtime["coordinator"].data or {}).get("price_details", {}),
-            "price_errors": (runtime["coordinator"].data or {}).get("errors", []),
+            "price_details": price_details,
+            "price_errors": price_errors,
             "network_security": network_security,
             "connection_inventory": connection_inventory,
             "vault_crypto": storage.password_crypto_status(),
-            "history": {
-                "enabled": bool(
-                    effective_settings(entry).get(CONF_HISTORY_ENABLED, True)
-                ) if entry else True,
-                "auto_sync": bool(
-                    effective_settings(entry).get(CONF_HISTORY_AUTO_SYNC, True)
-                ) if entry else True,
-                "auto_sync_runtime_active": bool(runtime.get("history_auto_timer_active")),
-                "auto_sync_check_interval_hours": runtime.get("history_auto_check_interval_hours", 6),
-                "auto_sync_last_attempt": runtime.get("history_auto_last_attempt"),
-                "auto_sync_last_success": runtime.get("history_auto_last_success"),
-                "auto_sync_last_result": runtime.get("history_auto_last_result"),
-                "tor_proxy": visible_tor_proxy,
-                "public_route": "Bundled Tor only; own private local node direct",
-                "prices": limited_prices,
-                "price_samples": limited_price_samples,
-                "market_candles": limited_market_candles,
-                "market_interval_minutes": history_interval,
-                "chart": limited_chart,
-                "last_sync": history_data.get("last_sync"),
-                "errors": history_data.get("errors", []),
-                "days_requested": history_days,
-                "all_cached": history_days == 0,
-                "cached_daily_values": {
-                    currency: len(values)
-                    for currency, values in history_data.get("prices", {}).items()
-                },
-                "cached_price_samples": {
-                    currency: len(values)
-                    for currency, values in history_data.get("price_samples", {}).items()
-                    if isinstance(values, dict)
-                },
-                "cached_market_candles": {
-                    currency: {str(interval): len(values) for interval, values in tiers.items() if isinstance(values, dict)}
-                    for currency, tiers in history_data.get("market_candles", {}).items()
-                    if isinstance(tiers, dict)
-                },
-                "bootstrap_complete": history_data.get("bootstrap_complete", {}),
-                "source_metadata": history_data.get("source_metadata", {}),
-            },
-            "currencies": configured_currencies(effective_settings(entry)) if entry else [],
+            "history": history_summary,
+            "currencies": currencies,
             "security": {
                 **runtime["security"].public_status(requester),
                 "setup_required": storage.setup_required,
             },
             "disclaimer": "Holding-period and FIFO overview only; not tax advice and not a tax return.",
-        })
+        }
+
+        if section == "all":
+            chart_payload = await _chart_payload()
+            result["section"] = "all"
+            result["entries"] = _dashboard_ledger_entries(entries)
+            result["chart_ledger_events"] = chart_payload["chart_ledger_events"]
+            result["history"].update(chart_payload["history"])
+            result["fifo"] = calculations["fifo"]
+            result["fifo"]["currency_summaries"] = summary_fifo["currency_summaries"]
+
+        return _json_safe(result)
 
     async def list_users(call: ServiceCall) -> dict[str, Any]:
         entry_id = call.data[CONF_CONFIG_ENTRY_ID]

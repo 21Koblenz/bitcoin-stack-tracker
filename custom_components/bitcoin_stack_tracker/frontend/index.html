@@ -7,7 +7,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <meta name="referrer" content="no-referrer">
   <title>Bitcoin Stack Tracker · Einundzwanzig Koblenz</title>
-  <link rel="stylesheet" href="static/style-v021005-28d54128.css">
+  <link rel="stylesheet" href="static/style-v021006-733b783d.css">
 </head>
 <body>
   <div class="topography" aria-hidden="true"></div>
@@ -95,7 +95,8 @@
             <button id="refreshChartPrices" class="chart-refresh-button" type="button" title="Kurse aktualisieren"><span aria-hidden="true">↻</span><span data-i18n="refreshChartPrices">Kurse aktualisieren</span></button>
             <button id="chartMilestonesButton" class="chart-marker-toggle is-active" type="button" aria-pressed="true" title="Meilensteine"><span aria-hidden="true">★</span><span data-i18n="chartMilestones">Meilensteine</span></button>
             <button id="chartHalvingsButton" class="chart-marker-toggle is-active" type="button" aria-pressed="true" title="Halvings"><span aria-hidden="true">₿</span><span data-i18n="chartHalvings">Halvings</span></button>
-            <button id="chartScaleButton" class="chart-scale-button" type="button" title="Skala: Linear" aria-label="Skala: Linear"><span class="chart-scale-icon" aria-hidden="true">↕</span><span id="chartScaleText">Linear</span></button>
+            <button id="chartScaleLeftButton" class="chart-scale-button" type="button" title="Linke Skala: Linear" aria-label="Linke Skala: Linear"><span class="chart-scale-icon" aria-hidden="true">↕</span><span id="chartScaleLeftText">L · Linear</span></button>
+            <button id="chartScaleRightButton" class="chart-scale-button hidden" type="button" title="Rechte Skala: Linear" aria-label="Rechte Skala: Linear"><span class="chart-scale-icon" aria-hidden="true">↕</span><span id="chartScaleRightText">R · Linear</span></button>
           </div>
         </div>
         <div class="chart-controls">
@@ -132,6 +133,11 @@
         <div class="performance-head"><span class="kicker" data-i18n="performance">PERFORMANCE</span><small data-i18n="performanceNote">Portfoliowert ist die Marktwertänderung; Buchgewinn/-verlust und realisierter Gewinn/Verlust werden getrennt ausgewiesen.</small></div>
         <div id="performanceSummary" class="performance-grid"></div>
         <div id="returnAnalytics" class="return-analytics"></div>
+        <div class="analysis-split">
+          <section class="analysis-block"><div class="analysis-head"><span class="kicker">STACKING</span><h3 data-i18n="stackingSpeed">Stacking-Geschwindigkeit</h3></div><div id="stackingVelocityAnalytics" class="analysis-grid"></div><p class="storage-note" data-i18n="stackingSpeedHint">Netto-BTC-Veränderung inklusive Käufen, Bestandszugängen, Verkäufen und Ausgaben.</p></section>
+          <section class="analysis-block"><div class="analysis-head"><span class="kicker">FEES</span><h3 data-i18n="feeAnalytics">Gebühren</h3></div><div id="feeAnalytics" class="analysis-grid"></div><p class="storage-note" data-i18n="feeAnalyticsHint">Gebührenquoten sind volumengewichtet. Die Abgangsgebührenquote umfasst Verkäufe und bewertete Ausgaben/Kartenzahlungen. BTC-Gebühren umfassen tatsächlich in BTC belastete Gebühren einschließlich On-Chain-/Mininggebühren; unvollständige Legacy-Daten werden nicht als 0 sats ausgegeben.</p></section>
+        </div>
+        <section class="analysis-block hodl-benchmark-block"><div class="analysis-head"><span class="kicker">HODL BENCHMARK</span><h3 data-i18n="hodlBenchmark">Cashflow-neutraler HODL-Benchmark</h3></div><div id="hodlBenchmarkAnalytics" class="analysis-grid"></div><p class="storage-note" data-i18n="hodlBenchmarkHint">Vergleicht den aktuellen Stack mit einem fee-freien HODL-Pfad bei denselben externen Fiat-Cashflows. Käufe gelten als Fiat-Zufluss, Verkäufe/Ausgaben als Fiat-Entnahme; bei mehreren Fiatwährungen wird kein versteckter FX-Kurs erfunden.</p></section>
         <div class="analysis-split">
           <section class="analysis-block"><div class="analysis-head"><span class="kicker">DCA</span><h3 data-i18n="dcaAnalysis">DCA-Auswertung</h3></div><div id="dcaAnalytics" class="analysis-grid"></div><p id="dcaNote" class="storage-note"></p></section>
           <section class="analysis-block"><div class="analysis-head"><span class="kicker">DRAWDOWN</span><h3 data-i18n="drawdownAnalysis">Drawdown im Zeitraum</h3></div><div id="drawdownAnalytics" class="analysis-grid"></div><p class="storage-note" data-i18n="drawdownHint">Der Portfolio-Drawdown basiert auf einem cashflowbereinigten TWR-Index.</p></section>
@@ -195,9 +201,9 @@
       <div class="tax-callout"><strong data-i18n="overviewOnly">Nur Übersicht</strong><p id="taxDisclaimer"></p></div>
       <div class="split equal">
         <section class="panel"><div class="panel-head"><div><span class="kicker">CONFIGURABLE</span><h2 data-i18n="holdingRule">Haltezeit-Regel</h2></div></div><form id="taxForm" class="form-grid"><label><span data-i18n="days">Tage bis Langzeit</span><input name="long_term_days" type="number" min="1" max="36500" required></label><label class="wide"><span data-i18n="customNote">Eigene Notiz</span><textarea name="tax_note" rows="5"></textarea></label><button class="primary wide" data-i18n="saveRule">Regel speichern</button></form></section>
-        <section class="panel"><div class="panel-head"><div><span class="kicker">OPEN LOTS</span><h2 data-i18n="currentClassification">Aktuelle Einordnung</h2></div></div><div id="taxSummary" class="tax-stats"></div></section>
+        <section class="panel"><div class="panel-head"><div><span class="kicker">OPEN LOTS</span><h2 data-i18n="currentClassification">Aktuelle Einordnung</h2></div></div><div id="taxSummary" class="tax-stats"></div><div class="analysis-head holding-age-head"><span class="kicker">AGE DISTRIBUTION</span><h3 data-i18n="stackAgeDistribution">Altersverteilung des offenen Stacks</h3></div><div id="holdingAgeDistribution" class="holding-age-distribution"></div><p class="storage-note" data-i18n="holdingAgeHint">Das Alter wird BTC-gewichtet aus den aktuell offenen FIFO-Lots berechnet.</p></section>
       </div>
-      <section class="panel table-panel"><div class="panel-head"><div><span class="kicker">FIFO SALES</span><h2 data-i18n="saleOverview">Verkaufsübersicht</h2></div></div><div id="fifoSaleSummary" class="fifo-sale-summary"></div><div class="table-wrap fifo-table-wrap"><table><thead><tr><th data-i18n="sale">Verkauf</th><th id="fifoAmountHead">BTC</th><th data-i18n="purchasePriceThen">Kaufkurs damals</th><th data-i18n="fifoCostBasis">FIFO-Einstand</th><th data-i18n="salePrice">Verkaufskurs</th><th data-i18n="saleProceeds">Verkaufserlös</th><th data-i18n="gain">Gewinn/Verlust</th><th data-i18n="returnPercent">Rendite</th></tr></thead><tbody id="fifoBody"></tbody></table></div><div id="fifoCards" class="ledger-mobile-list"></div><nav id="fifoPagination" class="ledger-pagination" aria-label="Verkaufsseiten"></nav></section>
+      <section class="panel table-panel"><div class="panel-head"><div><span class="kicker">FIFO ABGÄNGE</span><h2 data-i18n="saleOverview">FIFO-Abgänge</h2></div></div><div id="fifoSaleSummary" class="fifo-sale-summary"></div><div class="table-wrap fifo-table-wrap"><table><thead><tr><th data-i18n="dispositionDate">Datum</th><th data-i18n="dispositionType">Art</th><th id="fifoAmountHead">BTC</th><th data-i18n="purchasePriceThen">Kaufkurs damals</th><th data-i18n="fifoCostBasis">FIFO-Einstand</th><th data-i18n="salePrice">Abgangskurs</th><th data-i18n="saleProceeds">Erlös / Gegenwert</th><th data-i18n="fifoGain">FIFO-Gewinn/Verlust</th><th data-i18n="fifoReturn">FIFO-Rendite</th><th data-i18n="averageEntryToDate">Ø Einkauf bis dahin</th><th data-i18n="averageEntryBasis">Ø-Vergleichseinstand</th><th data-i18n="averageEntryGain">Ø-Gewinn/Verlust</th><th data-i18n="averageEntryReturn">Ø-Rendite</th></tr></thead><tbody id="fifoBody"></tbody></table></div><div id="fifoCards" class="ledger-mobile-list"></div><nav id="fifoPagination" class="ledger-pagination" aria-label="FIFO-Abgangsseiten"></nav></section>
     </section>
 
     <section id="tab-settings" class="tab">
@@ -354,7 +360,7 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="static/performance-math-v021005-28d54128.js"></script>
-  <script src="static/app-v021005-28d54128.js"></script>
+  <script src="static/performance-math-v021006-733b783d.js"></script>
+  <script src="static/app-v021006-733b783d.js"></script>
 </body>
 </html>

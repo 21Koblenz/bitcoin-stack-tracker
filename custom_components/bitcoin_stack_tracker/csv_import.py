@@ -197,7 +197,7 @@ def _get_contains(row: dict[str, str], required: Iterable[str], forbidden: Itera
 def _transaction(
     *, source: str, row_number: int, kind: str | None, timestamp: str | None,
     amount_btc: Decimal | None, currency: str, price: Decimal | None,
-    fee: Decimal | None = None, note: str = "", warnings: list[str] | None = None,
+    fee: Decimal | None = None, fee_btc: Decimal | None = None, note: str = "", warnings: list[str] | None = None,
     reference: str = "", optional_note_fields: dict[str, Any] | None = None,
     import_hints: dict[str, Any] | None = None, fiat_amount: Decimal | None = None,
 ) -> dict[str, Any]:
@@ -261,6 +261,7 @@ def _transaction(
         "price": format(abs(price or Decimal("0")), "f") if kind != "expense" or expense_has_fiat_value else "0",
         "fiat_amount": format(clean_fiat_amount, "f") if clean_fiat_amount is not None and clean_fiat_amount > 0 else "",
         "fee": format(clean_fee, "f") if kind != "expense" or expense_has_fiat_value else "0",
+        **({"fee_btc": format(abs(fee_btc), "f")} if fee_btc is not None and abs(fee_btc) > 0 else {}),
         "note": str(note or "")[:2000],
         # The raw exchange/broker reference is intentionally not returned or
         # persisted. A one-way hash is enough for duplicate detection.
@@ -455,7 +456,7 @@ def _parse_kraken_ledger(headers: list[str], rows: list[list[str]]) -> tuple[lis
             timestamp=_iso_timestamp(_get(btc_row, "time")), amount_btc=disposed_btc,
             currency=_asset(_get(quote_row, "asset")),
             price=execution_price,
-            fee=fee_fiat, warnings=warnings,
+            fee=fee_fiat, fee_btc=btc_fee, warnings=warnings,
             note="Kraken Ledger-Import", reference=reference,
         ))
     return output, skipped
@@ -502,6 +503,7 @@ def _parse_binance_trade(headers: list[str], rows: list[list[str]]) -> tuple[lis
             price = abs(total_value / amount)
         fee_value = _get(row, "fee", "commission")
         fee, fee_asset = _split_amount_asset(fee_value)
+        fee_btc_value = abs(fee) if fee and fee_asset == "BTC" else Decimal("0")
         warnings: list[str] = []
         if fee and fee_asset and fee_asset not in {quote, ""}:
             if kind == "sale" and fee_asset == "BTC" and price is not None and amount is not None:
@@ -517,7 +519,7 @@ def _parse_binance_trade(headers: list[str], rows: list[list[str]]) -> tuple[lis
             source="Binance Trade", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(_get(row, "date utc", "utc time", "date", "time", "timestamp")),
             amount_btc=amount, currency=quote or _asset(_get(row, "currency", "quote asset")),
-            price=price, fee=fee, warnings=warnings,
+            price=price, fee=fee, fee_btc=fee_btc_value, warnings=warnings,
             note=f"Binance {side} {pair}".strip(), reference=_stable_reference(row, "trade id", "tradeid", "order id", "orderid", "transaction id", "txid"),
         ))
     return output, skipped
@@ -605,6 +607,7 @@ def _parse_cointracking(headers: list[str], rows: list[list[str]]) -> tuple[list
         price = abs(fiat_amount / amount) if amount and fiat_amount is not None else None
         fee = _number(cell(fee_i))
         fee_currency = _asset(cell(fee_cur_i))
+        fee_btc_value = abs(fee) if fee and fee_currency == "BTC" else Decimal("0")
         warnings: list[str] = []
         if fee and fee_currency and fee_currency != currency:
             if kind == "sale" and fee_currency == "BTC" and price is not None and amount is not None:
@@ -623,7 +626,7 @@ def _parse_cointracking(headers: list[str], rows: list[list[str]]) -> tuple[list
         output.append(_transaction(
             source="CoinTracking", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(date_i)), amount_btc=amount,
-            currency=currency, price=price, fee=fee, warnings=warnings,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc_value, warnings=warnings,
             note=cell(comment_i) or tx_type,
             reference=_stable_reference(
                 _row_dict(headers, values),
@@ -915,6 +918,7 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
         fee_currency_raw = cell(values, fee_cur_i)
         fee_asset = _asset(fee_currency_raw)
         fee = Decimal("0")
+        fee_btc_value = Decimal("0")
         warnings: list[str] = []
 
         # Pocket's CoinTracking-compatible BUY export reports Sell Amount as the
@@ -945,6 +949,7 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
             else:
                 fee_btc = _pocket_btc_amount(raw_fee, fee_currency_raw)
                 if fee_btc is not None and price is not None:
+                    fee_btc_value += abs(fee_btc)
                     if kind == "sale" and amount_btc is not None:
                         # CoinTracking-style Pocket exports separate a BTC fee
                         # from the BTC sold.  Both quantities leave the wallet.
@@ -967,6 +972,8 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
             if net is not None:
                 original_trade_btc = amount_btc
                 amount_btc = net
+                if original_trade_btc is not None and original_trade_btc > net:
+                    fee_btc_value += original_trade_btc - net
 
                 # Keep each purchase's complete fiat cost basis equal to its own
                 # Sell Amount.  Its proportional share of the batched network fee
@@ -1004,7 +1011,7 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
         output.append(_transaction(
             source="Pocket Bitcoin", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(values, date_i)), amount_btc=amount_btc,
-            currency=currency, price=price, fee=fee, warnings=warnings,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc_value, warnings=warnings,
             note=note,
             reference=_stable_reference(
                 _row_dict(headers, values),
@@ -1257,11 +1264,13 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
             price = abs(fiat_amount / amount_btc)
 
         fee = Decimal("0")
+        fee_btc_value = Decimal("0")
         warnings: list[str] = []
         if raw_fee is not None and raw_fee != 0:
             if fee_currency == currency:
                 fee = abs(raw_fee)
             elif fee_currency == "BTC" and price is not None:
+                fee_btc_value += abs(raw_fee)
                 fee = abs(raw_fee) * price
             elif fee_currency:
                 warnings.append(
@@ -1286,6 +1295,7 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
                 # correct fiat cost basis.
                 network_fee_share_btc = original_trade_btc - net
                 if network_fee_share_btc > 0:
+                    fee_btc_value += network_fee_share_btc
                     fee += network_fee_share_btc * price
 
         optional: dict[str, str] = {}
@@ -1306,7 +1316,7 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
         output.append(_transaction(
             source="Pocket Bitcoin", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(values, date_i)), amount_btc=amount_btc,
-            currency=currency, price=price, fee=fee, warnings=warnings,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc_value, warnings=warnings,
             note=note, reference=reference, optional_note_fields=optional,
         ))
     return output, skipped
@@ -1493,7 +1503,7 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
         output.append(_transaction(
             source="Coinfinity", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(_get(row, "date", "timestamp")),
-            amount_btc=amount_btc, currency="EUR", price=price, fee=fee,
+            amount_btc=amount_btc, currency="EUR", price=price, fee=fee, fee_btc=mining_fee_btc,
             fiat_amount=coinfinity_fiat_total if kind == "purchase" else None,
             note=" · ".join(details),
             reference=_stable_reference(
@@ -2339,6 +2349,7 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             currency=event["fiat_currency"],
             price=price,
             fee=total_fee_fiat,
+            fee_btc=sale_fee_btc,
             note=note_de,
             reference=_wavespace_transaction_id(primary["row"]),
             optional_note_fields=_wavespace_optional_note_fields(entries, metadata_indices),

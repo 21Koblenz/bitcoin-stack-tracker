@@ -2,10 +2,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021005-28d54128.js").read_text(encoding="utf-8")
-PANEL = (COMP / "frontend/panel-v021005-28d54128.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021006-733b783d.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel-v021006-733b783d.js").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021005-28d54128.css").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021006-733b783d.css").read_text(encoding="utf-8")
 
 
 def function_block(source: str, start: str, end: str) -> str:
@@ -47,14 +47,20 @@ def test_mobile_and_desktop_ledger_are_not_built_at_same_time():
 
 
 def test_fifo_sales_have_requested_columns_summary_and_paging():
+    # The disposal view must expose both calculations explicitly: the actual
+    # FIFO lot result and the historical all-purchases average comparison.
     for key in (
-        'data-i18n="sale">Verkauf',
+        'data-i18n="dispositionDate">Datum',
         'data-i18n="purchasePriceThen">Kaufkurs damals',
         'data-i18n="fifoCostBasis">FIFO-Einstand',
-        'data-i18n="salePrice">Verkaufskurs',
-        'data-i18n="saleProceeds">Verkaufserlös',
-        'data-i18n="gain">Gewinn/Verlust',
-        'data-i18n="returnPercent">Rendite',
+        'data-i18n="salePrice">Abgangskurs',
+        'data-i18n="saleProceeds">Erlös / Gegenwert',
+        'data-i18n="fifoGain">FIFO-Gewinn/Verlust',
+        'data-i18n="fifoReturn">FIFO-Rendite',
+        'data-i18n="averageEntryToDate">Ø Einkauf bis dahin',
+        'data-i18n="averageEntryBasis">Ø-Vergleichseinstand',
+        'data-i18n="averageEntryGain">Ø-Gewinn/Verlust',
+        'data-i18n="averageEntryReturn">Ø-Rendite',
     ):
         assert key in INDEX
     assert 'id="fifoSaleSummary"' in INDEX
@@ -63,6 +69,24 @@ def test_fifo_sales_have_requested_columns_summary_and_paging():
     assert "Number(state.ledgerPageSize)||25" in block
     assert "renderFifoPagination(allMatches.length,totalPages,pageStart,pageEnd);" in block
     assert "const compactLayout=compactTableLayout();" in block
+    assert "average_entry_price_to_date" in block
+    assert 't("fifoGain")' in block
+    assert 't("fifoReturn")' in block
+    assert 't("averageEntryGain")' in block
+    assert 't("averageEntryReturn")' in block
+
+
+def test_fifo_summary_contains_separate_fifo_and_historical_average_blocks():
+    block = function_block(APP, "function renderFifoSaleSummary(matches)", "function renderTax()")
+    assert 'class="fifo-method-block"' in block
+    assert 'class="fifo-method-block fifo-average-block"' in block
+    assert 't("averageComparisonSummary")' in block
+    assert 'const averageBasis=averageRows.reduce' in block
+    assert 'const averageGain=averageRows.reduce' in block
+    assert 'const averageRoi=averageBasis>0?(averageGain/averageBasis)*100:null;' in block
+    # A disposal split across several FIFO lots is reconstructed by summing
+    # amount * historical average for each split, not by averaging row prices.
+    assert '*Number(item.average_entry_price_to_date)' in block
 
 
 def test_fifo_page_change_scrolls_its_own_view_to_top():

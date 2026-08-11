@@ -946,7 +946,21 @@ def _import_measurement(
 def _daily_fifo_snapshots(
     entries: list[dict[str, Any]], days: list[str], long_term_days: int
 ) -> dict[str, dict[str, Any]]:
-    """Build FIFO snapshots in a worker thread, including lot maturation."""
+    """Build compact daily FIFO snapshots in one chronological pass.
+
+    Older releases rebuilt the complete FIFO ledger from the beginning for every
+    historical day.  With thousands of ledger rows and several thousand cached
+    price days that made the first dashboard request after an import extremely
+    expensive.  This state machine processes each ledger row and each lot
+    maturity only once while preserving exact chronological FIFO semantics.
+
+    The per-depot lot cursor exists only for this calculation run.  Any later
+    import/edit that inserts a historical transaction starts a fresh run, sorts
+    the complete ledger again, and therefore restarts FIFO from the first lot.
+    """
+    threshold = max(1, int(long_term_days))
+    zero = decimal_value(0)
+
     def entry_sort_key(row: dict[str, Any]) -> tuple[float, int, str]:
         numeric = _timestamp_value(row.get("timestamp"))
         return (
@@ -956,20 +970,266 @@ def _daily_fifo_snapshots(
         )
 
     ordered = sorted(entries, key=entry_sort_key)
+    lots_by_depot: dict[str, list[dict[str, Any]]] = {}
+    lot_cursor_by_depot: dict[str, int] = {}
+
+    # Acquisition timestamps are processed chronologically. Adding the same
+    # holding period to each timestamp preserves that order, so maturities can
+    # use a simple append-only queue rather than a heap.
+    maturities: list[tuple[float, dict[str, Any]]] = []
+    maturity_position = 0
+
+    total_btc = zero
+    long_term_btc = zero
+    short_term_btc = zero
+
+    depot_total: dict[str, Any] = {}
+    depot_long: dict[str, Any] = {}
+    depot_short: dict[str, Any] = {}
+
+    known_btc_by_currency: dict[str, Any] = {}
+    invested_by_currency: dict[str, Any] = {}
+    realized_by_currency: dict[str, Any] = {}
+    realized_long_by_currency: dict[str, Any] = {}
+    realized_short_by_currency: dict[str, Any] = {}
+    purchase_fees_by_currency: dict[str, Any] = {}
+    sale_fees_by_currency: dict[str, Any] = {}
+
+    def add(mapping: dict[str, Any], key: str, value: Any) -> None:
+        mapping[key] = mapping.get(key, zero) + value
+
+    def mature_until(cutoff: float) -> None:
+        nonlocal maturity_position, long_term_btc, short_term_btc
+        while maturity_position < len(maturities):
+            maturity_at, lot = maturities[maturity_position]
+            if maturity_at > cutoff:
+                break
+            maturity_position += 1
+            if lot.get("holding_status") != "short_term":
+                continue
+            remaining = decimal_value(lot.get("remaining_btc"))
+            lot["holding_status"] = "long_term"
+            if remaining <= 0:
+                continue
+            depot_id = str(lot.get("depot_id") or "main")
+            short_term_btc -= remaining
+            long_term_btc += remaining
+            add(depot_short, depot_id, -remaining)
+            add(depot_long, depot_id, remaining)
+
+    def consume_lots(
+        *,
+        depot_id: str,
+        amount: Any,
+        timestamp_value: float,
+        sale_currency: str | None = None,
+        sale_price: Any = None,
+        sale_fee: Any = None,
+    ) -> None:
+        nonlocal total_btc, long_term_btc, short_term_btc
+        lots = lots_by_depot.setdefault(depot_id, [])
+        cursor = lot_cursor_by_depot.get(depot_id, 0)
+        remaining_out = amount
+        is_sale = sale_currency is not None
+        sale_price_value = decimal_value(sale_price) if is_sale else zero
+        sale_fee_value = decimal_value(sale_fee) if is_sale else zero
+
+        while cursor < len(lots) and remaining_out > 0:
+            lot = lots[cursor]
+            available = decimal_value(lot.get("remaining_btc"))
+            if available <= 0:
+                cursor += 1
+                continue
+            used = min(available, remaining_out)
+            left = available - used
+            lot["remaining_btc"] = left
+            remaining_out -= used
+
+            total_btc -= used
+            add(depot_total, depot_id, -used)
+            if lot.get("holding_status") == "long_term":
+                long_term_btc -= used
+                add(depot_long, depot_id, -used)
+            else:
+                short_term_btc -= used
+                add(depot_short, depot_id, -used)
+
+            lot_currency = str(lot.get("currency") or "").upper()
+            if lot.get("known_cost") and lot_currency:
+                unit_basis = decimal_value(lot.get("unit_basis"))
+                add(known_btc_by_currency, lot_currency, -used)
+                add(invested_by_currency, lot_currency, -(used * unit_basis))
+                if is_sale and lot_currency == sale_currency:
+                    fee_share = sale_fee_value * used / amount if amount > 0 else zero
+                    proceeds = used * sale_price_value - fee_share
+                    gain = proceeds - used * unit_basis
+                    add(realized_by_currency, sale_currency, gain)
+                    if lot.get("holding_status") == "long_term":
+                        add(realized_long_by_currency, sale_currency, gain)
+                    else:
+                        add(realized_short_by_currency, sale_currency, gain)
+
+            if left <= 0:
+                cursor += 1
+
+        lot_cursor_by_depot[depot_id] = cursor
+        # Oversold BTC is deliberately not subtracted from the running stack;
+        # fifo_result() likewise reports it separately while open-lot total stays
+        # at zero. Imports reject oversold ledgers before they reach this cache.
+
     snapshots: dict[str, dict[str, Any]] = {}
-    active: list[dict[str, Any]] = []
     position = 0
+    maturity_seconds = float(threshold * 86400)
+
     for day in sorted(days):
         as_of = datetime.combine(date.fromisoformat(day), time.max, tzinfo=timezone.utc)
         cutoff = as_of.timestamp()
+
         while position < len(ordered):
             numeric = _timestamp_value(ordered[position].get("timestamp"))
+            item = ordered[position]
             if numeric is None or numeric > cutoff:
                 break
-            active.append(ordered[position])
+
+            # A lot becomes long-term at the exact maturity instant, so apply
+            # maturity events before any ledger transaction at that same instant.
+            mature_until(numeric)
+
             position += 1
-        snapshots[day] = fifo_result(active, long_term_days=long_term_days, as_of=as_of)
+            kind = str(item.get("type") or "")
+            amount = max(decimal_value(item.get("amount_btc")), zero)
+            if amount <= 0:
+                continue
+            depot_id = str(item.get("depot_id") or "main")
+
+            if kind in {"purchase", "stack"}:
+                currency = (
+                    str(item.get("currency") or "").upper()
+                    if kind == "purchase" and item.get("currency")
+                    else ""
+                )
+                price = decimal_value(item.get("price")) if kind == "purchase" else zero
+                fee = decimal_value(item.get("fee")) if kind == "purchase" else zero
+                total_basis = amount * price + fee if kind == "purchase" else None
+                unit_basis = total_basis / amount if total_basis is not None and amount > 0 else None
+                lot = {
+                    "remaining_btc": amount,
+                    "depot_id": depot_id,
+                    "currency": currency or None,
+                    "unit_basis": unit_basis,
+                    "known_cost": kind == "purchase",
+                    "holding_status": "short_term",
+                }
+                lots_by_depot.setdefault(depot_id, []).append(lot)
+                maturities.append((numeric + maturity_seconds, lot))
+
+                total_btc += amount
+                short_term_btc += amount
+                add(depot_total, depot_id, amount)
+                add(depot_short, depot_id, amount)
+                if currency:
+                    add(known_btc_by_currency, currency, amount)
+                    add(invested_by_currency, currency, total_basis)
+                    add(purchase_fees_by_currency, currency, fee)
+                continue
+
+            if kind == "expense":
+                # A priced BTC expense is a disposal for FIFO/performance just
+                # like a sale: BTC leaves the stack and the merchant/fiat value
+                # is the disposal value. Keep the ledger type as expense; only
+                # the mathematical treatment is sale-like. Unpriced expenses
+                # still consume FIFO lots without inventing a fiat value.
+                expense_currency = str(item.get("currency") or "").upper()
+                expense_price = decimal_value(item.get("price"))
+                expense_fee = decimal_value(item.get("fee"))
+                if expense_currency and expense_price > 0:
+                    consume_lots(
+                        depot_id=depot_id,
+                        amount=amount,
+                        timestamp_value=numeric,
+                        sale_currency=expense_currency,
+                        sale_price=expense_price,
+                        sale_fee=expense_fee,
+                    )
+                else:
+                    consume_lots(
+                        depot_id=depot_id,
+                        amount=amount,
+                        timestamp_value=numeric,
+                    )
+                continue
+
+            if kind == "sale":
+                sale_currency = str(item.get("currency") or "").upper()
+                sale_fee = decimal_value(item.get("fee"))
+                if sale_currency:
+                    add(sale_fees_by_currency, sale_currency, sale_fee)
+                consume_lots(
+                    depot_id=depot_id,
+                    amount=amount,
+                    timestamp_value=numeric,
+                    sale_currency=sale_currency,
+                    sale_price=item.get("price"),
+                    sale_fee=sale_fee,
+                )
+
+        mature_until(cutoff)
+
+        currencies = (
+            set(known_btc_by_currency)
+            | set(invested_by_currency)
+            | set(realized_by_currency)
+            | set(realized_long_by_currency)
+            | set(realized_short_by_currency)
+            | set(purchase_fees_by_currency)
+            | set(sale_fees_by_currency)
+        )
+        currency_summaries = {
+            currency: {
+                "known_btc": known_btc_by_currency.get(currency, zero),
+                "invested": invested_by_currency.get(currency, zero),
+                "realized_gain": realized_by_currency.get(currency, zero),
+                "realized_long_term_gain": realized_long_by_currency.get(currency, zero),
+                "realized_short_term_gain": realized_short_by_currency.get(currency, zero),
+                "purchase_fees": purchase_fees_by_currency.get(currency, zero),
+                "sale_fees": sale_fees_by_currency.get(currency, zero),
+            }
+            for currency in currencies
+        }
+        depot_ids = set(depot_total) | set(depot_long) | set(depot_short)
+        snapshots[day] = {
+            "total_btc": total_btc,
+            "long_term_btc": long_term_btc,
+            "short_term_btc": short_term_btc,
+            "unknown_holding_btc": max(total_btc - long_term_btc - short_term_btc, zero),
+            "currencies": currency_summaries,
+            "depots": {
+                depot_id: {
+                    "total_btc": depot_total.get(depot_id, zero),
+                    "long_term_btc": depot_long.get(depot_id, zero),
+                    "short_term_btc": depot_short.get(depot_id, zero),
+                }
+                for depot_id in depot_ids
+            },
+        }
+
     return snapshots
+
+
+def _snapshot_currency_summary(snapshot: dict[str, Any], currency: str) -> dict[str, Any]:
+    """Return one compact daily FIFO currency summary with Decimal zero defaults."""
+    zero = decimal_value(0)
+    value = snapshot.get("currencies", {}).get(str(currency).upper(), {})
+    return {
+        "total_btc": snapshot.get("total_btc", zero),
+        "known_btc": value.get("known_btc", zero),
+        "invested": value.get("invested", zero),
+        "realized_gain": value.get("realized_gain", zero),
+        "realized_long_term_gain": value.get("realized_long_term_gain", zero),
+        "realized_short_term_gain": value.get("realized_short_term_gain", zero),
+        "purchase_fees": value.get("purchase_fees", zero),
+        "sale_fees": value.get("sale_fees", zero),
+    }
 
 
 def _chart_revision(
@@ -981,7 +1241,7 @@ def _chart_revision(
 ) -> str:
     """Hash every input that changes a locally derived chart value."""
     payload = {
-        "chart_schema": 3,
+        "chart_schema": 5,
         "entries": entries,
         "depots": depots,
         "goals": goals,
@@ -1042,7 +1302,7 @@ def _build_chart_cache(
             if raw_price is None:
                 continue
             price = decimal_value(raw_price)
-            summary = currency_summary_from_result(total, code)
+            summary = _snapshot_currency_summary(total, code)
             result["portfolio_value"][code][day] = float(total["total_btc"] * price)
             result["open_cost_basis"][code][day] = float(summary["invested"])
             unrealized = summary["known_btc"] * price - summary["invested"]
@@ -1169,17 +1429,19 @@ def _build_statistics_series(
         stack_values[day] = float(stack)
         long_term_values[day] = float(total["long_term_btc"])
         short_term_values[day] = float(total["short_term_btc"])
-        depot_totals = {str(depot["id"]): decimal_value(0) for depot in depots}
-        depot_long_totals = {str(depot["id"]): decimal_value(0) for depot in depots}
-        depot_short_totals = {str(depot["id"]): decimal_value(0) for depot in depots}
-        for lot in total["open_lots"]:
-            depot_id = str(lot.get("depot_id", "main"))
-            amount = decimal_value(lot.get("remaining_btc"))
-            depot_totals[depot_id] = depot_totals.get(depot_id, decimal_value(0)) + amount
-            if lot.get("holding_status") == "long_term":
-                depot_long_totals[depot_id] = depot_long_totals.get(depot_id, decimal_value(0)) + amount
-            elif lot.get("holding_status") == "short_term":
-                depot_short_totals[depot_id] = depot_short_totals.get(depot_id, decimal_value(0)) + amount
+        compact_depots = total.get("depots", {})
+        depot_totals = {
+            str(depot["id"]): decimal_value(compact_depots.get(str(depot["id"]), {}).get("total_btc"))
+            for depot in depots
+        }
+        depot_long_totals = {
+            str(depot["id"]): decimal_value(compact_depots.get(str(depot["id"]), {}).get("long_term_btc"))
+            for depot in depots
+        }
+        depot_short_totals = {
+            str(depot["id"]): decimal_value(compact_depots.get(str(depot["id"]), {}).get("short_term_btc"))
+            for depot in depots
+        }
         for depot_id in depot_totals:
             depot_stack[depot_id][day] = float(depot_totals[depot_id])
             depot_long[depot_id][day] = float(depot_long_totals[depot_id])
@@ -1222,7 +1484,7 @@ def _build_statistics_series(
             if day not in snapshots:
                 continue
             total = snapshots[day]
-            summary = currency_summary_from_result(total, currency)
+            summary = _snapshot_currency_summary(total, currency)
             price = decimal_value(raw_price)
             series_map["portfolio_value"][day] = float(total["total_btc"] * price)
             series_map["known_cost_market_value"][day] = float(summary["known_btc"] * price)

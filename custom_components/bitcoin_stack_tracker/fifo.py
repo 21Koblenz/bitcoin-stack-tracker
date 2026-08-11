@@ -73,6 +73,61 @@ def _holding_details(
     }
 
 
+def cumulative_average_entry_price_by_disposition(
+    entries: list[dict[str, Any]],
+) -> dict[str, Decimal]:
+    """Return the portfolio-wide weighted average acquisition price at each disposal.
+
+    The comparison deliberately differs from FIFO. It answers the intuitive
+    question "was this sale/expense above or below my average buy-in at that
+    moment?" by using every priced purchase in the same fiat currency up to the
+    outgoing booking's timestamp, including purchase fees in the effective
+    acquisition price. Previously sold purchases remain part of this historical
+    average because the metric is a cumulative buy-in comparison, not an open-lot
+    cost basis.
+
+    No FX conversion is invented. Stack entries without an acquisition price are
+    excluded. Equal-timestamp purchases are included because ``_sorted_entries``
+    orders incoming BTC before outgoing BTC.
+    """
+    totals: dict[str, dict[str, Decimal]] = {}
+    result: dict[str, Decimal] = {}
+
+    for item in _sorted_entries(entries):
+        kind = str(item.get("type") or "")
+        amount = max(decimal_value(item.get("amount_btc")), ZERO)
+        if amount <= 0:
+            continue
+
+        if kind == "purchase":
+            currency = str(item.get("currency") or "").upper()
+            price = decimal_value(item.get("price"))
+            if not currency or price <= 0:
+                continue
+            fee = max(decimal_value(item.get("fee")), ZERO)
+            bucket = totals.setdefault(
+                currency,
+                {"btc": ZERO, "basis": ZERO},
+            )
+            bucket["btc"] += amount
+            bucket["basis"] += amount * price + fee
+            continue
+
+        if kind not in {"sale", "expense"}:
+            continue
+
+        entry_id = str(item.get("id") or "")
+        currency = str(item.get("currency") or "").upper()
+        if not entry_id or not currency:
+            continue
+        bucket = totals.get(currency)
+        if not bucket or bucket["btc"] <= 0:
+            continue
+        result[entry_id] = bucket["basis"] / bucket["btc"]
+
+    return result
+
+
 def fifo_result(
     entries: list[dict[str, Any]],
     depot_id: str | None = None,
@@ -94,6 +149,10 @@ def fifo_result(
     reference = reference.astimezone(timezone.utc)
 
     lots_by_depot: dict[str, list[dict[str, Any]]] = {}
+    # Index of the first lot that may still contain BTC for each depot. Keeping
+    # this cursor makes repeated sales/expenses O(n) overall instead of
+    # rescanning every already-consumed lot from the beginning each time.
+    lot_cursor_by_depot: dict[str, int] = {}
     matches: list[dict[str, Any]] = []
     sales: dict[str, dict[str, Any]] = {}
     expenses: dict[str, dict[str, Any]] = {}
@@ -148,46 +207,182 @@ def fifo_result(
 
         if kind == "expense":
             expense_timestamp = item.get("timestamp")
+            expense_currency = str(item.get("currency", "")).upper()
+            expense_price = decimal_value(item.get("price"))
+            expense_fee = decimal_value(item.get("fee"))
+            priced_expense = bool(expense_currency and expense_price > 0)
             remaining_expense = amount
             expense_summary: dict[str, Any] = {
                 "entry_id": item.get("id"),
                 "timestamp": expense_timestamp,
                 "depot_id": current_depot,
                 "amount_btc": amount,
+                "currency": expense_currency if priced_expense else "",
+                "gross_proceeds": amount * expense_price if priced_expense else None,
+                "fee": expense_fee if priced_expense else ZERO,
                 "resolved_btc": ZERO,
+                "unresolved_btc": ZERO,
                 "oversold_btc": ZERO,
                 "cost_basis": ZERO,
+                "realized_gain": ZERO,
                 "unknown_cost_basis_btc": ZERO,
                 "long_term_btc": ZERO,
                 "short_term_btc": ZERO,
                 "unknown_holding_btc": ZERO,
+                "long_term_realized_gain": ZERO,
+                "short_term_realized_gain": ZERO,
                 "long_term_days": threshold,
             }
-            for lot in lots:
-                if remaining_expense <= 0:
-                    break
+            lot_cursor = lot_cursor_by_depot.get(current_depot, 0)
+            while lot_cursor < len(lots) and remaining_expense > 0:
+                lot = lots[lot_cursor]
                 available = decimal_value(lot.get("remaining_btc"))
                 if available <= 0:
+                    lot_cursor += 1
                     continue
                 used = min(available, remaining_expense)
-                lot["remaining_btc"] = available - used
+                remaining_in_lot = available - used
+                lot["remaining_btc"] = remaining_in_lot
                 remaining_expense -= used
-                expense_summary["resolved_btc"] += used
-                if lot.get("known_cost"):
-                    expense_summary["cost_basis"] += used * decimal_value(lot.get("unit_basis"))
-                else:
-                    expense_summary["unknown_cost_basis_btc"] += used
+
+                fee_share = (
+                    expense_fee * used / amount
+                    if priced_expense and amount > 0
+                    else ZERO
+                )
+                proceeds = (
+                    used * expense_price - fee_share
+                    if priced_expense
+                    else None
+                )
+                lot_currency = lot.get("currency")
+                known_cost = bool(lot.get("known_cost"))
+                same_currency = bool(
+                    priced_expense and lot_currency and lot_currency == expense_currency
+                )
+                cost_basis = (
+                    used * decimal_value(lot.get("unit_basis"))
+                    if known_cost and same_currency
+                    else None
+                )
+                gain = (
+                    proceeds - cost_basis
+                    if proceeds is not None and cost_basis is not None
+                    else None
+                )
+                match_status = (
+                    "resolved"
+                    if gain is not None
+                    else "unknown_proceeds"
+                    if not priced_expense
+                    else "unknown_cost_basis"
+                    if not known_cost
+                    else "currency_conversion_required"
+                )
+
                 holding = _holding_details(lot.get("timestamp"), expense_timestamp, threshold)
-                if holding["holding_status"] == "long_term":
+                holding_status = holding["holding_status"]
+                if holding_status == "long_term":
                     expense_summary["long_term_btc"] += used
-                elif holding["holding_status"] == "short_term":
+                elif holding_status == "short_term":
                     expense_summary["short_term_btc"] += used
                 else:
                     expense_summary["unknown_holding_btc"] += used
+
+                if gain is None:
+                    unresolved_btc += used
+                    expense_summary["unresolved_btc"] += used
+                    if not known_cost:
+                        expense_summary["unknown_cost_basis_btc"] += used
+                    # Preserve the known acquisition basis for the expense
+                    # summary even when no fiat proceeds are available.
+                    elif lot.get("unit_basis") is not None:
+                        expense_summary["cost_basis"] += used * decimal_value(lot.get("unit_basis"))
+                else:
+                    expense_summary["resolved_btc"] += used
+                    expense_summary["cost_basis"] += cost_basis
+                    expense_summary["realized_gain"] += gain
+                    realized[expense_currency] = realized.get(expense_currency, ZERO) + gain
+                    if holding_status == "long_term":
+                        expense_summary["long_term_realized_gain"] += gain
+                        realized_long_term[expense_currency] = (
+                            realized_long_term.get(expense_currency, ZERO) + gain
+                        )
+                    elif holding_status == "short_term":
+                        expense_summary["short_term_realized_gain"] += gain
+                        realized_short_term[expense_currency] = (
+                            realized_short_term.get(expense_currency, ZERO) + gain
+                        )
+
+                matches.append(
+                    {
+                        # Keep sale_id for compatibility with older frontend/index
+                        # code, while disposition_type makes the actual ledger kind
+                        # explicit. Card payments remain expenses in the ledger.
+                        "sale_id": item.get("id"),
+                        "disposition_id": item.get("id"),
+                        "disposition_type": "expense",
+                        "sale_timestamp": expense_timestamp,
+                        "purchase_id": lot.get("entry_id"),
+                        "purchase_timestamp": lot.get("timestamp"),
+                        "depot_id": current_depot,
+                        "amount_btc": used,
+                        "purchase_currency": lot_currency,
+                        "sale_currency": expense_currency if priced_expense else "",
+                        "cost_basis": cost_basis,
+                        "net_proceeds": proceeds,
+                        "realized_gain": gain,
+                        "status": match_status,
+                        **holding,
+                    }
+                )
+                if remaining_in_lot <= 0:
+                    lot_cursor += 1
+
+            lot_cursor_by_depot[current_depot] = lot_cursor
             if remaining_expense > 0:
-                expense_summary["oversold_btc"] = remaining_expense
-                expense_summary["unknown_holding_btc"] += remaining_expense
                 oversold_btc += remaining_expense
+                expense_summary["oversold_btc"] = remaining_expense
+                expense_summary["unresolved_btc"] += remaining_expense
+                expense_summary["unknown_holding_btc"] += remaining_expense
+                unresolved_btc += remaining_expense
+                matches.append(
+                    {
+                        "sale_id": item.get("id"),
+                        "disposition_id": item.get("id"),
+                        "disposition_type": "expense",
+                        "sale_timestamp": expense_timestamp,
+                        "purchase_id": None,
+                        "purchase_timestamp": None,
+                        "depot_id": current_depot,
+                        "amount_btc": remaining_expense,
+                        "purchase_currency": None,
+                        "sale_currency": expense_currency if priced_expense else "",
+                        "cost_basis": None,
+                        "net_proceeds": (
+                            remaining_expense * expense_price
+                            - (expense_fee * remaining_expense / amount if amount > 0 else ZERO)
+                            if priced_expense
+                            else None
+                        ),
+                        "realized_gain": None,
+                        "status": "insufficient_stack",
+                        "holding_days": None,
+                        "holding_status": "unknown",
+                        "long_term_date": None,
+                        "days_until_long_term": None,
+                    }
+                )
+
+            if expense_summary["oversold_btc"] > 0:
+                expense_summary["status"] = "insufficient_stack"
+            elif expense_summary["unresolved_btc"] > 0 and expense_summary["resolved_btc"] > 0:
+                expense_summary["status"] = "partially_resolved"
+            elif expense_summary["unresolved_btc"] > 0:
+                expense_summary["status"] = "unresolved"
+            else:
+                expense_summary["status"] = "resolved"
+
             classes = sum(
                 1 for key in ("long_term_btc", "short_term_btc", "unknown_holding_btc")
                 if expense_summary[key] > 0
@@ -200,7 +395,6 @@ def fifo_result(
                 expense_summary["holding_status"] = "short_term"
             else:
                 expense_summary["holding_status"] = "unknown"
-            expense_summary["status"] = "insufficient_stack" if remaining_expense > 0 else "resolved"
             expenses[str(item.get("id"))] = expense_summary
             continue
 
@@ -234,14 +428,16 @@ def fifo_result(
             "long_term_days": threshold,
         }
 
-        for lot in lots:
-            if remaining_sale <= 0:
-                break
+        lot_cursor = lot_cursor_by_depot.get(current_depot, 0)
+        while lot_cursor < len(lots) and remaining_sale > 0:
+            lot = lots[lot_cursor]
             available = decimal_value(lot.get("remaining_btc"))
             if available <= 0:
+                lot_cursor += 1
                 continue
             used = min(available, remaining_sale)
-            lot["remaining_btc"] = available - used
+            remaining_in_lot = available - used
+            lot["remaining_btc"] = remaining_in_lot
             remaining_sale -= used
 
             fee_share = sale_fee * used / amount if amount > 0 else ZERO
@@ -293,6 +489,8 @@ def fifo_result(
             matches.append(
                 {
                     "sale_id": item.get("id"),
+                    "disposition_id": item.get("id"),
+                    "disposition_type": "sale",
                     "sale_timestamp": sale_timestamp,
                     "purchase_id": lot.get("entry_id"),
                     "purchase_timestamp": lot.get("timestamp"),
@@ -307,7 +505,10 @@ def fifo_result(
                     **holding,
                 }
             )
+            if remaining_in_lot <= 0:
+                lot_cursor += 1
 
+        lot_cursor_by_depot[current_depot] = lot_cursor
         if remaining_sale > 0:
             oversold_btc += remaining_sale
             sale_summary["oversold_btc"] = remaining_sale
@@ -317,6 +518,8 @@ def fifo_result(
             matches.append(
                 {
                     "sale_id": item.get("id"),
+                    "disposition_id": item.get("id"),
+                    "disposition_type": "sale",
                     "sale_timestamp": sale_timestamp,
                     "purchase_id": None,
                     "purchase_timestamp": None,

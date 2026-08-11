@@ -12,7 +12,7 @@ MATH = (COMP / "frontend/static/performance-math.js").read_text(encoding="utf-8"
 def test_daily_history_snapshots_use_real_utc_instants_and_invalidate_old_cache():
     assert "numeric = _timestamp_value(ordered[position].get(\"timestamp\"))" in HISTORY
     assert "cutoff = as_of.timestamp()" in HISTORY
-    assert '"chart_schema": 3' in HISTORY
+    assert '"chart_schema": 5' in HISTORY
     assert 'entry_day = str(ordered[position].get("timestamp", ""))[:10]' not in HISTORY
 
 
@@ -21,7 +21,7 @@ def test_legacy_migration_and_storage_sort_actual_instants():
     assert "normalized_entries.sort(key=_entry_sort_key)" in MIGRATIONS
     assert "def _ledger_sort_key" in STORAGE
     assert "entries.sort(key=_ledger_sort_key)" in STORAGE
-    assert 'updated["timestamp"] = _normalized_utc_timestamp(updated["timestamp"])' in STORAGE
+    assert 'updated["timestamp"] = _validated_ledger_timestamp(updated["timestamp"])' in STORAGE
 
 
 def test_daily_chart_points_are_end_of_day_and_analytics_skip_visual_downsampling():
@@ -45,9 +45,10 @@ def test_first_purchase_range_and_personal_year_math_are_utc_based():
     assert "setUTCFullYear" in APP and "setUTCMonth" in APP
 
 
-def test_fifo_sale_summary_uses_selected_currency_only():
+def test_fifo_sale_summary_uses_selected_currency_and_unique_dispositions():
     assert "const soldBtc=currencyMatches.reduce" in APP
-    assert "${fmtNumber(currencyMatches.length,0)} FIFO" in APP
+    assert "const dispositionCount=new Set" in APP
+    assert 't("dispositionCount")' in APP
 
 
 def test_dca_best_worst_include_purchase_fees():
