@@ -51,8 +51,12 @@ jobs:
 
           publish=false
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            test "${GITHUB_REF_NAME}" = "v${version}"
-            publish=true
+            if [[ "${GITHUB_REF_NAME}" == "v${version}" ]]; then
+              publish=true
+            else
+              echo "Tag ${GITHUB_REF_NAME} betrifft nicht Tor Gateway v${version}; kein Gateway-Publish."
+              publish=false
+            fi
           fi
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
