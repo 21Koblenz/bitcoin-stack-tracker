@@ -188,6 +188,8 @@ TRANSACTION_SCHEMA = vol.Schema({
     vol.Optional(CONF_TIMESTAMP): cv.string,
     vol.Optional(CONF_NOTE, default=""): cv.string,
     vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,
+    # One-way SHA-256 source-row identity used only for duplicate detection.
+    vol.Optional("import_ref_hash", default=""): cv.string,
 })
 ADD_STACK_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,

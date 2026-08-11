@@ -63,10 +63,10 @@ def test_current_version_and_native_assets_match():
     manifest = (COMP / "manifest.json").read_text(encoding="utf-8")
     index = INDEX_PATH.read_text(encoding="utf-8")
     panel = (COMP / "panel.py").read_text(encoding="utf-8")
-    assert '"version": "0.21.0.3"' in manifest
-    assert "app-v021003-e7911ff7.js" in index
-    assert "style-v021003-e7911ff7.css" in index
-    assert "panel-v021003-e7911ff7.js" in panel
+    assert '"version": "0.21.0.4"' in manifest
+    assert "app-v021004-b831ec4e.js" in index
+    assert "style-v021004-b831ec4e.css" in index
+    assert "panel-v021004-b831ec4e.js" in panel
 
 
 def test_secret_and_portfolio_data_path_excludes_tor_addon():
@@ -127,5 +127,5 @@ def test_public_networking_is_fail_closed_in_core_and_tor_gateway():
 
 def test_release_does_not_ship_stale_versioned_frontend_bundles():
     static = COMP / "frontend/static"
-    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021003-e7911ff7.js"]
-    assert [p.name for p in static.glob("style-v*.css")] == ["style-v021003-e7911ff7.css"]
+    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021004-b831ec4e.js"]
+    assert [p.name for p in static.glob("style-v*.css")] == ["style-v021004-b831ec4e.css"]

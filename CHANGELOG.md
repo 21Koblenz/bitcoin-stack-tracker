@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.21.0.4 — CSV Duplicate Identity Hotfix
+
+### Dublettenerkennung
+
+- CSV-Buchungen mit identischem Zeitpunkt, BTC-Betrag, Kurs und Gebühr werden nicht mehr automatisch zusammengelegt, wenn die Quelle unterschiedliche Order-, Trade- oder Transaktions-IDs liefert.
+- Kraken berücksichtigt `txid` und `ordertxid` gemeinsam. Mehrere gleich große Ausführungen derselben Order bleiben dadurch getrennte Buchungen, sobald sich mindestens eine Quell-ID unterscheidet.
+- Die ID-basierte Erkennung gilt anbieterübergreifend für unterstützte CSV-Formate, soweit eine stabile Order-, Trade-, Transaktions- oder Referenz-ID vorhanden ist.
+- Roh-IDs werden weiterhin nicht ungefragt im Ledger gespeichert. Für die Dublettenerkennung wird nur ein SHA-256-Hash aus Quelle und Quell-ID persistiert.
+- Quellen ohne eindeutige ID verwenden weiterhin den bisherigen Werte-Fingerprint aus Typ, Zeitpunkt, Depot, BTC-Menge, Währung, Kurs und Gebühr.
+- Für bereits vor diesem Hotfix importierte Buchungen ohne ID-Hash gibt es eine mengenbasierte Legacy-Abwärtskompatibilität: vorhandene identische Altbuchungen werden beim ersten erneuten Import einmalig angerechnet, weitere gleichwertige Zeilen mit unterschiedlichen IDs bleiben erhalten.
+
+### Release-Aufteilung
+
+- **Home-Assistant-Integration:** v0.21.0.4.
+- **Tor Gateway:** bleibt v0.21.0.3, da dieser Hotfix keine Netzwerk-/Gateway-Änderung enthält. Dadurch erscheint für diesen Release kein unnötiges Tor-Gateway-Update.
+
+### Tests
+
+- Regressionstests für Kraken-Ausführungen mit identischen Handelswerten und unterschiedlichen `txid`/`ordertxid`.
+- Regressionstest für Coinfinity-Buchungen mit identischen Werten und unterschiedlichen Order-IDs.
+- Bestehende CSV-Parser-Regressionstests bleiben grün.
+
 ## v0.21.0.3 — CSV Import & Fee Accounting Hotfix
 
 ### Coinfinity

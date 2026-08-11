@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 import asyncio
 import csv
+import hashlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from ipaddress import ip_address
@@ -155,6 +156,35 @@ def _get(row: dict[str, str], *aliases: str) -> str:
     return ""
 
 
+def _stable_reference(row: dict[str, str], *aliases: str) -> str:
+    """Return a stable composite source reference from every available ID field.
+
+    Multiple executions can have identical timestamp, BTC amount, price and fee.
+    If an exchange exports transaction/order/trade IDs, every differing ID must
+    therefore keep the row distinct. The raw identifiers remain RAM-only; only a
+    SHA-256 digest is carried into the reviewed import and persisted.
+    """
+    parts: list[str] = []
+    seen_values: set[str] = set()
+    for alias in aliases:
+        key = _clean_header(alias)
+        value = str(row.get(key) or "").strip()
+        if not value or value in seen_values:
+            continue
+        seen_values.add(value)
+        parts.append(f"{key}={value}")
+    return "|".join(parts)
+
+
+def _import_reference_hash(source: str, reference: str) -> str:
+    """Return a privacy-preserving import identity hash for one source row."""
+    clean_reference = str(reference or "").strip()
+    if not clean_reference:
+        return ""
+    clean_source = re.sub(r"\s+", " ", str(source or "").strip().lower())
+    return hashlib.sha256(f"{clean_source}\0{clean_reference}".encode("utf-8")).hexdigest()
+
+
 def _get_contains(row: dict[str, str], required: Iterable[str], forbidden: Iterable[str] = ()) -> str:
     req = tuple(_clean_header(item) for item in required)
     ban = tuple(_clean_header(item) for item in forbidden)
@@ -232,6 +262,9 @@ def _transaction(
         "fiat_amount": format(clean_fiat_amount, "f") if clean_fiat_amount is not None and clean_fiat_amount > 0 else "",
         "fee": format(clean_fee, "f") if kind != "expense" or expense_has_fiat_value else "0",
         "note": str(note or "")[:2000],
+        # The raw exchange/broker reference is intentionally not returned or
+        # persisted. A one-way hash is enough for duplicate detection.
+        "import_ref_hash": _import_reference_hash(source, reference),
         "optional_note_fields": clean_optional_fields,
         "import_hints": clean_import_hints,
         "warnings": issues,
@@ -335,7 +368,7 @@ def _parse_coinbase(headers: list[str], rows: list[list[str]]) -> tuple[list[dic
             timestamp=_iso_timestamp(_get(row, "timestamp", "date")), amount_btc=amount,
             currency=currency, price=price, fee=fee,
             note=_get(row, "notes", "note", "description"),
-            reference=_get(row, "id", "transaction id"),
+            reference=_stable_reference(row, "transaction id", "id", "txid", "trade id", "order id"),
         ))
     return output, skipped
 
@@ -367,7 +400,7 @@ def _parse_kraken_trades(headers: list[str], rows: list[list[str]]) -> tuple[lis
             price=_number(_get(row, "price")),
             fee=_number(_get(row, "fee")),
             note=f"Kraken {side} {pair}",
-            reference=_get(row, "txid", "ordertxid"),
+            reference=_stable_reference(row, "txid", "ordertxid", "trade id", "tradeid"),
         ))
     return output, skipped
 
@@ -485,7 +518,7 @@ def _parse_binance_trade(headers: list[str], rows: list[list[str]]) -> tuple[lis
             timestamp=_iso_timestamp(_get(row, "date utc", "utc time", "date", "time", "timestamp")),
             amount_btc=amount, currency=quote or _asset(_get(row, "currency", "quote asset")),
             price=price, fee=fee, warnings=warnings,
-            note=f"Binance {side} {pair}".strip(), reference=_get(row, "order id", "trade id"),
+            note=f"Binance {side} {pair}".strip(), reference=_stable_reference(row, "trade id", "tradeid", "order id", "orderid", "transaction id", "txid"),
         ))
     return output, skipped
 
@@ -546,7 +579,6 @@ def _parse_cointracking(headers: list[str], rows: list[list[str]]) -> tuple[list
     fee_i = _header_index(headers, ("Fee", "Fee Amount"))
     fee_cur_i = _header_index(headers, ("Fee Cur.", "Fee Currency"))
     comment_i = _header_index(headers, ("Comment", "Notes", "Note"))
-    id_i = _header_index(headers, ("Tx-ID", "ID", "Trade ID", "Exchange Transaction ID"))
     buy_cur_i = _header_index(headers, ("Buy Cur.", "Buy Currency", "Received Currency"))
     sell_cur_i = _header_index(headers, ("Sell Cur.", "Sell Currency", "Sent Currency"))
     if buy_cur_i is None:
@@ -592,7 +624,13 @@ def _parse_cointracking(headers: list[str], rows: list[list[str]]) -> tuple[list
             source="CoinTracking", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(date_i)), amount_btc=amount,
             currency=currency, price=price, fee=fee, warnings=warnings,
-            note=cell(comment_i) or tx_type, reference=cell(id_i),
+            note=cell(comment_i) or tx_type,
+            reference=_stable_reference(
+                _row_dict(headers, values),
+                "tx id", "txid", "transaction id", "trade id",
+                "exchange transaction id", "order id", "ordertxid",
+                "reference", "id",
+            ),
         ))
     return output, skipped
 
@@ -967,7 +1005,14 @@ def _parse_pocket(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[
             source="Pocket Bitcoin", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(values, date_i)), amount_btc=amount_btc,
             currency=currency, price=price, fee=fee, warnings=warnings,
-            note=note, optional_note_fields=optional,
+            note=note,
+            reference=_stable_reference(
+                _row_dict(headers, values),
+                "tx id", "txid", "transaction id", "trade id",
+                "exchange transaction id", "order id", "ordertxid",
+                "reference", "id",
+            ),
+            optional_note_fields=optional,
         ))
     return output, skipped
 
@@ -1262,7 +1307,7 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
             source="Pocket Bitcoin", row_number=row_no, kind=kind,
             timestamp=_iso_timestamp(cell(values, date_i)), amount_btc=amount_btc,
             currency=currency, price=price, fee=fee, warnings=warnings,
-            note=note, optional_note_fields=optional,
+            note=note, reference=reference, optional_note_fields=optional,
         ))
     return output, skipped
 
@@ -1450,7 +1495,12 @@ def _parse_coinfinity(headers: list[str], rows: list[list[str]]) -> tuple[list[d
             timestamp=_iso_timestamp(_get(row, "date", "timestamp")),
             amount_btc=amount_btc, currency="EUR", price=price, fee=fee,
             fiat_amount=coinfinity_fiat_total if kind == "purchase" else None,
-            note=" · ".join(details), optional_note_fields=optional_note_fields,
+            note=" · ".join(details),
+            reference=_stable_reference(
+                row, "transaction", "transaction id", "txid", "tx id",
+                "order id", "orderid", "id",
+            ),
+            optional_note_fields=optional_note_fields,
         ))
     return output, skipped
 
@@ -2121,6 +2171,7 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             price=effective_price,
             fee=Decimal("0"),
             note=note_de,
+            reference=_wavespace_transaction_id(item["row"]),
             optional_note_fields=_wavespace_optional_note_fields(entries, {item["index"]}),
             import_hints={
                 "wavespace_kind": "card_creation",
@@ -2289,6 +2340,7 @@ def _parse_wavespace(headers: list[str], rows: list[list[str]]) -> tuple[list[di
             price=price,
             fee=total_fee_fiat,
             note=note_de,
+            reference=_wavespace_transaction_id(primary["row"]),
             optional_note_fields=_wavespace_optional_note_fields(entries, metadata_indices),
             import_hints=hints,
         ))
@@ -2449,8 +2501,9 @@ def _parse_generic(source: str, headers: list[str], rows: list[list[str]]) -> tu
             row, "note", "notes", "comment", "description", "details",
             "notiz", "kommentar", "beschreibung",
         ) or f"{source_label} CSV-Import"
-        reference = _get(
-            row, "transaction id", "order id", "trade id", "id", "reference",
+        reference = _stable_reference(
+            row, "transaction id", "txid", "tx id", "trade id", "tradeid",
+            "order id", "orderid", "id", "reference",
             "transaktions id", "auftrags id", "referenz",
         )
         output.append(_transaction(

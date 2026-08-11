@@ -39,7 +39,7 @@ Da Anbieter ihre Exportformate ändern können, ist die Vorschau immer verbindli
 
 ## Dubletten und Gebühren
 
-Eine Buchung gilt als Dublette, wenn Art, Zeitpunkt, Depot, BTC-Menge, Währung, Kurs und Gebühr mit einer vorhandenen oder bereits ausgewählten Buchung übereinstimmen. Dubletten werden standardmäßig abgewählt und beim Speichern nochmals serverseitig geprüft.
+Wenn ein Anbieter eine Transaktions-, Order- oder Trade-ID liefert, hat diese Import-Identität Vorrang vor dem Wertevergleich. Zwei Ausführungen mit identischem Zeitpunkt, BTC-Menge, Kurs und Gebühr bleiben deshalb getrennte Buchungen, sobald sich mindestens eine vorhandene ID unterscheidet. Nur dieselbe Import-ID gilt dann als Dublette. Ohne verwertbare ID bleibt der bisherige Vergleich aus Art, Zeitpunkt, Depot, BTC-Menge, Währung, Kurs und Gebühr als Fallback aktiv. Für bereits vor v0.21.0.4 importierte Buchungen ohne Import-ID wird beim ersten erneuten Import die vorhandene Anzahl gleicher Altbuchungen berücksichtigt, damit keine bestehenden Datensätze verdoppelt werden. Dubletten werden standardmäßig abgewählt und beim Speichern nochmals serverseitig geprüft.
 
 Gebühren werden im Kaufbuch in der jeweiligen Fiat- beziehungsweise Handelswährung geführt. Wenn ein anbieterspezifischer Parser bei einem Verkauf eindeutig eine zusätzliche Gebühr in BTC/Sats ausweist, wird diese BTC-Menge zusätzlich zum eigentlichen Verkauf vom Stack abgezogen und ihr Fiat-Gegenwert im Gebührenfeld geführt. Dadurch gilt weiterhin `Nettoerlös = gesamte abgegangene BTC × Kurs − Fee`. Diese Behandlung wird nur dort automatisch angewendet, wo die Gebührenwährung und die Bedeutung der Spalten eindeutig sind (unter anderem Kraken Ledger, Binance Trade, CoinTracking/Pocket und Wavespace). Bei unklaren generischen Coin-Gebühren bleibt die Zeile zur manuellen Kontrolle markiert, statt die BTC-Menge blind zu verändern.
 
@@ -53,7 +53,7 @@ Gebühren werden im Kaufbuch in der jeweiligen Fiat- beziehungsweise Handelswäh
 
 ## Datenschutz beim Import
 
-Wallet-Adressen, Blockchain-TXIDs, Memos und Lightning-Rechnungen werden standardmäßig nicht in die Buchungsnotiz übernommen. Sofern ein Parser diese Felder erkennt, können sie oberhalb der Vorschautabelle ausdrücklich einzeln aktiviert werden. Die Auswahl ist bei jedem Import zunächst leer.
+Wallet-Adressen, Blockchain-TXIDs, Memos und Lightning-Rechnungen werden standardmäßig nicht in die Buchungsnotiz übernommen. Sofern ein Parser diese Felder erkennt, können sie oberhalb der Vorschautabelle ausdrücklich einzeln aktiviert werden. Die Auswahl ist bei jedem Import zunächst leer. Für die Dublettenerkennung wird eine vorhandene Order-/Trade-/Transaktions-ID nicht im Klartext im Ledger gespeichert; gespeichert wird nur ein lokaler SHA-256-Identitätswert. Die Roh-ID bleibt weiterhin nur dann in der Notiz, wenn sie im Import ausdrücklich ausgewählt wird.
 
 ## Wavespace-Ereigniserkennung
 

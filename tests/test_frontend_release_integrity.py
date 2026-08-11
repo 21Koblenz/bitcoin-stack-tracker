@@ -2,10 +2,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021003-e7911ff7.js").read_text(encoding="utf-8")
-PANEL = (COMP / "frontend/panel-v021003-e7911ff7.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021004-b831ec4e.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel-v021004-b831ec4e.js").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021003-e7911ff7.css").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021004-b831ec4e.css").read_text(encoding="utf-8")
 
 
 def test_heavy_tabs_render_lazily():

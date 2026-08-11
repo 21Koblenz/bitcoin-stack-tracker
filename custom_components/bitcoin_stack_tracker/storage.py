@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import Counter
 import os
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -119,6 +121,21 @@ def _transaction_fingerprint(item: dict[str, Any]) -> tuple[str, ...]:
         money_string(decimal_value(item.get("price"))),
         money_string(decimal_value(item.get("fee"))),
     )
+
+
+def _import_ref_hash(item: dict[str, Any]) -> str:
+    """Return a validated one-way import reference hash, if present."""
+    value = str(item.get("import_ref_hash") or "").strip().lower()
+    return value if re.fullmatch(r"[0-9a-f]{64}", value) else ""
+
+
+def _same_transaction_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Compare ledger identity while allowing equal-value trades with distinct IDs."""
+    left_ref = _import_ref_hash(left)
+    right_ref = _import_ref_hash(right)
+    if left_ref and right_ref:
+        return left_ref == right_ref
+    return _transaction_fingerprint(left) == _transaction_fingerprint(right)
 
 
 class BitcoinLedgerStore:
@@ -685,7 +702,20 @@ class BitcoinLedgerStore:
             current = list(self._data.get("entries", []))
             depots = {str(item.get("id")) for item in self._data.get("depots", [])}
             existing_fingerprints = {_transaction_fingerprint(item) for item in current}
+            existing_ref_hashes = {
+                ref_hash for item in current if (ref_hash := _import_ref_hash(item))
+            }
+            # Entries created before import-ID hashing have only their financial
+            # fingerprint. Count them so the first re-import after an upgrade can
+            # absorb exactly the already existing number without collapsing later
+            # equal-value trades that carry distinct source IDs.
+            legacy_fingerprint_counts = Counter(
+                _transaction_fingerprint(item)
+                for item in current
+                if not _import_ref_hash(item)
+            )
             pending_fingerprints: set[tuple[str, ...]] = set()
+            pending_ref_hashes: set[str] = set()
             additions: list[dict[str, Any]] = []
             duplicates = 0
 
@@ -709,6 +739,9 @@ class BitcoinLedgerStore:
                 price = decimal_value(raw.get("price"))
                 fee = decimal_value(raw.get("fee"))
                 currency = str(raw.get("currency") or "").strip().upper()[:16]
+                import_ref_hash = str(raw.get("import_ref_hash") or "").strip().lower()
+                if import_ref_hash and not re.fullmatch(r"[0-9a-f]{64}", import_ref_hash):
+                    raise ValueError(f"Import row {index}: invalid import reference hash")
                 if amount <= 0:
                     raise ValueError(f"Import row {index}: amount must be greater than zero")
                 if kind != "expense" and price <= 0:
@@ -736,11 +769,29 @@ class BitcoinLedgerStore:
                         "price": money_string(price),
                         "fee": money_string(fee),
                     })
+                if import_ref_hash:
+                    item["import_ref_hash"] = import_ref_hash
                 fingerprint = _transaction_fingerprint(item)
-                if fingerprint in existing_fingerprints or fingerprint in pending_fingerprints:
-                    duplicates += 1
-                    continue
-                pending_fingerprints.add(fingerprint)
+
+                if import_ref_hash:
+                    if import_ref_hash in existing_ref_hashes or import_ref_hash in pending_ref_hashes:
+                        duplicates += 1
+                        continue
+                    # Backward compatibility for rows imported before v0.21.0.4:
+                    # consume one equal legacy entry, but never collapse a second
+                    # source row merely because timestamp/amount/price are equal.
+                    if legacy_fingerprint_counts[fingerprint] > 0:
+                        legacy_fingerprint_counts[fingerprint] -= 1
+                        pending_ref_hashes.add(import_ref_hash)
+                        duplicates += 1
+                        continue
+                    pending_ref_hashes.add(import_ref_hash)
+                    pending_fingerprints.add(fingerprint)
+                else:
+                    if fingerprint in existing_fingerprints or fingerprint in pending_fingerprints:
+                        duplicates += 1
+                        continue
+                    pending_fingerprints.add(fingerprint)
                 additions.append(item)
 
             if not additions:
@@ -918,15 +969,19 @@ class BitcoinLedgerStore:
                 return False
             updated = deepcopy(replacement)
             updated["id"] = item_id
+            # Keep the privacy-preserving source identity when a user edits an
+            # imported ledger row. The raw exchange ID was never persisted.
+            original_ref_hash = _import_ref_hash(entries[index])
+            if original_ref_hash:
+                updated["import_ref_hash"] = original_ref_hash
             updated["note"] = str(updated.get("note") or "").strip()[:MAX_NOTE_LENGTH]
             if updated.get("timestamp"):
                 updated["timestamp"] = _normalized_utc_timestamp(updated["timestamp"])
-            fingerprint = _transaction_fingerprint(updated)
             if any(
-                idx != index and _transaction_fingerprint(item) == fingerprint
+                idx != index and _same_transaction_identity(updated, item)
                 for idx, item in enumerate(entries)
             ):
-                raise ValueError("Another ledger entry already has the same transaction values")
+                raise ValueError("Another ledger entry already has the same transaction identity")
             entries[index] = updated
             entries.sort(key=_ledger_sort_key)
             self._data["entries"] = entries

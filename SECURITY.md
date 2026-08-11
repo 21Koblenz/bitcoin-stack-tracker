@@ -1,4 +1,4 @@
-# Security Model · Bitcoin Stack Tracker v0.21.0.3
+# Security Model · Bitcoin Stack Tracker v0.21.0.4
 ## Identität und Mehrbenutzerzugriff
 
 Portfoliozugriffe werden einer **echten Home-Assistant-Benutzer-ID aus dem authentifizierten Request-Kontext** zugeordnet. Ein Client kann keine fremde `requester_user_id` vorgeben. System-generierte HA-Nutzer werden für Portfoliozugriffe abgewiesen.

@@ -10,7 +10,7 @@
         }
       ],
       "type": "application",
-      "version": "0.21.0.3"
+      "version": "0.21.0.4"
     },
     {
       "name": "bitcoin-stack-tracker-native-panel",
@@ -21,7 +21,7 @@
         }
       ],
       "type": "application",
-      "version": "0.21.0.3"
+      "version": "0.21.0.4"
     },
     {
       "name": "bitcoin-stack-tracker-tor-gateway",
@@ -105,7 +105,7 @@
     "component": {
       "name": "bitcoin-stack-tracker",
       "type": "application",
-      "version": "0.21.0.3"
+      "version": "0.21.0.4"
     },
     "properties": [
       {

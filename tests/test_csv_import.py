@@ -39,6 +39,45 @@ class CsvImportTests(unittest.TestCase):
         result = self.parse("kraken-trades.csv", """txid,ordertxid,pair,time,type,ordertype,price,cost,fee,vol\nt1,o1,XXBTZEUR,2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01\n""")
         self.assert_single(result, "Kraken Trades", "purchase", "0.01", "EUR", "60000")
 
+    def test_kraken_equal_value_fills_with_different_ids_get_distinct_import_hashes(self):
+        result = self.parse("kraken-trades.csv", """txid,ordertxid,pair,time,type,ordertype,price,cost,fee,vol
+t1,o-shared,XXBTZEUR,2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
+t2,o-shared,XXBTZEUR,2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
+""")
+        self.assertEqual(result["recognized"], 2)
+        first, second = result["rows"]
+        self.assertEqual(first["timestamp"], second["timestamp"])
+        self.assertEqual(first["amount_btc"], second["amount_btc"])
+        self.assertEqual(first["price"], second["price"])
+        self.assertNotEqual(first["import_ref_hash"], second["import_ref_hash"])
+        self.assertEqual(len(first["import_ref_hash"]), 64)
+        self.assertNotIn("t1", str(first))
+        self.assertNotIn("t2", str(second))
+
+    def test_kraken_different_order_id_also_changes_import_identity(self):
+        result = self.parse("kraken-trades.csv", """txid,ordertxid,pair,time,type,ordertype,price,cost,fee,vol
+t-shared,o1,XXBTZEUR,2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
+t-shared,o2,XXBTZEUR,2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
+""")
+        self.assertEqual(result["recognized"], 2)
+        self.assertNotEqual(result["rows"][0]["import_ref_hash"], result["rows"][1]["import_ref_hash"])
+
+    def test_cointracking_equal_values_with_different_trade_or_order_ids_stay_distinct(self):
+        result = self.parse("cointracking.csv", """Type,Buy,Cur.,Sell,Cur.,Fee,Cur.,Exchange,Trade-Group,Comment,Date,Tx-ID,Trade ID,Order ID
+Trade,0.01,BTC,600,EUR,1.5,EUR,Kraken,,Test,01.08.2026 12:00:00,tx-shared,trade-1,order-shared
+Trade,0.01,BTC,600,EUR,1.5,EUR,Kraken,,Test,01.08.2026 12:00:00,tx-shared,trade-2,order-shared
+""")
+        self.assertEqual(result["recognized"], 2)
+        self.assertNotEqual(result["rows"][0]["import_ref_hash"], result["rows"][1]["import_ref_hash"])
+
+    def test_generic_equal_values_with_different_order_ids_stay_distinct(self):
+        result = self.parse("broker.csv", """Date,Action,Amount,Unit,Fiat Amount,Fiat Currency,Rate,Order ID
+2026-08-01 12:00:00,Buy,0.01,BTC,600,EUR,60000,order-1
+2026-08-01 12:00:00,Buy,0.01,BTC,600,EUR,60000,order-2
+""")
+        self.assertEqual(result["recognized"], 2)
+        self.assertNotEqual(result["rows"][0]["import_ref_hash"], result["rows"][1]["import_ref_hash"])
+
     def test_kraken_ledger_groups_two_asset_rows(self):
         result = self.parse("kraken-ledgers.csv", """txid,refid,time,type,subtype,aclass,asset,wallet,amount,fee,balance\na,r1,2026-08-01 12:00:00,trade,,currency,XXBT,spot,0.01000000,0,1\nb,r1,2026-08-01 12:00:00,trade,,currency,ZEUR,spot,-600.00,1.50,1000\n""")
         self.assert_single(result, "Kraken Ledger", "purchase", "0.01000000", "EUR", "60000")
@@ -388,6 +427,14 @@ cf-20000,Purchase,2026-08-02T08:30:00Z,12,0.00020000,BTC,60000,,,,0,
         self.assertEqual(row["amount_btc"], "0.00020000")
         self.assertEqual(Decimal(row["amount_btc"]) * Decimal("100000000"), Decimal("20000"))
 
+    def test_coinfinity_equal_value_rows_with_different_order_ids_stay_distinct(self):
+        result = self.parse("activities.csv", """Order ID,Type,Date,Amount EUR,Amount Crypto,Crypto,Rate EUR,Mining Fee Crypto,Mining Fee EUR,Service Fee EUR,Total Fee EUR,Address
+cf-a,Purchase,2026-08-02T08:30:00Z,12,0.00020000,BTC,60000,,,,0,
+cf-b,Purchase,2026-08-02T08:30:00Z,12,0.00020000,BTC,60000,,,,0,
+""")
+        self.assertEqual(result["recognized"], 2)
+        self.assertNotEqual(result["rows"][0]["import_ref_hash"], result["rows"][1]["import_ref_hash"])
+
     def test_coinfinity_sensitive_identifiers_are_optional_not_default_note(self):
         result = self.parse("activities.csv", """Order ID;Type;Date;Amount EUR;Amount Crypto;Crypto;Rate EUR;Mining Fee Crypto;Mining Fee EUR;Service Fee EUR;Total Fee EUR;Address;Transaction;LN Invoice;Transaction type
 cf-private;Buy;2026-08-01 12:00:00;60;0.00098750;BTC;60000;;;0,75;0,75;bc1q-private-address;private-txid;lnbc-private-invoice;Lightning
@@ -596,7 +643,7 @@ TRANSACTION,2026-08-05 09:00:00,card-pay-1,CARD_AUTHORIZATION,BTC,0.001,EUR,60,C
 
     def test_delete_all_ui_uses_two_step_dashboard_modal_and_compat_fallback(self):
         static = APP / "static"
-        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+        script = (static / "app-v021004-b831ec4e.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="deleteAllEntries"', html)
         self.assertIn('id="deleteAllModal"', html)
@@ -676,9 +723,9 @@ TRANSACTION,2026-08-04 12:00:00,card-paywave,CARD_AUTHORIZATION,BTC,0.001,EUR,60
 
     def test_csv_scroller_initializes_after_modal_and_import_button_is_not_silent(self):
         static = APP / "static"
-        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+        script = (static / "app-v021004-b831ec4e.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
+        style = (static / "style-v021004-b831ec4e.css").read_text(encoding="utf-8")
         self.assertIn("queueCsvHorizontalScrollUpdate", script)
         self.assertIn('modal.classList.remove("hidden")', script)
         self.assertIn("requestAnimationFrame(()=>requestAnimationFrame(updateCsvHorizontalScroll))", script)
@@ -701,7 +748,7 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
         self.assertTrue(all(row["currency"] == "EUR" and float(row["price"]) > 0 for row in result["rows"]))
         self.assertTrue(all(row["import_hints"]["wavespace_kind"] == "card_creation" for row in result["rows"]))
         static = APP / "static"
-        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+        script = (static / "app-v021004-b831ec4e.js").read_text(encoding="utf-8")
         self.assertIn("localImportPrice", script)
         self.assertIn("2.99", script)
         self.assertIn("29.99", script)
@@ -709,8 +756,8 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
 
     def test_goal_reached_timestamp_is_rendered_and_progress_is_capped(self):
         static = APP / "static"
-        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
-        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
+        script = (static / "app-v021004-b831ec4e.js").read_text(encoding="utf-8")
+        style = (static / "style-v021004-b831ec4e.css").read_text(encoding="utf-8")
         self.assertIn("goal.goal_reached_at", script)
         self.assertIn("goalReachedAt", script)
         self.assertIn("currentlyReached ? 100 : Math.min(99.9, rawProgress)", script)
@@ -740,9 +787,9 @@ t1,o1,{pair},2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
 
     def test_optional_note_fields_are_disabled_by_default_in_ui(self):
         static = APP / "static"
-        script = (static / "app-v021003-e7911ff7.js").read_text(encoding="utf-8")
+        script = (static / "app-v021004-b831ec4e.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021003-e7911ff7.css").read_text(encoding="utf-8")
+        style = (static / "style-v021004-b831ec4e.css").read_text(encoding="utf-8")
         self.assertIn("result.optional_note_selection = [];", script)
         self.assertIn('id="csvOptionalFields"', html)
         self.assertIn('data-i18n="optionalFieldsTitle"', html)
