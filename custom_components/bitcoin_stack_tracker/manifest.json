@@ -13,7 +13,7 @@
     "python-socks==2.8.2",
     "argon2-cffi-bindings==25.1.0"
   ],
-  "version": "0.21.0.4",
+  "version": "0.21.0.5",
   "dependencies": [
     "recorder",
     "http",

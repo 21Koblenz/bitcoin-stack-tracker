@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.21.0.5 — Bulk-Import-Schema Hotfix
+
+- Behebt den Fehler `extra keys not allowed @ data['transactions'][0]['import_ref_hash']` beim Bestätigen von CSV-Imports.
+- `import_ref_hash` ist jetzt im tatsächlichen `bulk_import`-Transaktionsschema erlaubt.
+- Die in v0.21.0.4 eingeführte ID-basierte Dubletten-Erkennung für Kraken und andere unterstützte CSV-Quellen kann dadurch serverseitig gespeichert und ausgewertet werden.
+- Regressionstest ergänzt, damit Frontend-Payload und Home-Assistant-Service-Schema künftig nicht mehr auseinanderlaufen.
+- Tor Gateway bleibt auf **v0.21.0.3**; dort ist keine Änderung nötig.
+
 ## v0.21.0.4 — CSV Duplicate Identity Hotfix
 
 ### Dublettenerkennung

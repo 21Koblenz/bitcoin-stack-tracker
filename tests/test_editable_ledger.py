@@ -4,7 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 STORAGE = (COMP / "storage.py").read_text(encoding="utf-8")
-APP = (COMP / "frontend/static/app-v021004-b831ec4e.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021005-28d54128.js").read_text(encoding="utf-8")
 HTML = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 SERVICES = (COMP / "services.yaml").read_text(encoding="utf-8")
 

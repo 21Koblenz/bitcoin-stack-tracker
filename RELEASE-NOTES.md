@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.4
+# Bitcoin Stack Tracker v0.21.0.5 Hotfix
 
 ## App- und Funktionsübersicht
 
@@ -8,11 +8,10 @@
 
 - mehrere Depots und Gesamtdepot
 - Käufe, Verkäufe, Ausgaben, Gebühren, Notizen und depotweises FIFO
-- Verkaufsübersicht mit FIFO-Einstand, Nettoerlös, Gewinn/Verlust und Rendite
+- CSV-Import mit prüfbarer Vorschau und ID-basierter Dubletten-Erkennung
 - historische Kurs-, Stack-, Portfolio-, Einstands- und Gewinn/Verlust-Charts
 - TWR, XIRR, DCA und Drawdown
 - Ziele, Milestones, Halving- und Netzwerk-Markierungen
-- CSV-Import mit prüfbarer Vorschau
 - verschlüsselte portable `.bstbackup`-Backups
 - Privacy-/Diskretmodus, BTC/Sats und fiatfreie Ansicht
 - Deutsch/Englisch sowie Desktop-/Smartphone-Ansicht
@@ -25,16 +24,18 @@
 - Das Gateway verwendet nftables Fail Closed und hat keinen Zugriff auf Portfolio, Passwörter oder Home-Assistant-API-Tokens.
 - Lokale private Node-Ziele dürfen direkt im LAN angesprochen werden.
 
-## Changelog v0.21.0.4
+---
 
-Dieser Hotfix korrigiert die anbieterübergreifende CSV-Dublettenerkennung.
+## Changelog v0.21.0.5
 
-- **ID vor Wertevergleich:** Wenn eine CSV eine Order-, Trade-, Transaktions- oder Referenz-ID enthält, entscheidet diese Identität über Dubletten.
-- **Kraken:** Mehrere Ausführungen mit exakt gleichem Zeitpunkt, BTC-Betrag, Kurs und Fee bleiben getrennt, wenn sich `txid` oder `ordertxid` unterscheidet.
-- **Anbieterübergreifend:** Dasselbe Prinzip wird für unterstützte Coinbase-, Binance-, CoinTracking-/Pocket-, Coinfinity-, Wavespace- und generische CSV-Pfade genutzt, sofern eine eindeutige ID vorhanden ist.
-- **Datenschutz:** Die Roh-ID wird nicht automatisch im Ledger gespeichert. Persistiert wird nur ein SHA-256-Hash aus Quelle und Quell-ID zur späteren Dublettenerkennung.
-- **Fallback:** Fehlt eine ID, bleibt der bisherige Werte-Fingerprint aktiv.
-- **Legacy-Imports:** Bereits vorhandene Altbuchungen ohne ID-Hash werden beim ersten erneuten Import mengenbasiert berücksichtigt, ohne zusätzliche gleichwertige Trades mit unterschiedlichen IDs zu verschlucken.
-- **Tor Gateway:** bleibt auf **v0.21.0.3**, weil dieser Hotfix nur die Integration betrifft.
+Dieser Hotfix behebt einen Service-Schema-Fehler aus **v0.21.0.4**.
 
-Die vollständige Versionshistorie steht in `CHANGELOG.md`.
+- **CSV-Import wieder speicherbar:** `import_ref_hash` wird jetzt vom Home-Assistant-Service `bulk_import` akzeptiert.
+- **Kraken-Dublettenfix funktioniert vollständig:** Unterschiedliche `txid`/`ordertxid` bleiben auch dann getrennte Buchungen, wenn Zeitpunkt, Menge, Kurs und Gebühr identisch sind.
+- **Anbieterübergreifend:** Die gleiche Import-ID-Logik bleibt für unterstützte Order-, Trade-, TX- und Transaktions-IDs aktiv.
+- **Regressionstest:** Prüft explizit, dass der Frontend-Payload vom `bulk_import`-Schema angenommen wird.
+- **Cache-Busting:** Frontend-Assets auf `v021005-28d54128` aktualisiert.
+- **Tor Gateway:** bleibt auf `v0.21.0.3`, da dieser Hotfix ausschließlich die Custom Integration betrifft.
+
+**Full Changelog:**  
+https://github.com/21Koblenz/bitcoin-stack-tracker/compare/v0.21.0.4...v0.21.0.5
