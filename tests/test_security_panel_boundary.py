@@ -13,7 +13,7 @@ def test_service_identity_cannot_be_forwarded():
 
 def test_native_iframe_uses_authenticated_same_origin_postmessage_bridge():
     panel=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/panel-v021006-733b783d.js").read_text()
-    app=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/static/app-v021006-733b783d.js").read_text()
+    app=(ROOT/"custom_components/bitcoin_stack_tracker/frontend/static/app-v021007-050b734c.js").read_text()
     assert "new MessageChannel()" not in panel
     assert "nativeBridgeReady" not in app
     assert "event.source !== this._frame.contentWindow" in panel

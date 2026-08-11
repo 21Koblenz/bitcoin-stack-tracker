@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.6
+# Bitcoin Stack Tracker v0.21.0.7
 
 **Bitcoin Stack Tracker** ist ein lokaler, Bitcoin-only Portfolio- und Stack-Tracker für Home Assistant. Er verwaltet Käufe, Verkäufe, Depots, Ziele, historische Kurse, FIFO-Zuordnungen und Performance-Auswertungen, ohne Wallet-Schlüssel oder Seed-Wörter zu benötigen.
 
@@ -41,7 +41,7 @@ Die FIFO-/Haltezeitanzeige ist eine Rechenhilfe und keine Steuerberatung.
 
 ### CSV-Import
 
-Bearbeitbare Importvorschau für unter anderem Kraken, Coinbase, Binance, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace und CoinTracking-kompatible Dateien. Dubletten und unzulässige Buchungen werden geprüft; Original-CSV-/ZIP-Dateien werden nicht dauerhaft gespeichert.
+Bearbeitbare Importvorschau für unter anderem Kraken, Coinbase, Binance, Bitpanda, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace und CoinTracking-kompatible Dateien. Dubletten und unzulässige Buchungen werden geprüft; Original-CSV-/ZIP-Dateien werden nicht dauerhaft gespeichert.
 
 Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 
@@ -136,27 +136,24 @@ Kurzfassung:
 
 ## Release
 
-Aktueller Projektstand: **v0.21.0.6**. Dieser Release bündelt **alle Änderungen seit v0.21.0.5**.
+Aktueller Projektstand: **v0.21.0.7**. Dieser Release bündelt die Änderungen seit **v0.21.0.6**.
 
-### Änderungen seit v0.21.0.5
+### Änderungen seit v0.21.0.6
 
-- **Large-Ledger-Performance:** große CSV-Imports, Tresor-Unlock, Dashboard, Charts und FIFO wurden für Ledgers mit vielen Buchungen optimiert; FIFO-Caches werden wiederverwendet, historische Tagesstände chronologisch aufgebaut und Preisreihen per Binärsuche aufgelöst.
-- **Lazy Loading & Browser-Performance:** Ledger, FIFO und große Historienreihen werden erst bei Bedarf geladen; schwere Overview-Berechnungen laufen verzögert/abbrechbar und wiederholte Vollsuchen wurden durch Indizes/Caches ersetzt.
-- **FIFO-Abgänge:** Verkäufe und bewertete Ausgaben/Kartenzahlungen werden vollständig ausgewertet. Teil-Lot-Reste bleiben erhalten und werden beim nächsten Abgang zuerst verbraucht; mehrere Kauf-Lots behalten jeweils ihre eigene historische Kostenbasis.
-- **Ø Einkauf bis dahin:** Zusätzlich zum steuer-/lotbezogenen FIFO-Ergebnis zeigt jeder Abgang den BTC-gewichteten durchschnittlichen Einstand **aller Käufe in derselben Fiatwährung bis zu diesem Zeitpunkt** inklusive Kaufgebühren. Bereits zuvor verkaufte Käufe bleiben bewusst Teil dieses historischen Durchschnitts. Daraus wird ein separater Ø-P/L-Vergleich berechnet, damit sofort sichtbar ist, ob der Abgang gegenüber dem damaligen Gesamt-Durchschnitt im Plus oder Minus lag. Es findet keine FX-Umrechnung statt. In den einzelnen FIFO-Abgangszeilen werden **FIFO-Gewinn/FIFO-Rendite** und **Ø-Gewinn/Ø-Rendite** getrennt ausgewiesen. Die Kopfübersicht enthält ebenfalls zwei getrennte Blöcke: die echte FIFO-Gesamtrechnung und den historischen Durchschnittsvergleich mit BTC-gewichtetem Vergleichskaufkurs, Vergleichseinstand sowie absolutem und relativem Ø-Ergebnis.
-- **Berechnungs-Audit:** Drawdown-, ATH-, XIRR-, Zeitstempel-, Oversell- und Gebühren-Randfälle wurden erneut geprüft und korrigiert.
-- **Neue Kennzahlen:** BTC-CAGR, Stacking-Geschwindigkeit, realisierter/unrealisierter/gesamter Gewinn, Netto-Fiat-Investment, Drawdown/Recovery, Haltezeit-/Stack-Alter-Auswertung und cashflow-neutraler HODL-Benchmark.
-- **Gebühren:** Kauf- und Abgangsgebühren werden als volumengewichtete Quoten ausgewiesen; echte BTC-/On-Chain-Gebühren werden in Sats berücksichtigt, unbekannte historische Werte nicht geraten.
-- **Charts:** linke und rechte Y-Achse können unabhängig Linear oder Logarithmisch dargestellt werden.
-- **Datenschutz/Privatsphäre:** CSV-Dublettenabgleich läuft vollständig in Home Assistant Core; bestehende Import-Hashes verlassen Core nicht. Ledger-, Chart- und FIFO-Payloads wurden minimiert und sensible Antworten gegen Browser-/Proxy-Caching gehärtet.
-- **FIFO-Oberfläche:** `FIFO SALES / Verkaufsübersicht` wurde zu **FIFO ABGÄNGE / FIFO-Abgänge**; Verkauf und Ausgabe werden getrennt gekennzeichnet und die Kopfzahl zählt echte Abgänge statt Lot-Matches.
+- **Bitpanda-CSV-Import:** Bitpanda Transaction Reports werden über Metadaten und die charakteristische Spaltenstruktur direkt erkannt. Importiert werden ausschließlich BTC/XBT-Käufe und -Verkäufe; Fiat-Einzahlungen, Transfers und Altcoins werden nicht als Bitcoin-Buchungen übernommen.
+- **Bitpanda-Withdrawals:** BTC-Auszahlungen bleiben Transfers und werden nicht als Verkauf behandelt. Eine in BTC ausgewiesene Withdrawal-/Netzwerkgebühr wird dem vorherigen BTC-Kauf-Batch zugeordnet, proportional auf ganze Satoshis verteilt und vom Stack abgezogen.
+- **Bitpanda-Handelsgebühren:** Im Ausführungspreis enthaltene Handelsgebühren werden getrennt als Analysegebühr geführt und im Gebühren-Dashboard berücksichtigt, ohne den FIFO-Einstand ein zweites Mal zu erhöhen. Ist die historische Gebühr aus dem CSV nicht exakt ableitbar, bleibt die verwendete 0,99-%-Angabe ausdrücklich als editierbare Schätzung markiert.
+- **Dubletten:** `Transaction ID` ist bei Bitpanda die primäre Import-Identität. Unterschiedliche IDs bleiben getrennte Buchungen, auch wenn Zeitpunkt und Beträge identisch sind; gespeichert wird weiterhin nur der lokale SHA-256-Identitätswert.
+- **Importkontrolle:** Die Plausibilitätsprüfung verwendet für Bitpanda-Käufe die ursprüngliche Brutto-BTC-Menge vor einer späteren Withdrawal-Fee. Dadurch erzeugen Netzwerkgebühren keine falsche Kauf-Kontrollabweichung mehr. Physische CSV-Zeilennummern werden korrekt gemeldet.
+- **HACS/Home Assistant CI:** HACS Validation und Hassfest laufen gemeinsam über `.github/workflows/validate.yml`; Manifest-Reihenfolge, `codeowners` und Config-Entry-only-Schema entsprechen den aktuellen Prüfanforderungen.
 
-Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.6 ausschließlich die Custom Integration betrifft.
+Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.7 ausschließlich die Custom Integration und Repository-/CI-Dateien betrifft.
 
-Auditbericht: [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md)
+Der grundlegende Berechnungs-, Datenschutz- und Security-Audit aus [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) bleibt unverändert gültig; v0.21.0.7 ergänzt gezielte CSV-/Gebühren-Regressionstests.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
+
 
 ## Was das Projekt ausdrücklich nicht ist
 

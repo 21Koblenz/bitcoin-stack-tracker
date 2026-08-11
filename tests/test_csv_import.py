@@ -643,7 +643,7 @@ TRANSACTION,2026-08-05 09:00:00,card-pay-1,CARD_AUTHORIZATION,BTC,0.001,EUR,60,C
 
     def test_delete_all_ui_uses_two_step_dashboard_modal_and_compat_fallback(self):
         static = APP / "static"
-        script = (static / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+        script = (static / "app-v021007-050b734c.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="deleteAllEntries"', html)
         self.assertIn('id="deleteAllModal"', html)
@@ -723,7 +723,7 @@ TRANSACTION,2026-08-04 12:00:00,card-paywave,CARD_AUTHORIZATION,BTC,0.001,EUR,60
 
     def test_csv_scroller_initializes_after_modal_and_import_button_is_not_silent(self):
         static = APP / "static"
-        script = (static / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+        script = (static / "app-v021007-050b734c.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
         self.assertIn("queueCsvHorizontalScrollUpdate", script)
@@ -748,7 +748,7 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
         self.assertTrue(all(row["currency"] == "EUR" and float(row["price"]) > 0 for row in result["rows"]))
         self.assertTrue(all(row["import_hints"]["wavespace_kind"] == "card_creation" for row in result["rows"]))
         static = APP / "static"
-        script = (static / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+        script = (static / "app-v021007-050b734c.js").read_text(encoding="utf-8")
         self.assertIn("localImportPrice", script)
         self.assertIn("2.99", script)
         self.assertIn("29.99", script)
@@ -756,7 +756,7 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
 
     def test_goal_reached_timestamp_is_rendered_and_progress_is_capped(self):
         static = APP / "static"
-        script = (static / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+        script = (static / "app-v021007-050b734c.js").read_text(encoding="utf-8")
         style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
         self.assertIn("goal.goal_reached_at", script)
         self.assertIn("goalReachedAt", script)
@@ -787,7 +787,7 @@ t1,o1,{pair},2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
 
     def test_optional_note_fields_are_disabled_by_default_in_ui(self):
         static = APP / "static"
-        script = (static / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+        script = (static / "app-v021007-050b734c.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
         self.assertIn("result.optional_note_selection = [];", script)
@@ -816,6 +816,46 @@ t1,o1,{pair},2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
         result = self.parse("coinbase.csv", """Timestamp,Transaction Type,Asset,Quantity Transacted,Spot Price Currency,Spot Price at Transaction\n2026-08-01T12:00:00Z,Buy,ETH,1,EUR,3000\n2026-08-02T12:00:00Z,Buy,BTC,0.01,EUR,60000\n""")
         self.assertEqual(result["recognized"], 1)
         self.assertEqual(result["skipped"], 1)
+
+
+    def test_bitpanda_buy_withdrawal_fee_keeps_buy_valid_and_skips_withdrawal(self):
+        result = self.parse("renamed.csv", """Venue: Bitpanda
+Reported by Bitpanda GmbH
+
+Transaction ID,Timestamp,Transaction Type,In/Out,Amount Fiat,Fiat,Amount Asset,Asset,Asset market price,Asset market price currency,Asset class,Product ID,Fee,Fee asset
+aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,2026-10-24T18:18:17+02:00,buy,outgoing,76.44,EUR,0.00100000,BTC,76440.00,EUR,Cryptocurrency,13,-,-
+bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb,2026-10-24T18:20:17+02:00,withdrawal,outgoing,75.20,EUR,0.00000000,BTC,76440.00,EUR,Cryptocurrency,13,0.00002300,BTC
+""")
+        self.assertEqual(result["source"], "bitpanda")
+        self.assertEqual(result["recognized"], 1)
+        self.assertEqual(result["skipped"], 1)
+        row = result["rows"][0]
+        self.assertTrue(row["valid"], row["warnings"])
+        self.assertEqual(row["source_row"], 5)
+        self.assertEqual(row["amount_btc"], "0.00097700")
+        self.assertEqual(row["fee_btc"], "0.00002300")
+        self.assertEqual(row["fee"], "0")
+        self.assertEqual(row["import_hints"]["control_amount_btc"], "0.00100000")
+        self.assertEqual(row["import_hints"]["control_included_fee"], False)
+        self.assertTrue(row["included_fee_estimated"])
+
+    def test_bitpanda_altcoins_and_fiat_deposits_are_ignored(self):
+        result = self.parse("bitpanda.csv", """Transaction ID,Timestamp,Transaction Type,In/Out,Amount Fiat,Fiat,Amount Asset,Asset,Asset market price,Asset market price currency,Asset class,Product ID,Fee,Fee asset
+1,2026-10-24T18:00:00+02:00,deposit,incoming,62.00,EUR,-,EUR,-,-,Fiat,-,2.00000000,EUR
+2,2026-10-24T18:01:00+02:00,buy,outgoing,100.00,EUR,0.05,ETH,2000,EUR,Cryptocurrency,2,-,-
+3,2026-10-24T18:02:00+02:00,buy,outgoing,60.00,EUR,0.00100000,XBT,60000,EUR,Cryptocurrency,1,-,-
+""")
+        self.assertEqual(result["recognized"], 1)
+        self.assertEqual(result["skipped"], 2)
+        self.assertEqual(result["rows"][0]["amount_btc"], "0.00100000")
+
+    def test_bitpanda_equal_value_trades_with_different_transaction_ids_stay_distinct(self):
+        result = self.parse("bitpanda.csv", """Transaction ID,Timestamp,Transaction Type,In/Out,Amount Fiat,Fiat,Amount Asset,Asset,Asset market price,Asset market price currency,Asset class,Product ID,Fee,Fee asset
+trade-1,2026-10-24T18:18:17+02:00,buy,outgoing,60.00,EUR,0.00100000,BTC,60000,EUR,Cryptocurrency,1,-,-
+trade-2,2026-10-24T18:18:17+02:00,buy,outgoing,60.00,EUR,0.00100000,BTC,60000,EUR,Cryptocurrency,1,-,-
+""")
+        self.assertEqual(result["recognized"], 2)
+        self.assertNotEqual(result["rows"][0]["import_ref_hash"], result["rows"][1]["import_ref_hash"])
 
 
 if __name__ == "__main__":

@@ -348,7 +348,7 @@ def test_cyclonedx_sboms_are_v17_and_current_release():
     for bom in (release, source):
         assert bom["bomFormat"] == "CycloneDX"
         assert bom["specVersion"] == "1.7"
-    assert release["metadata"]["component"]["version"] == "0.21.0.6"
+    assert release["metadata"]["component"]["version"] == "0.21.0.7"
     assert source["metadata"]["component"]["version"] == "0.21.0.3"
     gateway = next(component for component in release["components"] if component["name"] == "bitcoin-stack-tracker-tor-gateway")
     assert gateway["version"] == "0.21.0.3"

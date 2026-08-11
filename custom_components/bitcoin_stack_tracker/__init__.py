@@ -208,6 +208,9 @@ IMPORT_TRANSACTION_SCHEMA = vol.Schema({
     vol.Optional(CONF_CURRENCY, default=""): cv.string,
     vol.Optional(CONF_PRICE, default=0): vol.Any(str, int, float),
     vol.Optional(CONF_FEE, default=0): vol.Any(str, int, float),
+    # Analytics-only fee already embedded in a broker execution price.
+    vol.Optional("included_fee", default=0): vol.Any(str, int, float),
+    vol.Optional("included_fee_estimated", default=False): cv.boolean,
     vol.Optional("fee_btc", default=0): vol.Any(str, int, float),
     vol.Optional(CONF_NOTE, default=""): cv.string,
     vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,

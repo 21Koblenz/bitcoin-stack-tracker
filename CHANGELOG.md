@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.21.0.7 — Bitpanda CSV & Fee Hotfix
+
+### Bitpanda-Import
+- Neuer eigener Bitpanda-Parser für Transaction Reports mit Erkennung über `Venue: Bitpanda`, `Reported by Bitpanda GmbH` und die charakteristische Header-Struktur.
+- Der vorhandene BTC/XBT-Normalisierer bleibt die zentrale Bitcoin-only-Grenze. Käufe und Verkäufe anderer Assets sowie reine Fiat-Deposits werden ignoriert.
+- `buy` wird als Kauf und `sell` als Verkauf verarbeitet; `In/Out` ist nur Zusatzinformation und bestimmt nicht die Buchungsart.
+- `Transaction ID` wird als primäre stabile Import-Identität verwendet. Roh-IDs werden weiterhin nicht im Ledger gespeichert, sondern nur lokal gehasht.
+- Physische CSV-Zeilennummern bleiben auch bei Bitpanda-Metadatenzeilen erhalten, damit Importfehler auf die tatsächliche Datei verweisen.
+
+### Withdrawal- und Gebührenlogik
+- BTC-`withdrawal` bleibt ein Transfer und erzeugt keinen FIFO-Verkauf.
+- Eine explizite Bitpanda-Withdrawal-Fee in BTC wird dem seit dem vorherigen BTC-Withdrawal aufgebauten Kauf-Batch zugeordnet.
+- Gemeinsame BTC-Fees werden proportional nach Brutto-BTC auf ganze Satoshis verteilt; der letzte Kauf erhält den exakten Rest, sodass die Summe exakt der exportierten BTC-Fee entspricht.
+- Die Netzwerkfee reduziert den tatsächlichen Stack und bleibt als `fee_btc` erhalten; sie wird nicht künstlich in eine Fiat-Fee umgerechnet.
+- Im Bitpanda-Ausführungspreis enthaltene Handelsgebühren/Prämien werden als separates `included_fee` gespeichert. Sie zählen in der Gebührenanalyse, verändern aber den FIFO-Einstand nicht ein zweites Mal.
+- Liefert die CSV eine explizite Fiat-Handelsgebühr, wird diese als enthaltene Gebühr übernommen. Ist sie nur aus `Amount Fiat`, Brutto-BTC und Marktpreis ableitbar, wird die Differenz als geschätzt markiert. Ist sie aus dem CSV nicht rekonstruierbar, wird die 0,99-%-BTC-Prämie ausschließlich als editierbare Analytics-Schätzung verwendet.
+
+### Importvorschau und Kontrolle
+- Importvorschau und Speicherung unterstützen enthaltene Handelsgebühren einschließlich Schätzkennzeichen.
+- Die Rechenkontrolle verwendet für Bitpanda den ursprünglichen Trade-BTC-Betrag vor einer späteren Withdrawal-Fee; hohe On-Chain-Gebühren erzeugen dadurch keine falsche Kaufabweichung.
+- Fehlende Bitpanda-`Fee`-Werte (`-`) sind zulässig und machen eine ansonsten vollständige Kauf-/Verkaufszeile nicht ungültig.
+- Export und Dashboard-Gebührenmetriken berücksichtigen `included_fee`, ohne die Kostenbasis doppelt zu belasten.
+
+### HACS / Home Assistant
+- Gemeinsamer `Validate`-Workflow mit HACS Action und Hassfest.
+- `actions/checkout@v5`.
+- Manifest mit `@21Koblenz` als `codeowners`, HACS/Hassfest-konformer Schlüsselreihenfolge und `CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)`.
+- **Tor Gateway bleibt v0.21.0.3**.
+
+### Tests
+- Bitpanda-Regressionen decken Buy/Sell, BTC/XBT-Filter, Altcoin-Ausschluss, Deposits, BTC-Withdrawals, mehrere Käufe pro Withdrawal-Batch, Satoshi-genaue Fee-Verteilung, physische Zeilennummern, ID-basierte Dubletten und enthaltene Handelsgebühren ab.
+- Finale Testsuite: **354 Tests + 8 Subtests bestanden**; JavaScript-Syntaxprüfung, Python-Compile-Check, JSON-Parsing und Versionskonsistenz ebenfalls erfolgreich.
+
 ## v0.21.0.6 — Calculation, Privacy & Large-Ledger Performance Audit
 
 ### Berechnung und FIFO

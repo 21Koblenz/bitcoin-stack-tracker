@@ -1,6 +1,6 @@
-# Security Model · Bitcoin Stack Tracker v0.21.0.6
+# Security Model · Bitcoin Stack Tracker v0.21.0.7
 
-Dieses Dokument beschreibt die Schutzgrenzen des Projekts. Das Audit für v0.21.0.6 ist ein **Code-, Datenfluss- und Regressionstest-Audit** und kein externer Penetrationstest.
+Dieses Dokument beschreibt die Schutzgrenzen des Projekts. Der grundlegende Security-Audit aus v0.21.0.6 bleibt für v0.21.0.7 maßgeblich; v0.21.0.7 ändert primär CSV-Import, Gebührenanalyse und Repository-CI. Der Audit ist ein **Code-, Datenfluss- und Regressionstest-Audit** und kein externer Penetrationstest.
 
 ## Identität und Mehrbenutzerzugriff
 

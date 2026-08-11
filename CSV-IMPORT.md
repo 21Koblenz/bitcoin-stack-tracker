@@ -28,6 +28,7 @@ Vor der Bestätigung wird nichts in das Kaufbuch geschrieben. Der bestätigte St
 - Kraken Ledgers History
 - Binance Trade History
 - Binance Transaction History / Transaction Record
+- Bitpanda Transaction Report
 - CoinTracking Universal CSV
 - Coinfinity „My Activities“ mit On-Chain- und Lightning-Auszahlungen
 
@@ -36,6 +37,36 @@ Beim aktuellen Coinfinity-Format ist `Amount Crypto` ein BTC-Dezimalwert. Die Sa
 Für Relai, Bittr/getbittr und Wavespace gibt es eine flexible Broker-Erkennung anhand des Dateinamens und üblicher Spaltenbezeichnungen. Pocket Bitcoin wird in zwei eigenen Varianten unterstützt: dem CoinTracking-kompatiblen Export (`Type, Buy Amount, Buy Cur., ...`) und dem nativen Pocket-Dashboard-Export (`type,date,reference,price.currency,...`). Beim CoinTracking-kompatiblen Pocket-Export ist eine Fiat-Gebühr bereits im `Sell Amount` enthalten: für den Ausführungskurs wird deshalb `Sell Amount - Fee Amount` verwendet, während die Gebühr separat erhalten bleibt. So entspricht der gesamte Einstand weiterhin exakt dem tatsächlich eingezahlten Fiatbetrag. Bei einer CoinTracking-`Withdrawal` ist der Wallet-Eingang `Sell Amount - Fee Amount`, wenn die Gebühr in BTC/Sats angegeben ist. Mehrere Käufe dürfen in einer einzigen Pocket-Auszahlung gebündelt werden: Der Parser sortiert Trade und Withdrawal chronologisch, sammelt alle noch nicht ausgezahlten Käufe seit der vorherigen Withdrawal und verteilt den Netto-Walletbetrag proportional nach BTC-Menge auf diesen Block. Dadurch funktionieren auch Auszahlungen nach Mitternacht (z. B. 01:55 oder 02:24 Uhr), ohne einen späteren Kauf nach der Auszahlung fälschlich einzubeziehen. Beim nativen Pocket-Dashboard-CSV ist dagegen `value.amount` bereits der Netto-Walletbetrag und wird nicht noch einmal um `fee.amount` reduziert. Werden dort mehrere Käufe in einer Withdrawal zusammen ausgezahlt, sammelt der Parser ebenfalls alle Käufe seit der vorherigen Withdrawal, auch über Mitternacht hinweg, und verteilt `value.amount` proportional nach Brutto-BTC auf diese Käufe. Der jeweilige Anteil der gemeinsamen Netzwerkgebühr ergibt sich aus der Differenz zwischen Brutto- und Netto-BTC und wird mit dem Kaufkurs des jeweiligen Trades in Fiat berücksichtigt. Bei Pocket erzeugt nur der eigentliche Trade/Kauf eine Buchung; Deposit und Withdrawal werden als Transfers behandelt. Andere Anbieter werden über den generischen Bitcoin-CSV-Parser erkannt, sofern die Datei verständliche Felder für Art, Datum, BTC-Menge sowie Fiatbetrag oder BTC-Kurs enthält.
 
 Da Anbieter ihre Exportformate ändern können, ist die Vorschau immer verbindlich. Eine Zeile mit fehlenden oder widersprüchlichen Werten wird nicht automatisch ausgewählt und muss vor dem Import korrigiert werden.
+
+## Bitpanda Transaction Report
+
+Bitpanda wird über die charakteristischen Spalten und zusätzlich über Metadaten wie `Venue: Bitpanda` beziehungsweise `Reported by Bitpanda GmbH` erkannt. Der Dateiname ist dafür nicht maßgeblich.
+
+- `Transaction Type = buy` mit BTC/XBT → Kauf
+- `Transaction Type = sell` mit BTC/XBT → Verkauf
+- `deposit` → keine Bitcoin-Buchung
+- `withdrawal` → Transfer, kein Verkauf
+- andere Assets als BTC/XBT → ignoriert
+
+`Transaction ID` ist die primäre Import-Identität. Zwei Bitpanda-Zeilen mit gleichem Zeitpunkt und gleichen Beträgen bleiben getrennt, wenn ihre Transaction IDs unterschiedlich sind. Wie bei anderen Quellen wird die Roh-ID nicht im Ledger gespeichert; für die Dublettenprüfung wird nur ein lokaler SHA-256-Identitätswert persistiert.
+
+### Bitpanda-Withdrawal-Fees
+
+Eine BTC-Auszahlung schließt den seit der vorherigen BTC-Auszahlung aufgebauten Kauf-Batch. Ist `Fee asset = BTC`, wird die ausgewiesene BTC-Fee proportional nach Brutto-BTC auf die zugehörigen Käufe verteilt. Die Verteilung erfolgt auf ganze Satoshis; der letzte Kauf erhält den exakten Rest. Der Withdrawal selbst wird nicht als Verkauf gespeichert.
+
+Die BTC-Withdrawal-Fee reduziert damit den tatsächlich verbleibenden Stack und bleibt als `fee_btc` erhalten. Sie wird nicht künstlich in eine Fiatgebühr umgerechnet.
+
+### Im Preis enthaltene Bitpanda-Handelsgebühren
+
+Bitpanda-Reports können bei `Fee` ein `-` enthalten, obwohl eine Handelsprämie bereits im Ausführungspreis steckt. Der Tracker führt solche Kosten getrennt als **enthaltene Handelsgebühr**:
+
+- explizite Fiat-Fee im CSV → direkt als enthaltene Gebühr
+- positive, aus `Amount Fiat`, ursprünglicher BTC-Menge und `Asset market price` ableitbare Differenz → als geschätzte enthaltene Gebühr
+- aus dem CSV nicht rekonstruierbare historische Prämie → 0,99 % nur als editierbare Analytics-Schätzung
+
+Diese enthaltene Gebühr wird im Gebühren-Dashboard berücksichtigt, aber nicht ein zweites Mal zur FIFO-Kostenbasis addiert. Eine reine Schätzung beeinflusst auch nicht die Rechenkontrolle des Kaufs.
+
+Die Plausibilitätsprüfung verwendet bei Bitpanda stets die ursprüngliche BTC-Handelsmenge vor einer späteren Withdrawal-Fee. Dadurch können hohe On-Chain-Gebühren keinen ansonsten gültigen Kauf als widersprüchlich markieren.
 
 ## Dubletten und Gebühren
 

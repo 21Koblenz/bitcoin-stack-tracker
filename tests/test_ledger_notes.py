@@ -6,7 +6,7 @@ FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
 
 def test_desktop_ledger_places_note_below_transaction_row():
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    app = (FRONTEND / "static" / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+    app = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
     css = (FRONTEND / "static" / "style-v021006-733b783d.css").read_text(encoding="utf-8")
     ledger_header = html.split('id="ledgerBody"', 1)[0].rsplit('<thead>', 1)[-1]
     assert '<th data-i18n="note">Notiz</th>' not in ledger_header
@@ -20,7 +20,7 @@ def test_desktop_ledger_places_note_below_transaction_row():
 
 
 def test_mobile_ledger_keeps_note_below_card():
-    app = (FRONTEND / "static" / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+    app = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
     assert 'ledger-mobile-note' in app
     assert 'ledger-note-block' in app
     assert 'ledger-detail-label' in app

@@ -6,7 +6,7 @@ import hashlib
 
 DOMAIN = "bitcoin_stack_tracker"
 PLATFORMS = ["sensor"]
-VERSION = "0.21.0.6"
+VERSION = "0.21.0.7"
 
 CONF_NAME = "name"
 CONF_GOAL_BTC = "goal_btc"  # Legacy single-goal setting; migrated to local storage.

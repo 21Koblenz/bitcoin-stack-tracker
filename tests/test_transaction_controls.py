@@ -33,7 +33,7 @@ def test_csv_export_includes_fiat_total_control_column() -> None:
 
 def test_frontend_has_three_way_transaction_calculator_and_csv_controls() -> None:
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    js = (FRONTEND / "static" / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+    js = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
     assert 'name="fiat_total"' in html
     assert 'data-i18n="fiatTotal"' in html
     assert 'data-field="fiat_total"' in js
@@ -48,6 +48,6 @@ def test_frontend_has_three_way_transaction_calculator_and_csv_controls() -> Non
 
 
 def test_satoshi_input_formatting_never_strips_integer_trailing_zeros() -> None:
-    js = (FRONTEND / "static" / "app-v021006-733b783d.js").read_text(encoding="utf-8")
+    js = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
     assert r'return digits <= 0 ? fixed : fixed.replace(/\.?0+$/, "");' in js
     assert 'Math.round(btc * SATS_PER_BTC)' in js

@@ -220,6 +220,10 @@ def _currency_metrics(
     purchase_fee = ZERO
     sale_fee = ZERO
     disposition_fee = ZERO
+    included_fee_total = ZERO
+    included_fee_purchase = ZERO
+    included_fee_sale = ZERO
+    included_fee_estimated_total = ZERO
     gross_volume = ZERO
     purchase_gross_volume = ZERO
     sale_gross_volume = ZERO
@@ -251,6 +255,8 @@ def _currency_metrics(
         amount = max(decimal_value(entry.get("amount_btc")), ZERO)
         entry_price = max(decimal_value(entry.get("price")), ZERO)
         fee = max(decimal_value(entry.get("fee")), ZERO)
+        included_fee = max(decimal_value(entry.get("included_fee")), ZERO)
+        analytics_fee = fee + included_fee
         fee_btc = max(decimal_value(entry.get("fee_btc")), ZERO)
         if fee_btc <= 0:
             fee_btc = _legacy_btc_fee_from_generated_note(entry)
@@ -267,24 +273,32 @@ def _currency_metrics(
         priced_entry_count += 1
         gross = amount * entry_price
         gross_volume += gross
-        total_fee += fee
+        total_fee += analytics_fee
+        included_fee_total += included_fee
+        if bool(entry.get("included_fee_estimated")):
+            included_fee_estimated_total += included_fee
         if first_priced is None:
             first_priced = (timestamp, entry_price)
         if kind == "purchase":
-            purchase_fee += fee
+            purchase_fee += analytics_fee
+            included_fee_purchase += included_fee
             purchase_gross_volume += gross
+            # included_fee is already embedded in the execution price and must
+            # not be added to FIFO/cash outlay a second time.
             purchase_outlay += gross + fee
         elif kind == "sale":
-            sale_fee += fee
-            disposition_fee += fee
+            sale_fee += analytics_fee
+            disposition_fee += analytics_fee
+            included_fee_sale += included_fee
             sale_gross_volume += gross
             disposition_gross_volume += gross
+            # Same rule for sales: only an explicit extra fee is subtracted.
             sale_net_proceeds += max(gross - fee, ZERO)
         elif kind == "expense":
             # A priced card/on-chain expense is an outgoing BTC disposition.
             # It must participate in the outgoing fee ratio, but unlike a sale
             # it does not represent fiat returned to the owner.
-            disposition_fee += fee
+            disposition_fee += analytics_fee
             disposition_gross_volume += gross
 
     net_invested = purchase_outlay - sale_net_proceeds
@@ -372,6 +386,10 @@ def _currency_metrics(
             "purchase_fiat": purchase_fee,
             "sale_fiat": sale_fee,
             "disposition_fiat": disposition_fee,
+            "included_fiat": included_fee_total,
+            "included_purchase_fiat": included_fee_purchase,
+            "included_sale_fiat": included_fee_sale,
+            "included_estimated_fiat": included_fee_estimated_total,
             "ratio_percent": fee_ratio,
             "purchase_ratio_percent": purchase_fee_ratio,
             # Retained for API/backward compatibility; the UI uses the broader

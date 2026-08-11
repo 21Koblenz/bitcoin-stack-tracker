@@ -197,8 +197,9 @@ def _preview_import_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         amount = decimal_value(raw.get("amount_btc"))
         price = decimal_value(raw.get("price"))
         fee = decimal_value(raw.get("fee"))
+        included_fee = decimal_value(raw.get("included_fee"))
         fee_btc = decimal_value(raw.get("fee_btc"))
-        if amount <= 0 or fee < 0 or fee_btc < 0:
+        if amount <= 0 or fee < 0 or included_fee < 0 or fee_btc < 0:
             return None
         currency = str(raw.get("currency") or "").strip().upper()[:16]
         if kind != "expense" and (not currency or price <= 0):
@@ -217,6 +218,10 @@ def _preview_import_item(raw: dict[str, Any]) -> dict[str, Any] | None:
                 "price": money_string(price),
                 "fee": money_string(fee),
             })
+        if included_fee > 0:
+            item["included_fee"] = money_string(included_fee)
+            if bool(raw.get("included_fee_estimated")):
+                item["included_fee_estimated"] = True
         if fee_btc > 0:
             item["fee_btc"] = btc_string(fee_btc)
         ref_hash = str(raw.get("import_ref_hash") or "").strip().lower()
@@ -933,6 +938,8 @@ class BitcoinLedgerStore:
                 amount = decimal_value(raw.get("amount_btc"))
                 price = decimal_value(raw.get("price"))
                 fee = decimal_value(raw.get("fee"))
+                included_fee = decimal_value(raw.get("included_fee"))
+                included_fee_estimated = bool(raw.get("included_fee_estimated"))
                 fee_btc = decimal_value(raw.get("fee_btc"))
                 currency = str(raw.get("currency") or "").strip().upper()[:16]
                 import_ref_hash = str(raw.get("import_ref_hash") or "").strip().lower()
@@ -944,6 +951,8 @@ class BitcoinLedgerStore:
                     raise ValueError(f"Import row {index}: price must be greater than zero")
                 if fee < 0:
                     raise ValueError(f"Import row {index}: fee must not be negative")
+                if included_fee < 0:
+                    raise ValueError(f"Import row {index}: included fee must not be negative")
                 if fee_btc < 0:
                     raise ValueError(f"Import row {index}: BTC fee must not be negative")
                 if kind != "expense" and not currency:
@@ -967,6 +976,10 @@ class BitcoinLedgerStore:
                         "price": money_string(price),
                         "fee": money_string(fee),
                     })
+                if included_fee > 0:
+                    item["included_fee"] = money_string(included_fee)
+                    if included_fee_estimated:
+                        item["included_fee_estimated"] = True
                 if fee_btc > 0:
                     item["fee_btc"] = btc_string(fee_btc)
                 if import_ref_hash:
@@ -1163,6 +1176,11 @@ class BitcoinLedgerStore:
             original_ref_hash = _import_ref_hash(entries[index])
             if original_ref_hash:
                 updated["import_ref_hash"] = original_ref_hash
+            original_included_fee = decimal_value(entries[index].get("included_fee"))
+            if original_included_fee > 0:
+                updated["included_fee"] = money_string(original_included_fee)
+                if bool(entries[index].get("included_fee_estimated")):
+                    updated["included_fee_estimated"] = True
             original_fee_btc = decimal_value(entries[index].get("fee_btc"))
             if original_fee_btc > 0:
                 updated["fee_btc"] = btc_string(original_fee_btc)

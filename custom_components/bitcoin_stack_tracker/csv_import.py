@@ -197,7 +197,8 @@ def _get_contains(row: dict[str, str], required: Iterable[str], forbidden: Itera
 def _transaction(
     *, source: str, row_number: int, kind: str | None, timestamp: str | None,
     amount_btc: Decimal | None, currency: str, price: Decimal | None,
-    fee: Decimal | None = None, fee_btc: Decimal | None = None, note: str = "", warnings: list[str] | None = None,
+    fee: Decimal | None = None, fee_btc: Decimal | None = None, included_fee: Decimal | None = None,
+    included_fee_estimated: bool = False, note: str = "", warnings: list[str] | None = None,
     reference: str = "", optional_note_fields: dict[str, Any] | None = None,
     import_hints: dict[str, Any] | None = None, fiat_amount: Decimal | None = None,
 ) -> dict[str, Any]:
@@ -218,6 +219,7 @@ def _transaction(
     if kind == "expense" and expense_has_currency != expense_has_price:
         issues.append("Bei einer bewerteten Ausgabe müssen Währung und Preis gemeinsam vorhanden sein")
     clean_fee = abs(fee or Decimal("0"))
+    clean_included_fee = abs(included_fee or Decimal("0"))
     clean_fiat_amount: Decimal | None = None
     if fiat_amount is not None:
         clean_fiat_amount = abs(fiat_amount)
@@ -261,6 +263,8 @@ def _transaction(
         "price": format(abs(price or Decimal("0")), "f") if kind != "expense" or expense_has_fiat_value else "0",
         "fiat_amount": format(clean_fiat_amount, "f") if clean_fiat_amount is not None and clean_fiat_amount > 0 else "",
         "fee": format(clean_fee, "f") if kind != "expense" or expense_has_fiat_value else "0",
+        **({"included_fee": format(clean_included_fee, "f")} if clean_included_fee > 0 else {}),
+        **({"included_fee_estimated": True} if clean_included_fee > 0 and included_fee_estimated else {}),
         **({"fee_btc": format(abs(fee_btc), "f")} if fee_btc is not None and abs(fee_btc) > 0 else {}),
         "note": str(note or "")[:2000],
         # The raw exchange/broker reference is intentionally not returned or
@@ -304,6 +308,16 @@ def _detect_source(filename: str, headers: list[str], rows: list[list[str]]) -> 
     }
     if wavespace_columns.issubset(header_set):
         return "wavespace"
+    # Bitpanda transaction reports contain a stable, distinctive column group.
+    # Detect the export from its content so renamed downloads still work.
+    bitpanda_columns = {
+        "transaction id", "timestamp", "transaction type", "in out",
+        "amount fiat", "fiat", "amount asset", "asset",
+        "asset market price", "asset market price currency",
+        "asset class", "product id", "fee", "fee asset",
+    }
+    if bitpanda_columns.issubset(header_set):
+        return "bitpanda"
     # Pocket exports use a CoinTracking-like layout, but with explicit
     # "Buy Amount" / "Sell Amount" columns and several "(optional)" fields.
     # Detect it from the header so the filename does not need to contain Pocket.
@@ -329,7 +343,7 @@ def _detect_source(filename: str, headers: list[str], rows: list[list[str]]) -> 
     }
     if pocket_native_columns.issubset(header_set):
         return "pocket"
-    for brand in ("coinfinity", "relai", "pocket", "bittr", "getbittr", "wavespace", "wave space"):
+    for brand in ("coinfinity", "relai", "pocket", "bittr", "getbittr", "wavespace", "wave space", "bitpanda"):
         if brand.replace(" ", "") in name.replace(" ", ""):
             return brand.replace(" ", "_").replace("getbittr", "bittr")
     if "coinbase" in name:
@@ -1320,6 +1334,255 @@ def _parse_pocket_native(headers: list[str], rows: list[list[str]]) -> tuple[lis
             note=note, reference=reference, optional_note_fields=optional,
         ))
     return output, skipped
+
+def _parse_bitpanda(headers: list[str], rows: list[list[str]], source_row_numbers: list[int] | None = None) -> tuple[list[dict[str, Any]], int]:
+    """Parse Bitpanda transaction reports for Bitcoin-only portfolio bookings.
+
+    Bitpanda exports deposits/withdrawals next to trades. Deposits are transfer
+    rows and are never imported as purchases. BTC withdrawals are also not sales,
+    but an explicitly BTC-denominated withdrawal fee reduces the Bitcoin that
+    actually remains from the purchases accumulated since the previous BTC
+    withdrawal. That fee is distributed proportionally over the pending BTC
+    purchase batch and kept as ``fee_btc`` only; it is deliberately not converted
+    into a synthetic fiat fee.
+
+    Non-BTC assets are ignored through the shared BTC/XBT normalizer. The
+    Bitpanda ``Transaction ID`` is the primary stable import reference; when it is
+    absent the tracker can fall back to its normal value-based duplicate checks.
+    """
+    # Preserve the physical CSV line numbers when Bitpanda prepends metadata
+    # such as "Venue: Bitpanda" / "Reported by Bitpanda GmbH". Falling back to
+    # the old header-relative numbering keeps direct parser calls compatible.
+    physical_rows = (
+        source_row_numbers
+        if source_row_numbers is not None and len(source_row_numbers) == len(rows)
+        else list(range(2, len(rows) + 2))
+    )
+    parsed_rows: list[tuple[int, dict[str, str]]] = [
+        (int(physical_rows[index]), _row_dict(headers, values))
+        for index, values in enumerate(rows)
+    ]
+
+    # First pass: build a chronological BTC-only event stream so exports work in
+    # either ascending or descending order. A withdrawal closes the purchase
+    # batch that accumulated since the previous BTC withdrawal.
+    events: list[tuple[tuple[float, int, int], str, dict[str, Any]]] = []
+
+    def _event_sort_key(timestamp: str | None, priority: int, row_no: int) -> tuple[float, int, int]:
+        if timestamp:
+            try:
+                return (
+                    datetime.fromisoformat(str(timestamp).replace("Z", "+00:00")).timestamp(),
+                    priority,
+                    row_no,
+                )
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return (float(row_no), priority, row_no)
+
+    for row_no, row in parsed_rows:
+        asset = _asset(_get(row, "asset"))
+        if asset != "BTC":
+            continue
+        tx_type = _get(row, "transaction type", "type").strip().lower()
+        timestamp = _iso_timestamp(_get(row, "timestamp", "date"))
+        if tx_type == "buy":
+            gross_btc = _number(_get(row, "amount asset", "asset amount", "amount"))
+            if gross_btc is not None and abs(gross_btc) > 0:
+                event = {
+                    "row_no": row_no,
+                    "gross_btc": abs(gross_btc),
+                    "timestamp": timestamp,
+                }
+                events.append((_event_sort_key(timestamp, 0, row_no), "buy", event))
+        elif tx_type == "withdrawal":
+            raw_fee = _number(_get(row, "fee"))
+            fee_asset = _asset(_get(row, "fee asset", "fee currency"))
+            event = {
+                "row_no": row_no,
+                "fee_btc": abs(raw_fee) if raw_fee is not None and fee_asset == "BTC" else Decimal("0"),
+                "timestamp": timestamp,
+            }
+            events.append((_event_sort_key(timestamp, 1, row_no), "withdrawal", event))
+
+    events.sort(key=lambda item: item[0])
+    withdrawal_fee_allocations: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    allocation_warnings: dict[int, str] = {}
+    pending_purchases: list[dict[str, Any]] = []
+
+    for _sort_key, event_kind, event in events:
+        if event_kind == "buy":
+            pending_purchases.append(event)
+            continue
+
+        # Every BTC withdrawal is a batch boundary. A zero/non-BTC fee simply
+        # closes the batch without changing purchase amounts.
+        if not pending_purchases:
+            continue
+        fee_btc = Decimal(event.get("fee_btc") or "0")
+        if fee_btc <= 0:
+            pending_purchases.clear()
+            continue
+
+        total_gross = sum((Decimal(item["gross_btc"]) for item in pending_purchases), Decimal("0"))
+        if total_gross <= 0 or fee_btc >= total_gross:
+            message = "Bitpanda-Withdrawal-Fee ist mindestens so groß wie der zugehörige BTC-Kauf-Batch; Werte bitte prüfen"
+            for purchase in pending_purchases:
+                allocation_warnings[int(purchase["row_no"])] = message
+            pending_purchases.clear()
+            continue
+
+        remaining_fee = fee_btc
+        satoshi = Decimal("0.00000001")
+        for position, purchase in enumerate(pending_purchases):
+            gross_btc = Decimal(purchase["gross_btc"])
+            if position == len(pending_purchases) - 1:
+                fee_share = remaining_fee
+            else:
+                # Allocate only whole satoshis. The final purchase receives the
+                # exact remainder so the distributed shares always add up to the
+                # exported Bitpanda withdrawal fee without creating sub-sat values.
+                fee_share = (fee_btc * gross_btc / total_gross).quantize(satoshi)
+                if fee_share > remaining_fee:
+                    fee_share = remaining_fee
+                remaining_fee -= fee_share
+            if fee_share > 0:
+                withdrawal_fee_allocations[int(purchase["row_no"])] += fee_share
+        pending_purchases.clear()
+
+    output: list[dict[str, Any]] = []
+    skipped = 0
+    for row_no, row in parsed_rows:
+        asset = _asset(_get(row, "asset"))
+        tx_type = _get(row, "transaction type", "type").strip().lower()
+
+        # Bitcoin-only tracker: fiat transfer rows and all altcoins are ignored.
+        if asset != "BTC" or tx_type in {"deposit", "withdrawal"}:
+            skipped += 1
+            continue
+        if tx_type not in {"buy", "sell"}:
+            skipped += 1
+            continue
+
+        kind = "purchase" if tx_type == "buy" else "sale"
+        amount_btc = _number(_get(row, "amount asset", "asset amount", "amount"))
+        if amount_btc is not None:
+            amount_btc = abs(amount_btc)
+        # Keep the original Bitpanda trade amount separate from the later
+        # withdrawal/network-fee adjustment.  The CSV's market price describes
+        # the trade itself, so an implied broker premium must be calculated from
+        # this gross amount, never from the net amount after an on-chain fee.
+        gross_trade_btc = amount_btc
+
+        fiat_amount = _number(_get(row, "amount fiat", "fiat amount", "total"))
+        if fiat_amount is not None:
+            fiat_amount = abs(fiat_amount)
+        currency = _asset(_get(row, "fiat", "currency"))
+        price_currency = _asset(_get(row, "asset market price currency", "price currency"))
+        price = _number(_get(row, "asset market price", "market price", "price"))
+        if price is not None:
+            price = abs(price)
+        if not currency:
+            currency = price_currency
+        if price is None and amount_btc and fiat_amount is not None:
+            price = abs(fiat_amount / amount_btc)
+
+        raw_fee = _number(_get(row, "fee"))
+        fee_asset = _asset(_get(row, "fee asset", "fee currency"))
+        fee_fiat = Decimal("0")
+        included_fee_fiat = Decimal("0")
+        included_fee_estimated = False
+        included_fee_source = ""
+        included_fee_controls_total = False
+        fee_btc_value = Decimal("0")
+        warnings: list[str] = []
+
+        if raw_fee is not None and raw_fee != 0:
+            if fee_asset == currency and currency:
+                # Bitpanda broker trading fees/premiums are already contained in
+                # the final trade price. Keep them as analytics-only included
+                # fees so FIFO/cost basis does not add them a second time.
+                included_fee_fiat = abs(raw_fee)
+                included_fee_source = "csv_fee"
+                included_fee_controls_total = False
+            elif fee_asset == "BTC":
+                fee_btc_value += abs(raw_fee)
+            elif fee_asset:
+                warnings.append(f"Bitpanda-Gebühr in {fee_asset} erkannt; Gebühr bitte prüfen")
+            else:
+                warnings.append("Bitpanda-Gebühr erkannt, aber Gebührenwährung fehlt; Gebühr bitte prüfen")
+        elif fiat_amount is not None and fiat_amount > 0 and kind in {"purchase", "sale"}:
+            # Bitpanda often exports '-' in Fee. Depending on report vintage,
+            # "Asset market price" can either be a reference/market price or an
+            # execution price that already embeds the broker premium.
+            #
+            # First derive any contained trading cost from the ORIGINAL trade BTC
+            # amount (before a later withdrawal/network fee is applied). This
+            # keeps on-chain fees completely out of the buy-fee calculation.
+            market_value = (
+                abs(gross_trade_btc) * abs(price)
+                if gross_trade_btc is not None and gross_trade_btc > 0 and price is not None and price > 0
+                else None
+            )
+            implied_fee = Decimal("0")
+            if market_value is not None:
+                if kind == "purchase":
+                    implied_fee = fiat_amount - market_value
+                else:
+                    implied_fee = market_value - fiat_amount
+            # Ignore cent-level rounding noise. A positive remainder is the
+            # trading premium/spread implied by Bitpanda's own CSV values.
+            if implied_fee > Decimal("0.01"):
+                included_fee_fiat = implied_fee
+                included_fee_estimated = True
+                included_fee_source = "csv_difference"
+                included_fee_controls_total = True
+            else:
+                # If the market-price column already equals the final execution
+                # price, the historic premium is no longer recoverable from the
+                # CSV itself. Keep the current 0.99 % BTC premium only as an
+                # editable analytics estimate; it must NOT affect validation or
+                # FIFO/cost basis.
+                included_fee_fiat = fiat_amount * Decimal("0.0099")
+                included_fee_estimated = True
+                included_fee_source = "current_rate_estimate"
+                included_fee_controls_total = False
+
+        if kind == "purchase" and amount_btc is not None:
+            batch_fee_btc = withdrawal_fee_allocations.get(row_no, Decimal("0"))
+            warning = allocation_warnings.get(row_no)
+            if warning:
+                warnings.append(warning)
+            if batch_fee_btc > 0:
+                if batch_fee_btc >= amount_btc:
+                    warnings.append("Bitpanda-Batch-Fee ist mindestens so groß wie dieser BTC-Kauf; Werte bitte prüfen")
+                else:
+                    # Withdrawal fees reduce the BTC received from this batch.
+                    # They remain BTC-only and are not added to the fiat fee.
+                    amount_btc -= batch_fee_btc
+                    fee_btc_value += batch_fee_btc
+
+        output.append(_transaction(
+            source="Bitpanda", row_number=row_no, kind=kind,
+            timestamp=_iso_timestamp(_get(row, "timestamp", "date")),
+            amount_btc=amount_btc, currency=currency, price=price,
+            fee=fee_fiat, fee_btc=fee_btc_value,
+            included_fee=included_fee_fiat,
+            included_fee_estimated=included_fee_estimated,
+            fiat_amount=fiat_amount,
+            note="Bitpanda Bitcoin CSV-Import",
+            reference=_stable_reference(row, "transaction id"),
+            import_hints={
+                "control_amount_btc": gross_trade_btc or Decimal("0"),
+                "included_fee_rate_percent": "0.99" if included_fee_source == "current_rate_estimate" else "",
+                "included_fee_source": included_fee_source,
+                "control_included_fee": included_fee_controls_total,
+            },
+            warnings=warnings,
+        ))
+
+    return output, skipped
+
 
 def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
     """Parse a Coinfinity satoshi field without stripping significant zeros.
@@ -2534,7 +2797,7 @@ def _decode_csv(raw: bytes) -> str:
     raise ValueError("CSV-Zeichencodierung wird nicht unterstützt")
 
 
-def _read_csv(raw: bytes) -> tuple[list[str], list[list[str]], str]:
+def _read_csv(raw: bytes) -> tuple[list[str], list[list[str]], str, list[int]]:
     text = _decode_csv(raw).replace("\x00", "")
     sample = text[:16_384]
     delimiter = ";"
@@ -2543,7 +2806,7 @@ def _read_csv(raw: bytes) -> tuple[list[str], list[list[str]], str]:
     except csv.Error:
         counts = {item: sample.count(item) for item in (";", ",", "\t", "|")}
         delimiter = max(counts, key=counts.get)
-    records: list[list[str]] = []
+    records: list[tuple[int, list[str]]] = []
     reader = csv.reader(StringIO(text), delimiter=delimiter)
     max_records = MAX_IMPORT_ROWS + MAX_IMPORT_PREAMBLE_ROWS + 1
     for row in reader:
@@ -2554,7 +2817,9 @@ def _read_csv(raw: bytes) -> tuple[list[str], list[list[str]], str]:
             raise ValueError("CSV enthält eine ungewöhnlich große Zelle")
         if not any(cleaned):
             continue
-        records.append(cleaned)
+        # csv.reader.line_num is the physical source line number and therefore
+        # stays meaningful even when a report has metadata/preamble lines.
+        records.append((int(reader.line_num), cleaned))
         if len(records) > max_records:
             raise ValueError(f"CSV enthält mehr als {MAX_IMPORT_ROWS} Datenzeilen")
     if not records:
@@ -2569,16 +2834,18 @@ def _read_csv(raw: bytes) -> tuple[list[str], list[list[str]], str]:
         "verkauf", "coin", "btc", "xbt", "bitcoin", "pair", "operation",
         "vorgang", "currency", "waehrung",
     }
-    for index, row in enumerate(records[:30]):
+    for index, (_line_no, row) in enumerate(records[:30]):
         normalized = [_clean_header(cell) for cell in row]
         score = len(row) + 5 * sum(1 for cell in normalized if any(hint in cell for hint in hints))
         if len(row) >= 3 and score > best_score:
             best_index, best_score = index, score
-    headers = records[best_index]
-    rows = [row for row in records[best_index + 1:] if len(row) >= 2]
+    _header_line_no, headers = records[best_index]
+    data_records = [(line_no, row) for line_no, row in records[best_index + 1:] if len(row) >= 2]
+    rows = [row for _line_no, row in data_records]
+    row_numbers = [line_no for line_no, _row in data_records]
     if len(headers) < 3:
         raise ValueError("Keine brauchbare CSV-Kopfzeile erkannt")
-    return headers, rows, delimiter
+    return headers, rows, delimiter, row_numbers
 
 
 def _extract_upload(raw: bytes, filename: str) -> tuple[bytes, str, list[str]]:
@@ -2605,7 +2872,7 @@ def _extract_upload(raw: bytes, filename: str) -> tuple[bytes, str, list[str]]:
 def parse_transaction_upload(raw: bytes, filename: str) -> dict[str, Any]:
     """Return normalized preview rows without retaining the raw upload."""
     payload, effective_name, top_warnings = _extract_upload(raw, filename)
-    headers, rows, delimiter = _read_csv(payload)
+    headers, rows, delimiter, source_row_numbers = _read_csv(payload)
     if len(rows) > MAX_IMPORT_ROWS:
         raise ValueError(f"CSV enthält mehr als {MAX_IMPORT_ROWS} Datenzeilen")
     source = _detect_source(effective_name, headers, rows)
@@ -2635,6 +2902,8 @@ def parse_transaction_upload(raw: bytes, filename: str) -> dict[str, Any]:
             parsed, skipped = _parse_pocket_native(headers, rows)
         else:
             parsed, skipped = _parse_generic(source, headers, rows)
+    elif source == "bitpanda":
+        parsed, skipped = _parse_bitpanda(headers, rows, source_row_numbers)
     elif source == "coinfinity" and {
         "order id", "type", "date", "amount eur", "amount crypto",
         "crypto", "rate eur",

@@ -60,7 +60,8 @@ def write_csv_export(
 
     transaction_fields = [
         "id", "timestamp", "depot_id", "depot_name", "type", "amount_btc",
-        "currency", "price_per_btc", "gross_amount", "fee", "fee_btc", "fiat_total", "net_amount",
+        "currency", "price_per_btc", "gross_amount", "fee", "included_fee",
+        "included_fee_estimated", "fee_btc", "fiat_total", "net_amount",
         "fifo_cost_basis", "fifo_realized_gain", "fifo_status",
         "fifo_resolved_btc", "fifo_unresolved_btc", "fifo_oversold_btc",
         "holding_period_days_setting", "holding_status", "holding_days",
@@ -133,6 +134,8 @@ def write_csv_export(
                 "price_per_btc": _value(price) if kind in {"purchase", "sale", "expense"} and price > 0 else "",
                 "gross_amount": _value(gross),
                 "fee": _value(fee) if kind in {"purchase", "sale", "expense"} and (fee > 0 or price > 0) else "",
+                "included_fee": _value(decimal_value(item.get("included_fee"))) if decimal_value(item.get("included_fee")) > 0 else "",
+                "included_fee_estimated": "true" if bool(item.get("included_fee_estimated")) else "",
                 "fee_btc": _value(decimal_value(item.get("fee_btc"))) if decimal_value(item.get("fee_btc")) > 0 else "",
                 "fiat_total": _value(net),
                 "net_amount": _value(net),
