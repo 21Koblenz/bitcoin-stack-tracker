@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.21.0.8 — Peach Bitcoin CSV Import
+
+### Peach Bitcoin
+- Neuer eigener Peach-Bitcoin-CSV-Parser für die Spalten `Date`, `Trade ID`, `Type`, `Amount`, `Price`, `Bitcoin Price`, `Currency` und `Premium`.
+- `Amount` wird bei Peach ausschließlich als Satoshi-Ganzzahl interpretiert; 100.000 sats werden exakt zu 0,001 BTC.
+- `Price` bleibt der tatsächlich gezahlte bzw. erhaltene Fiat-Gesamtbetrag.
+- `Premium` wird als Prozentwert behandelt. Bei Käufen wird der in `Bitcoin Price` enthaltene Aufschlag mit `Bitcoin Price / (1 + Premium/100)` entfernt; die Differenz zum gezahlten `Price` wird als Fiatgebühr ausgewiesen, ohne den FIFO-Einstand doppelt zu erhöhen.
+- `Trade ID` dient als stabile Import-Identität; Roh-IDs werden weiterhin nicht ungefragt im Ledger gespeichert.
+- Verkäufe werden unterstützt; bei Verkäufen bleibt der tatsächliche Fiat-Erlös maßgeblich und es wird kein positiver Premiumwert blind als zusätzliche Gebühr gebucht.
+
+### Dokumentation
+- README vollständig zweisprachig Deutsch/Englisch.
+- Peach Bitcoin in der Importübersicht und in `CSV-IMPORT.md` dokumentiert.
+
+### Tests und Release-Aufteilung
+- Fünf gezielte Peach-Regressionstests: Sats-Umrechnung, Premium-/Gebührenrechnung, Trade-ID-Dubletten, fehlendes Premium und Verkauf.
+- **Home-Assistant-Integration:** v0.21.0.8.
+- **Tor Gateway:** bleibt v0.21.0.3.
+
 ## v0.21.0.7 — Bitpanda CSV & Fee Hotfix
 
 ### Bitpanda-Import

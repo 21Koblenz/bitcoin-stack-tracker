@@ -302,6 +302,14 @@ def _detect_source(filename: str, headers: list[str], rows: list[list[str]]) -> 
     }
     if coinfinity_columns.issubset(header_set):
         return "coinfinity"
+    # Peach Bitcoin exports use Amount as a satoshi integer and expose the
+    # execution Bitcoin Price together with a percentage Premium.
+    peach_columns = {
+        "date", "trade id", "type", "amount", "price",
+        "bitcoin price", "currency", "premium",
+    }
+    if peach_columns.issubset(header_set):
+        return "peach"
     wavespace_columns = {
         "type category", "executes at", "transaction id", "transaction type",
         "from currency", "from amount", "to currency", "to amount", "memo",
@@ -343,9 +351,10 @@ def _detect_source(filename: str, headers: list[str], rows: list[list[str]]) -> 
     }
     if pocket_native_columns.issubset(header_set):
         return "pocket"
-    for brand in ("coinfinity", "relai", "pocket", "bittr", "getbittr", "wavespace", "wave space", "bitpanda"):
+    for brand in ("coinfinity", "peach", "peach bitcoin", "relai", "pocket", "bittr", "getbittr", "wavespace", "wave space", "bitpanda"):
         if brand.replace(" ", "") in name.replace(" ", ""):
-            return brand.replace(" ", "_").replace("getbittr", "bittr")
+            normalized_brand = brand.replace(" ", "_").replace("getbittr", "bittr")
+            return "peach" if normalized_brand in {"peach", "peach_bitcoin"} else normalized_brand
     if "coinbase" in name:
         return "coinbase"
     if "kraken" in name or "ledger" in name:
@@ -1583,6 +1592,146 @@ def _parse_bitpanda(headers: list[str], rows: list[list[str]], source_row_number
 
     return output, skipped
 
+
+
+def _peach_satoshi_number(value: Any) -> Decimal | None:
+    """Parse Peach ``Amount`` as an integer number of satoshis.
+
+    Peach exports this column in sats, not BTC. Common thousands separators are
+    accepted defensively, but decimal satoshi amounts are rejected by the
+    parser later because a satoshi is indivisible.
+    """
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    unitless = re.sub(r"(?i)\b(?:sats?|satoshis?)\b", "", raw)
+    unitless = unitless.replace("\u00a0", "").replace(" ", "").replace("'", "")
+    if re.fullmatch(r"[+-]?\d{1,3}(?:[.,]\d{3})+", unitless):
+        negative = unitless.startswith("-")
+        digits = re.sub(r"\D", "", unitless)
+        try:
+            return Decimal(("-" if negative else "") + digits)
+        except InvalidOperation:
+            return None
+    return _number(raw)
+
+
+def _parse_peach(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[str, Any]], int]:
+    """Parse Peach Bitcoin trade history.
+
+    Schema:
+      Date, Trade ID, Type, Amount, Price, Bitcoin Price, Currency, Premium
+
+    ``Amount`` is always interpreted as satoshis. ``Price`` is the actual fiat
+    amount paid. ``Bitcoin Price`` is the execution BTC price including the
+    percentage premium. The market/reference BTC price is reconstructed by
+    reversing that markup:
+
+        market_price = bitcoin_price_including_premium / (1 + premium / 100)
+
+    For purchases, the premium is represented as a fiat fee while the total
+    cost remains exactly equal to Peach's ``Price`` column.
+    """
+    output: list[dict[str, Any]] = []
+    skipped = 0
+
+    for row_no, values in enumerate(rows, start=2):
+        row = _row_dict(headers, values)
+        tx_type = _get(row, "type", "transaction type").strip().lower()
+
+        if tx_type in {"bought", "buy", "purchase", "purchased", "gekauft", "kauf"}:
+            kind = "purchase"
+        elif tx_type in {"sold", "sell", "sale", "sold bitcoin", "verkauft", "verkauf"}:
+            kind = "sale"
+        else:
+            skipped += 1
+            continue
+
+        sats = _peach_satoshi_number(_get(row, "amount", "amount sats", "sats"))
+        warnings: list[str] = []
+        amount_btc: Decimal | None = None
+        if sats is not None:
+            if sats != sats.to_integral_value():
+                warnings.append("Peach Amount muss eine ganze Satoshi-Zahl sein")
+            elif sats == 0:
+                warnings.append("Peach Amount ist 0 sats")
+            else:
+                amount_btc = abs(sats) / SATOSHIS_PER_BTC
+
+        currency = _asset(_get(row, "currency", "fiat currency"))
+        fiat_total = _number(_get(row, "price", "fiat price", "fiat amount"))
+        if fiat_total is not None:
+            fiat_total = abs(fiat_total)
+
+        execution_price = _number(_get(row, "bitcoin price", "btc price"))
+        if execution_price is not None:
+            execution_price = abs(execution_price)
+
+        premium_percent = _number(_get(row, "premium", "premium percent", "premium %"))
+        market_price: Decimal | None = None
+        fee = Decimal("0")
+
+        if premium_percent is None:
+            warnings.append("Peach Premium konnte nicht gelesen werden")
+        elif premium_percent <= Decimal("-100"):
+            warnings.append("Peach Premium muss größer als -100 % sein")
+        elif execution_price is not None and execution_price > 0:
+            market_price = execution_price / (Decimal("1") + premium_percent / Decimal("100"))
+
+        if market_price is None and execution_price is None:
+            warnings.append("Peach Bitcoin Price fehlt oder ist ungültig")
+
+        if kind == "purchase":
+            if amount_btc is not None and amount_btc > 0 and market_price is not None and fiat_total is not None:
+                base_value = amount_btc * market_price
+                premium_fee = fiat_total - base_value
+                if premium_fee >= Decimal("-0.01"):
+                    fee = max(Decimal("0"), premium_fee)
+                    if premium_fee < 0:
+                        market_price = fiat_total / amount_btc
+                else:
+                    warnings.append(
+                        "Peach Price liegt unter BTC-Marktwert nach Premium-Abzug; Werte bitte prüfen"
+                    )
+            elif market_price is None and amount_btc and fiat_total is not None:
+                market_price = fiat_total / amount_btc
+
+        elif kind == "sale" and amount_btc is not None and amount_btc > 0 and fiat_total is not None:
+            # For a sale, the actual fiat proceeds are authoritative. A positive
+            # or negative Peach premium may represent price improvement or a
+            # discount, so it is not blindly converted into a positive fee.
+            market_price = fiat_total / amount_btc
+            fee = Decimal("0")
+
+        note_parts = ["Peach Bitcoin"]
+        if premium_percent is not None:
+            note_parts.append(f"Premium: {format(premium_percent.normalize(), 'f')} %")
+
+        output.append(_transaction(
+            source="Peach Bitcoin",
+            row_number=row_no,
+            kind=kind,
+            timestamp=_iso_timestamp(_get(row, "date", "timestamp")),
+            amount_btc=amount_btc,
+            currency=currency,
+            price=market_price,
+            fee=fee,
+            fiat_amount=fiat_total,
+            note=" · ".join(note_parts),
+            reference=_stable_reference(row, "trade id", "tradeid", "transaction id", "id"),
+            import_hints={
+                "premium_percent": premium_percent if premium_percent is not None else "",
+                "bitcoin_price_including_premium": execution_price if execution_price is not None else "",
+                "amount_unit": "sats",
+                "price_source": "peach_price",
+            },
+            warnings=warnings,
+        ))
+
+    return output, skipped
 
 def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
     """Parse a Coinfinity satoshi field without stripping significant zeros.
@@ -2904,6 +3053,11 @@ def parse_transaction_upload(raw: bytes, filename: str) -> dict[str, Any]:
             parsed, skipped = _parse_generic(source, headers, rows)
     elif source == "bitpanda":
         parsed, skipped = _parse_bitpanda(headers, rows, source_row_numbers)
+    elif source == "peach" and {
+        "date", "trade id", "type", "amount", "price",
+        "bitcoin price", "currency", "premium",
+    }.issubset({_clean_header(item) for item in headers}):
+        parsed, skipped = _parse_peach(headers, rows)
     elif source == "coinfinity" and {
         "order id", "type", "date", "amount eur", "amount crypto",
         "crypto", "rate eur",

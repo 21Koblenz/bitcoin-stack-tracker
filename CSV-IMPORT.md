@@ -29,6 +29,7 @@ Vor der Bestätigung wird nichts in das Kaufbuch geschrieben. Der bestätigte St
 - Binance Trade History
 - Binance Transaction History / Transaction Record
 - Bitpanda Transaction Report
+- Peach Bitcoin Trade History (`Date, Trade ID, Type, Amount, Price, Bitcoin Price, Currency, Premium`)
 - CoinTracking Universal CSV
 - Coinfinity „My Activities“ mit On-Chain- und Lightning-Auszahlungen
 
@@ -37,6 +38,27 @@ Beim aktuellen Coinfinity-Format ist `Amount Crypto` ein BTC-Dezimalwert. Die Sa
 Für Relai, Bittr/getbittr und Wavespace gibt es eine flexible Broker-Erkennung anhand des Dateinamens und üblicher Spaltenbezeichnungen. Pocket Bitcoin wird in zwei eigenen Varianten unterstützt: dem CoinTracking-kompatiblen Export (`Type, Buy Amount, Buy Cur., ...`) und dem nativen Pocket-Dashboard-Export (`type,date,reference,price.currency,...`). Beim CoinTracking-kompatiblen Pocket-Export ist eine Fiat-Gebühr bereits im `Sell Amount` enthalten: für den Ausführungskurs wird deshalb `Sell Amount - Fee Amount` verwendet, während die Gebühr separat erhalten bleibt. So entspricht der gesamte Einstand weiterhin exakt dem tatsächlich eingezahlten Fiatbetrag. Bei einer CoinTracking-`Withdrawal` ist der Wallet-Eingang `Sell Amount - Fee Amount`, wenn die Gebühr in BTC/Sats angegeben ist. Mehrere Käufe dürfen in einer einzigen Pocket-Auszahlung gebündelt werden: Der Parser sortiert Trade und Withdrawal chronologisch, sammelt alle noch nicht ausgezahlten Käufe seit der vorherigen Withdrawal und verteilt den Netto-Walletbetrag proportional nach BTC-Menge auf diesen Block. Dadurch funktionieren auch Auszahlungen nach Mitternacht (z. B. 01:55 oder 02:24 Uhr), ohne einen späteren Kauf nach der Auszahlung fälschlich einzubeziehen. Beim nativen Pocket-Dashboard-CSV ist dagegen `value.amount` bereits der Netto-Walletbetrag und wird nicht noch einmal um `fee.amount` reduziert. Werden dort mehrere Käufe in einer Withdrawal zusammen ausgezahlt, sammelt der Parser ebenfalls alle Käufe seit der vorherigen Withdrawal, auch über Mitternacht hinweg, und verteilt `value.amount` proportional nach Brutto-BTC auf diese Käufe. Der jeweilige Anteil der gemeinsamen Netzwerkgebühr ergibt sich aus der Differenz zwischen Brutto- und Netto-BTC und wird mit dem Kaufkurs des jeweiligen Trades in Fiat berücksichtigt. Bei Pocket erzeugt nur der eigentliche Trade/Kauf eine Buchung; Deposit und Withdrawal werden als Transfers behandelt. Andere Anbieter werden über den generischen Bitcoin-CSV-Parser erkannt, sofern die Datei verständliche Felder für Art, Datum, BTC-Menge sowie Fiatbetrag oder BTC-Kurs enthält.
 
 Da Anbieter ihre Exportformate ändern können, ist die Vorschau immer verbindlich. Eine Zeile mit fehlenden oder widersprüchlichen Werten wird nicht automatisch ausgewählt und muss vor dem Import korrigiert werden.
+
+## Peach Bitcoin
+
+Peach Bitcoin wird direkt an der Spaltenstruktur `Date, Trade ID, Type, Amount, Price, Bitcoin Price, Currency, Premium` erkannt. Der Dateiname ist dafür nicht erforderlich.
+
+- `Amount` ist **immer ein Satoshi-Betrag** und wird durch `100.000.000` geteilt, um BTC zu erhalten.
+- `Type = bought` wird als Kauf importiert. Übliche Varianten wie `buy`/`purchase` werden ebenfalls akzeptiert.
+- `Trade ID` wird als Import-Identität verwendet; gespeichert wird wie bei den anderen Quellen nur der lokale SHA-256-Identitätswert.
+- `Price` ist der tatsächlich gezahlte Fiat-Gesamtbetrag.
+- `Bitcoin Price` ist der BTC-Preis **inklusive Premium**.
+- `Premium` ist eine Prozentzahl, zum Beispiel `7.5` für 7,5 %.
+
+Der reale Referenz-/Marktpreis wird für Käufe durch Rückrechnung des prozentualen Aufschlags bestimmt:
+
+```text
+Marktpreis = Bitcoin Price / (1 + Premium / 100)
+```
+
+Beispiel: `Bitcoin Price = 107500` und `Premium = 7.5` ergeben einen Marktpreis von exakt `100000` EUR/BTC. Bei `Amount = 100000` sats (= 0,001 BTC) und `Price = 107.50` EUR werden dadurch `100.00` EUR BTC-Wert plus `7.50` EUR Premium/Gebühr verbucht. Der Gesamteinstand bleibt exakt beim tatsächlich gezahlten `Price`.
+
+Bei Verkäufen wird der tatsächliche Fiat-Gegenwert aus `Price` als maßgeblich behandelt. Ein positiver oder negativer Premium-Wert kann dort Preisverbesserung oder Abschlag bedeuten und wird deshalb nicht blind als positive Gebühr angesetzt.
 
 ## Bitpanda Transaction Report
 
