@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE = (ROOT / "custom_components/bitcoin_stack_tracker/storage.py").read_text(encoding="utf-8")
 FIFO = (ROOT / "custom_components/bitcoin_stack_tracker/fifo.py").read_text(encoding="utf-8")
-APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021007-050b734c.js").read_text(encoding="utf-8")
+APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
 
 
 def test_bulk_import_reuses_precomputed_fifo_cache():

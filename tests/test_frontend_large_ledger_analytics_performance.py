@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021007-050b734c.js").read_text(encoding="utf-8")
+APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
 
 
 def _block(start: str, end: str) -> str:
@@ -44,7 +44,7 @@ def test_intraday_fifo_metrics_use_incremental_totals_and_per_depot_cursor():
     assert "cursorByDepot" in block
     assert "let realized = 0, basis = 0, knownBtc = 0;" in block
     assert "metricState" not in block
-    assert "while (cursor < lots.length && remaining > 1e-15)" in block
+    assert "while(cursor<lots.length&&remaining>1e-15)" in block
 
 
 def test_background_halving_refresh_never_rebuilds_hidden_overview_chart():

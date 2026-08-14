@@ -329,12 +329,13 @@ def test_import_duplicate_flags_keep_distinct_source_ids_and_use_fee_btc_in_fall
     assert flags([{**base, "timestamp": "2026-01-01T11:00:00Z", "fee_btc": "0.000001"}], [{**base, "fee_btc": "0.000002"}]) == [False]
 
 
-def test_privacy_boundary_keeps_import_hashes_and_btc_fee_metadata_out_of_ledger_payload():
+def test_privacy_boundary_keeps_import_hashes_out_but_exposes_manual_btc_fee_fields_to_local_ui():
     init = (COMP / "__init__.py").read_text(encoding="utf-8")
     app = (COMP / "frontend/static/app.js").read_text(encoding="utf-8")
     sanitizer = init.split("def _dashboard_ledger_entries", 1)[1].split("def _dashboard_ledger_fifo", 1)[0]
     assert '"import_ref_hash"' not in sanitizer
-    assert '"fee_btc"' not in sanitizer
+    assert '"fee_btc"' in sanitizer
+    assert '"fee_btc_affects_stack"' in sanitizer
     assert '"note"' in sanitizer and '"id"' in sanitizer
     assert 'result["entries"] = _dashboard_ledger_entries(result["entries"])' in init
     preview = app.split("async function previewCsvImport", 1)[1].split("async function confirmCsvImport", 1)[0]

@@ -37,11 +37,15 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
 def _signed_stack_amount(entry: dict[str, Any]) -> Decimal:
     amount = max(decimal_value(entry.get("amount_btc")), ZERO)
-    if entry.get("type") in {"purchase", "stack"}:
-        return amount
+    fee_btc = max(decimal_value(entry.get("fee_btc")), ZERO)
+    stack_fee = fee_btc if bool(entry.get("fee_btc_affects_stack")) else ZERO
+    if entry.get("type") in {"purchase", "income", "stack"}:
+        return amount - stack_fee
     if entry.get("type") in {"sale", "expense"}:
+        return -amount - stack_fee
+    if entry.get("type") == "network_fee":
         return -amount
-    return ZERO
+    return -stack_fee
 
 
 def _stacking_window(
@@ -218,16 +222,38 @@ def _currency_metrics(
     sale_net_proceeds = ZERO
     total_fee = ZERO
     purchase_fee = ZERO
+    income_fee = ZERO
     sale_fee = ZERO
+    expense_fee = ZERO
     disposition_fee = ZERO
+    btc_fee_fiat_equivalent = ZERO
+    purchase_btc_fee_fiat = ZERO
+    income_btc_fee_fiat = ZERO
+    sale_btc_fee_fiat = ZERO
+    expense_btc_fee_fiat = ZERO
     included_fee_total = ZERO
     included_fee_purchase = ZERO
     included_fee_sale = ZERO
     included_fee_estimated_total = ZERO
     gross_volume = ZERO
     purchase_gross_volume = ZERO
+    income_gross_volume = ZERO
     sale_gross_volume = ZERO
+    expense_gross_volume = ZERO
     disposition_gross_volume = ZERO
+    purchase_btc = ZERO
+    income_btc = ZERO
+    sale_btc = ZERO
+    expense_btc = ZERO
+    network_fee_btc = ZERO
+    network_fee_fiat = ZERO
+    network_fee_onchain_btc = ZERO
+    network_fee_lightning_btc = ZERO
+    purchase_count = 0
+    income_count = 0
+    sale_count = 0
+    expense_count = 0
+    network_fee_count = 0
     known_btc_fee = ZERO
     known_btc_fee_entries = 0
     btc_fee_data_incomplete = False
@@ -245,7 +271,7 @@ def _currency_metrics(
     # HODL/CAGR/fee metrics independent of the caller's list order.
     ordered.sort(key=lambda item: (
         item[0],
-        1 if item[1].get("type") in {"sale", "expense"} else 0,
+        1 if item[1].get("type") in {"sale", "expense", "network_fee"} else 0,
         str(item[1].get("id", "")),
     ))
 
@@ -265,40 +291,78 @@ def _currency_metrics(
             known_btc_fee_entries += 1
         elif _legacy_onchain_fee_may_be_missing(entry):
             btc_fee_data_incomplete = True
-        if kind not in {"purchase", "sale", "expense"} or not entry_currency or entry_price <= 0:
+        if kind == "network_fee":
+            if not entry_currency or entry_price <= 0 or amount <= 0:
+                continue
+            all_priced_currencies.add(entry_currency)
+            if entry_currency != code:
+                continue
+            network_fee_count += 1
+            network_fee_btc += amount
+            fee_value = amount * entry_price
+            network_fee_fiat += fee_value
+            btc_fee_fiat_equivalent += fee_value
+            known_btc_fee += amount
+            known_btc_fee_entries += 1
+            network = str(entry.get("network") or "onchain").lower()
+            if network == "lightning":
+                network_fee_lightning_btc += amount
+            else:
+                network_fee_onchain_btc += amount
+            continue
+
+        if kind not in {"purchase", "income", "sale", "expense"} or not entry_currency or entry_price <= 0:
             continue
         all_priced_currencies.add(entry_currency)
         if entry_currency != code:
             continue
         priced_entry_count += 1
         gross = amount * entry_price
+        fee_btc_fiat = fee_btc * entry_price
         gross_volume += gross
         total_fee += analytics_fee
+        btc_fee_fiat_equivalent += fee_btc_fiat
         included_fee_total += included_fee
         if bool(entry.get("included_fee_estimated")):
             included_fee_estimated_total += included_fee
-        if first_priced is None:
+        if first_priced is None and kind in {"purchase", "income"}:
             first_priced = (timestamp, entry_price)
         if kind == "purchase":
+            purchase_count += 1
+            purchase_btc += amount
             purchase_fee += analytics_fee
+            purchase_btc_fee_fiat += fee_btc_fiat
             included_fee_purchase += included_fee
             purchase_gross_volume += gross
             # included_fee is already embedded in the execution price and must
             # not be added to FIFO/cash outlay a second time.
             purchase_outlay += gross + fee
+        elif kind == "income":
+            income_count += 1
+            income_btc += amount
+            income_fee += analytics_fee
+            income_btc_fee_fiat += fee_btc_fiat
+            income_gross_volume += gross
         elif kind == "sale":
+            sale_count += 1
+            sale_btc += amount
             sale_fee += analytics_fee
+            sale_btc_fee_fiat += fee_btc_fiat
             disposition_fee += analytics_fee
             included_fee_sale += included_fee
             sale_gross_volume += gross
             disposition_gross_volume += gross
-            # Same rule for sales: only an explicit extra fee is subtracted.
+            # Same rule for sales: only an explicit extra fiat fee is subtracted.
             sale_net_proceeds += max(gross - fee, ZERO)
         elif kind == "expense":
-            # A priced card/on-chain expense is an outgoing BTC disposition.
-            # It must participate in the outgoing fee ratio, but unlike a sale
-            # it does not represent fiat returned to the owner.
+            expense_count += 1
+            expense_btc += amount
+            expense_fee += analytics_fee
+            expense_btc_fee_fiat += fee_btc_fiat
+            # A priced expense realizes FIFO gain/loss like a sale, but remains
+            # a separate semantic category and does not become fiat cash proceeds.
             disposition_fee += analytics_fee
+            expense_gross_volume += gross
             disposition_gross_volume += gross
 
     net_invested = purchase_outlay - sale_net_proceeds
@@ -316,9 +380,9 @@ def _currency_metrics(
         if disposition_gross_volume > 0 else ZERO
     )
 
-    # Cash-flow-neutral HODL benchmark.  Unknown-basis stack entries add the same
-    # BTC to both paths.  Priced buys add the exact external fiat outlay to a
-    # fee-free HODL path; priced sales/expenses remove the same net fiat value.
+    # Cash-flow-neutral HODL benchmark. Unknown-basis stack entries add the same
+    # BTC to both paths. Priced purchases and income add their external value to
+    # a fee-free HODL path; priced sales/expenses remove the same net value.
     # A multi-fiat ledger is flagged incomplete because no hidden FX conversion
     # is invented.
     benchmark_complete = not all_priced_currencies or all_priced_currencies == {code}
@@ -333,9 +397,9 @@ def _currency_metrics(
         entry_currency = str(entry.get("currency") or "").upper()
         entry_price = max(decimal_value(entry.get("price")), ZERO)
         fee = max(decimal_value(entry.get("fee")), ZERO)
-        if kind not in {"purchase", "sale", "expense"} or entry_currency != code or entry_price <= 0:
+        if kind not in {"purchase", "income", "sale", "expense"} or entry_currency != code or entry_price <= 0:
             continue
-        if kind == "purchase":
+        if kind in {"purchase", "income"}:
             benchmark_btc += (amount * entry_price + fee) / entry_price
         else:
             withdrawal = max(amount * entry_price - fee, ZERO)
@@ -369,6 +433,22 @@ def _currency_metrics(
             )
             cagr_start_at = first_time.isoformat()
 
+    sale_realized = sum(
+        (decimal_value(value.get("realized_gain")) for value in fifo.get("sales", {}).values()
+         if str(value.get("currency") or "").upper() == code),
+        ZERO,
+    )
+    expense_realized = sum(
+        (decimal_value(value.get("realized_gain")) for value in fifo.get("expenses", {}).values()
+         if str(value.get("currency") or "").upper() == code),
+        ZERO,
+    )
+    fee_realized = sum(
+        (decimal_value(value.get("realized_gain")) for value in fifo.get("transaction_fees", {}).values()
+         if str(value.get("currency") or "").upper() == code),
+        ZERO,
+    )
+
     return {
         "profit": {
             "open_cost_basis": invested,
@@ -381,10 +461,48 @@ def _currency_metrics(
         "net_invested_fiat": net_invested,
         "purchase_outlay": purchase_outlay,
         "sale_net_proceeds": sale_net_proceeds,
+        "activity": {
+            "purchases": {
+                "count": purchase_count, "btc": purchase_btc,
+                "value": purchase_gross_volume,
+                "fees_fiat": purchase_fee, "btc_fee_fiat": purchase_btc_fee_fiat,
+            },
+            "income": {
+                "count": income_count, "btc": income_btc,
+                "value": income_gross_volume,
+                "fees_fiat": income_fee, "btc_fee_fiat": income_btc_fee_fiat,
+            },
+            "sales": {
+                "count": sale_count, "btc": sale_btc,
+                "value": sale_gross_volume, "net_proceeds": sale_net_proceeds,
+                "fees_fiat": sale_fee, "btc_fee_fiat": sale_btc_fee_fiat,
+                "realized": sale_realized,
+            },
+            "expenses": {
+                "count": expense_count, "btc": expense_btc,
+                "value": expense_gross_volume,
+                "fees_fiat": expense_fee, "btc_fee_fiat": expense_btc_fee_fiat,
+                "realized": expense_realized,
+            },
+            "network_fees": {
+                "count": network_fee_count, "btc": network_fee_btc,
+                "value": network_fee_fiat,
+                "onchain_btc": network_fee_onchain_btc,
+                "lightning_btc": network_fee_lightning_btc,
+                "realized": fee_realized,
+            },
+            "realized_total": realized,
+            "transaction_fee_realized": fee_realized,
+        },
         "fees": {
             "total_fiat": total_fee,
+            "btc_fiat_equivalent": btc_fee_fiat_equivalent,
+            "network_fee_fiat": network_fee_fiat,
+            "total_fiat_equivalent": total_fee + btc_fee_fiat_equivalent,
             "purchase_fiat": purchase_fee,
+            "income_fiat": income_fee,
             "sale_fiat": sale_fee,
+            "expense_fiat": expense_fee,
             "disposition_fiat": disposition_fee,
             "included_fiat": included_fee_total,
             "included_purchase_fiat": included_fee_purchase,

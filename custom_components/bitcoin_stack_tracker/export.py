@@ -52,6 +52,7 @@ def write_csv_export(
     result = fifo_result(entries, long_term_days=long_term_days, as_of=now)
     sale_summaries = result["sales"]
     expense_summaries = result.get("expenses", {})
+    transaction_fee_summaries = result.get("transaction_fees", {})
     open_lots = {str(lot.get("entry_id")): lot for lot in result["open_lots"]}
     purchase_match_details: dict[str, list[dict[str, Any]]] = {}
     for match in result["matches"]:
@@ -60,8 +61,8 @@ def write_csv_export(
 
     transaction_fields = [
         "id", "timestamp", "depot_id", "depot_name", "type", "amount_btc",
-        "currency", "price_per_btc", "gross_amount", "fee", "included_fee",
-        "included_fee_estimated", "fee_btc", "fiat_total", "net_amount",
+        "currency", "price_per_btc", "gross_amount", "fee", "network", "network_fee_fiat_value", "included_fee",
+        "included_fee_estimated", "fee_btc", "fee_btc_affects_stack", "fee_btc_fiat_equivalent", "fiat_total", "net_amount",
         "fifo_cost_basis", "fifo_realized_gain", "fifo_status",
         "fifo_resolved_btc", "fifo_unresolved_btc", "fifo_oversold_btc",
         "holding_period_days_setting", "holding_status", "holding_days",
@@ -76,7 +77,7 @@ def write_csv_export(
             entries,
             key=lambda row: (
                 row.get("timestamp", ""),
-                1 if row.get("type") in {"sale", "expense"} else 0,
+                1 if row.get("type") in {"sale", "expense", "network_fee"} else 0,
                 row.get("id", ""),
             ),
         ):
@@ -86,16 +87,17 @@ def write_csv_export(
             fee = decimal_value(item.get("fee"))
             gross = (
                 amount * price
-                if kind in {"purchase", "sale", "expense"} and price > 0
+                if kind in {"purchase", "income", "sale", "expense"} and price > 0
                 else None
             )
             net = (
-                gross + fee if kind == "purchase" and gross is not None
+                gross + fee if kind in {"purchase", "income"} and gross is not None
                 else gross - fee if kind in {"sale", "expense"} and gross is not None
                 else None
             )
             sale = sale_summaries.get(str(item.get("id")), {})
             expense = expense_summaries.get(str(item.get("id")), {})
+            transaction_fee = transaction_fee_summaries.get(str(item.get("id")), {})
             item_id = str(item.get("id"))
             lot = open_lots.get(item_id, {})
             purchase_matches = purchase_match_details.get(item_id, [])
@@ -118,8 +120,10 @@ def write_csv_export(
                 if kind == "sale"
                 else expense.get("holding_status")
                 if kind == "expense"
+                else transaction_fee.get("holding_status")
+                if kind == "network_fee"
                 else purchase_holding_status
-                if kind in {"purchase", "stack"}
+                if kind in {"purchase", "income", "stack"}
                 else ""
             )
             historical_detail = purchase_matches[-1] if purchase_matches else {}
@@ -131,20 +135,24 @@ def write_csv_export(
                 "type": kind,
                 "amount_btc": _value(amount),
                 "currency": item.get("currency", ""),
-                "price_per_btc": _value(price) if kind in {"purchase", "sale", "expense"} and price > 0 else "",
+                "price_per_btc": _value(price) if kind in {"purchase", "income", "sale", "expense", "network_fee"} and price > 0 else "",
                 "gross_amount": _value(gross),
-                "fee": _value(fee) if kind in {"purchase", "sale", "expense"} and (fee > 0 or price > 0) else "",
+                "fee": _value(fee) if kind in {"purchase", "income", "sale", "expense"} and (fee > 0 or price > 0) else "",
+                "network": item.get("network", "") if kind == "network_fee" else "",
+                "network_fee_fiat_value": _value(amount * price) if kind == "network_fee" and price > 0 else "",
                 "included_fee": _value(decimal_value(item.get("included_fee"))) if decimal_value(item.get("included_fee")) > 0 else "",
                 "included_fee_estimated": "true" if bool(item.get("included_fee_estimated")) else "",
                 "fee_btc": _value(decimal_value(item.get("fee_btc"))) if decimal_value(item.get("fee_btc")) > 0 else "",
+                "fee_btc_affects_stack": "true" if bool(item.get("fee_btc_affects_stack")) else "false",
+                "fee_btc_fiat_equivalent": _value(decimal_value(item.get("fee_btc")) * price) if decimal_value(item.get("fee_btc")) > 0 and price > 0 else "",
                 "fiat_total": _value(net),
                 "net_amount": _value(net),
-                "fifo_cost_basis": _value(expense.get("cost_basis") if kind == "expense" else sale.get("cost_basis")),
-                "fifo_realized_gain": _value(sale.get("realized_gain")),
-                "fifo_status": (expense.get("status", "") if kind == "expense" else sale.get("status", "") if kind == "sale" else ""),
-                "fifo_resolved_btc": _value(expense.get("resolved_btc") if kind == "expense" else sale.get("resolved_btc")),
-                "fifo_unresolved_btc": _value(expense.get("unknown_cost_basis_btc") if kind == "expense" else sale.get("unresolved_btc")),
-                "fifo_oversold_btc": _value(expense.get("oversold_btc") if kind == "expense" else sale.get("oversold_btc")),
+                "fifo_cost_basis": _value(transaction_fee.get("cost_basis") if kind == "network_fee" else expense.get("cost_basis") if kind == "expense" else sale.get("cost_basis")),
+                "fifo_realized_gain": _value(transaction_fee.get("realized_gain") if kind == "network_fee" else expense.get("realized_gain") if kind == "expense" else sale.get("realized_gain")),
+                "fifo_status": (transaction_fee.get("status", "") if kind == "network_fee" else expense.get("status", "") if kind == "expense" else sale.get("status", "") if kind == "sale" else ""),
+                "fifo_resolved_btc": _value(transaction_fee.get("resolved_btc") if kind == "network_fee" else expense.get("resolved_btc") if kind == "expense" else sale.get("resolved_btc")),
+                "fifo_unresolved_btc": _value(transaction_fee.get("unknown_cost_basis_btc") if kind == "network_fee" else expense.get("unknown_cost_basis_btc") if kind == "expense" else sale.get("unresolved_btc")),
+                "fifo_oversold_btc": _value(transaction_fee.get("oversold_btc") if kind == "network_fee" else expense.get("oversold_btc") if kind == "expense" else sale.get("oversold_btc")),
                 "holding_period_days_setting": long_term_days,
                 "holding_status": holding_status,
                 "holding_days": lot.get("holding_days", historical_detail.get("holding_days", "")),
@@ -159,7 +167,7 @@ def write_csv_export(
             })
 
     match_fields = [
-        "sale_id", "sale_timestamp", "purchase_id", "purchase_timestamp",
+        "sale_id", "sale_timestamp", "disposition_type", "purchase_id", "purchase_timestamp",
         "depot_id", "depot_name", "amount_btc", "purchase_currency",
         "sale_currency", "fifo_cost_basis", "net_sale_proceeds",
         "realized_gain", "status", "holding_period_days_setting",
@@ -172,6 +180,7 @@ def write_csv_export(
             writer.writerow({
                 "sale_id": match.get("sale_id", ""),
                 "sale_timestamp": match.get("sale_timestamp", ""),
+                "disposition_type": match.get("disposition_type", "sale"),
                 "purchase_id": match.get("purchase_id", ""),
                 "purchase_timestamp": match.get("purchase_timestamp", ""),
                 "depot_id": match.get("depot_id", ""),
@@ -203,7 +212,7 @@ def write_csv_export(
         "short_term_open_btc", "unknown_holding_open_btc", "next_long_term_date",
         "next_long_term_btc", "realized_long_term_gain",
         "realized_short_term_gain", "total_realized_gain", "purchase_fees",
-        "sale_fees", "unresolved_fifo_btc", "tax_overview_note",
+        "income_fees", "sale_fees", "unresolved_fifo_btc", "tax_overview_note",
         "disclaimer",
     ]
     with tax_path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -239,6 +248,7 @@ def write_csv_export(
                     "realized_short_term_gain": _value(summary["realized_short_term_gain"] if summary else None),
                     "total_realized_gain": _value(summary["realized_gain"] if summary else None),
                     "purchase_fees": _value(summary["purchase_fees"] if summary else None),
+                    "income_fees": _value(summary.get("income_fees") if summary else None),
                     "sale_fees": _value(summary["sale_fees"] if summary else None),
                     "unresolved_fifo_btc": _value(scoped["unresolved_btc"]),
                     "tax_overview_note": _safe_csv_text(tax_note),

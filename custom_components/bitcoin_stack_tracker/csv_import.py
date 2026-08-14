@@ -302,6 +302,13 @@ def _detect_source(filename: str, headers: list[str], rows: list[list[str]]) -> 
     }
     if coinfinity_columns.issubset(header_set):
         return "coinfinity"
+    # Revolut X crypto account statements use this compact seven-column
+    # schema. Detect it from the content so renamed downloads still work.
+    revolut_x_columns = {
+        "symbol", "type", "quantity", "price", "value", "fees", "date",
+    }
+    if revolut_x_columns.issubset(header_set):
+        return "revolut_x"
     # Peach Bitcoin exports use Amount as a satoshi integer and expose the
     # execution Bitcoin Price together with a percentage Premium.
     peach_columns = {
@@ -1733,6 +1740,150 @@ def _parse_peach(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[s
 
     return output, skipped
 
+
+_REVOLUT_X_MONTHS = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+def _revolut_x_timestamp(value: Any) -> str | None:
+    """Parse Revolut X timestamps without depending on the system locale."""
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return None
+
+    patterns = (
+        (re.fullmatch(
+            r"(?i)(\d{1,2})\s+([A-Za-z]+)\s+(\d{4}),\s*"
+            r"(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?",
+            text,
+        ), "day_first"),
+        (re.fullmatch(
+            r"(?i)([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*"
+            r"(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?",
+            text,
+        ), "month_first"),
+    )
+
+    for match, layout in patterns:
+        if not match:
+            continue
+        groups = match.groups()
+        if layout == "day_first":
+            day = int(groups[0])
+            month_name = groups[1].lower()
+            year = int(groups[2])
+            hour = int(groups[3])
+            minute = int(groups[4])
+            second = int(groups[5] or 0)
+            ampm = (groups[6] or "").upper()
+        else:
+            month_name = groups[0].lower()
+            day = int(groups[1])
+            year = int(groups[2])
+            hour = int(groups[3])
+            minute = int(groups[4])
+            second = int(groups[5] or 0)
+            ampm = (groups[6] or "").upper()
+
+        month = _REVOLUT_X_MONTHS.get(month_name)
+        if month is None:
+            break
+        if ampm:
+            if not 1 <= hour <= 12:
+                break
+            if ampm == "AM":
+                hour = 0 if hour == 12 else hour
+            elif ampm == "PM":
+                hour = 12 if hour == 12 else hour + 12
+        try:
+            return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return None
+
+    return _iso_timestamp(text)
+
+
+def _parse_revolut_x(headers: list[str], rows: list[list[str]]) -> tuple[list[dict[str, Any]], int]:
+    """Parse Revolut X ``crypto_account_statement`` CSV exports.
+
+    Schema: ``Symbol, Type, Quantity, Price, Value, Fees, Date``.
+    ``Quantity`` is BTC. ``Value`` is the gross EUR trade value before the
+    separately reported fiat fee.
+    """
+    output: list[dict[str, Any]] = []
+    skipped = 0
+
+    for row_no, values in enumerate(rows, start=2):
+        row = _row_dict(headers, values)
+        symbol = _asset(_get(row, "symbol", "asset", "coin"))
+        if symbol != "BTC":
+            skipped += 1
+            continue
+
+        side = _get(row, "type", "side").strip().lower()
+        if side == "buy":
+            kind = "purchase"
+        elif side == "sell":
+            kind = "sale"
+        else:
+            skipped += 1
+            continue
+
+        amount_btc = _number(_get(row, "quantity", "amount"))
+        price = _number(_get(row, "price"))
+        gross_value = _number(_get(row, "value"))
+        fee = _number(_get(row, "fees", "fee"))
+
+        if amount_btc is not None:
+            amount_btc = abs(amount_btc)
+        if price is not None:
+            price = abs(price)
+        if gross_value is not None:
+            gross_value = abs(gross_value)
+        fee = abs(fee or Decimal("0"))
+
+        if (price is None or price <= 0) and amount_btc and gross_value is not None:
+            price = gross_value / amount_btc
+
+        fiat_total: Decimal | None = None
+        if gross_value is not None:
+            fiat_total = (
+                gross_value + fee
+                if kind == "purchase"
+                else max(Decimal("0"), gross_value - fee)
+            )
+
+        output.append(_transaction(
+            source="Revolut X",
+            row_number=row_no,
+            kind=kind,
+            timestamp=_revolut_x_timestamp(_get(row, "date", "timestamp")),
+            amount_btc=amount_btc,
+            currency="EUR",
+            price=price,
+            fee=fee,
+            fiat_amount=fiat_total,
+            note="Revolut X CSV-Import",
+            import_hints={
+                "gross_trade_value": gross_value if gross_value is not None else "",
+                "value_excludes_fee": True,
+            },
+        ))
+
+    return output, skipped
+
 def _coinfinity_satoshi_number(value: Any) -> Decimal | None:
     """Parse a Coinfinity satoshi field without stripping significant zeros.
 
@@ -3053,6 +3204,10 @@ def parse_transaction_upload(raw: bytes, filename: str) -> dict[str, Any]:
             parsed, skipped = _parse_generic(source, headers, rows)
     elif source == "bitpanda":
         parsed, skipped = _parse_bitpanda(headers, rows, source_row_numbers)
+    elif source == "revolut_x" and {
+        "symbol", "type", "quantity", "price", "value", "fees", "date",
+    }.issubset({_clean_header(item) for item in headers}):
+        parsed, skipped = _parse_revolut_x(headers, rows)
     elif source == "peach" and {
         "date", "trade id", "type", "amount", "price",
         "bitcoin price", "currency", "premium",

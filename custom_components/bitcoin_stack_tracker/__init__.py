@@ -79,6 +79,7 @@ from .history import (
 from .limits import MAX_DEPOTS, MAX_GOALS, MAX_LEDGER_ENTRIES, RATE_LIMITS
 from .migrations import LATEST_CONFIG_VERSION, migrate_config_data
 from .models import amount_to_btc, btc_string, decimal_value, goal_reached_at, money_string
+from .reference_price import historical_reference_price
 from .metrics import build_dashboard_metrics
 from .network import async_routed_session, async_tor_gateway_host, mempool_source_uses_tor, network_security_snapshot, rotate_tor_isolation, tor_proxy_from_settings
 from .rate_limit import OperationRateLimiter
@@ -97,7 +98,10 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 SERVICE_ADD_PURCHASE = "add_purchase"
+SERVICE_ADD_INCOME = "add_income"
 SERVICE_ADD_SALE = "add_sale"
+SERVICE_ADD_EXPENSE = "add_expense"
+SERVICE_ADD_NETWORK_FEE = "add_network_fee"
 SERVICE_ADD_STACK = "add_stack"
 SERVICE_BULK_IMPORT = "bulk_import"
 SERVICE_ADD_DEPOT = "add_depot"
@@ -130,7 +134,10 @@ DASHBOARD_ACTION_SERVICES = {
     SERVICE_LIST_PORTFOLIOS,
     SERVICE_DASHBOARD_DATA,
     SERVICE_ADD_PURCHASE,
+    SERVICE_ADD_INCOME,
     SERVICE_ADD_SALE,
+    SERVICE_ADD_EXPENSE,
+    SERVICE_ADD_NETWORK_FEE,
     SERVICE_ADD_STACK,
     SERVICE_BULK_IMPORT,
     SERVICE_DELETE_ENTRY,
@@ -159,6 +166,9 @@ CONF_AMOUNT_UNIT = "amount_unit"
 CONF_PRICE = "price"
 CONF_CURRENCY = "currency"
 CONF_FEE = "fee"
+CONF_FEE_BTC = "fee_btc"
+CONF_FEE_BTC_AFFECTS_STACK = "fee_btc_affects_stack"
+CONF_NETWORK = "network"
 CONF_TIMESTAMP = "timestamp"
 CONF_NOTE = "note"
 CONF_LEDGER_ENTRY_ID = "ledger_entry_id"
@@ -189,6 +199,19 @@ TRANSACTION_SCHEMA = vol.Schema({
     vol.Required(CONF_PRICE): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Required(CONF_CURRENCY): cv.string,
     vol.Optional(CONF_FEE, default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional(CONF_FEE_BTC, default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional(CONF_FEE_BTC_AFFECTS_STACK, default=True): cv.boolean,
+    vol.Optional(CONF_TIMESTAMP): cv.string,
+    vol.Optional(CONF_NOTE, default=""): cv.string,
+    vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,
+})
+NETWORK_FEE_SCHEMA = vol.Schema({
+    vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
+    vol.Required(CONF_AMOUNT): vol.Coerce(float),
+    vol.Optional(CONF_AMOUNT_UNIT, default=UNIT_SATS): vol.In([UNIT_BTC, UNIT_SATS]),
+    vol.Required(CONF_PRICE): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Required(CONF_CURRENCY): cv.string,
+    vol.Optional(CONF_NETWORK, default="onchain"): vol.In(["onchain", "lightning"]),
     vol.Optional(CONF_TIMESTAMP): cv.string,
     vol.Optional(CONF_NOTE, default=""): cv.string,
     vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,
@@ -202,7 +225,7 @@ ADD_STACK_SCHEMA = vol.Schema({
     vol.Optional(CONF_DEPOT_ID, default=DEFAULT_DEPOT_ID): cv.string,
 })
 IMPORT_TRANSACTION_SCHEMA = vol.Schema({
-    vol.Required("type"): vol.In(["purchase", "sale", "expense"]),
+    vol.Required("type"): vol.In(["purchase", "income", "sale", "expense"]),
     vol.Required("timestamp"): cv.string,
     vol.Required("amount_btc"): vol.Any(str, int, float),
     vol.Optional(CONF_CURRENCY, default=""): cv.string,
@@ -259,11 +282,15 @@ DELETE_SCHEMA = vol.Schema({
 UPDATE_ENTRY_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
     vol.Required(CONF_LEDGER_ENTRY_ID): cv.string,
+    vol.Optional("type"): vol.In(["purchase", "income", "sale", "expense", "network_fee", "stack"]),
     vol.Required(CONF_AMOUNT): vol.Coerce(float),
     vol.Optional(CONF_AMOUNT_UNIT, default=UNIT_BTC): vol.In([UNIT_BTC, UNIT_SATS]),
     vol.Optional(CONF_PRICE): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional(CONF_CURRENCY): cv.string,
     vol.Optional(CONF_FEE): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional(CONF_FEE_BTC): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional(CONF_FEE_BTC_AFFECTS_STACK): cv.boolean,
+    vol.Optional(CONF_NETWORK): vol.In(["onchain", "lightning"]),
     vol.Optional(CONF_TIMESTAMP): cv.string,
     vol.Optional(CONF_NOTE): cv.string,
     vol.Optional(CONF_DEPOT_ID): cv.string,
@@ -458,7 +485,7 @@ def _dashboard_fifo_summary(
         "total_btc", "known_btc", "unknown_btc", "long_term_btc",
         "short_term_btc", "unknown_holding_btc", "next_long_term_date",
         "next_long_term_btc", "realized", "realized_long_term",
-        "realized_short_term", "purchase_fees", "sale_fees",
+        "realized_short_term", "purchase_fees", "income_fees", "sale_fees",
         "unresolved_btc", "oversold_btc", "long_term_days", "as_of",
     )
     result = {key: deepcopy(fifo.get(key)) for key in keys}
@@ -513,7 +540,7 @@ def _dashboard_ledger_entries(entries: list[dict[str, Any]]) -> list[dict[str, A
     """
     allowed = (
         "id", "type", "timestamp", "depot_id", "amount_btc",
-        "currency", "price", "fee", "note",
+        "currency", "price", "fee", "fee_btc", "fee_btc_affects_stack", "network", "note",
     )
     return [
         {key: deepcopy(entry.get(key)) for key in allowed if key in entry}
@@ -555,6 +582,13 @@ def _dashboard_ledger_fifo(fifo: dict[str, Any]) -> dict[str, Any]:
                 "holding_status": value.get("holding_status", "unknown"),
             }
             for entry_id, value in fifo.get("expenses", {}).items()
+        },
+        "transaction_fees": {
+            str(entry_id): {
+                "status": value.get("status", "unknown"),
+                "holding_status": value.get("holding_status", "unknown"),
+            }
+            for entry_id, value in fifo.get("transaction_fees", {}).items()
         },
         "match_statuses_by_sale": match_statuses,
     }
@@ -635,7 +669,7 @@ def _dashboard_chart_ledger_events(entries: list[dict[str, Any]]) -> list[dict[s
     result: list[dict[str, Any]] = []
     for sequence, entry in enumerate(entries):
         kind = str(entry.get("type") or "")
-        if kind not in {"purchase", "stack", "sale", "expense"}:
+        if kind not in {"purchase", "income", "stack", "sale", "expense", "network_fee"}:
             continue
         event = {
             "sequence": sequence,
@@ -650,6 +684,12 @@ def _dashboard_chart_ledger_events(entries: list[dict[str, Any]]) -> list[dict[s
                 "price": entry.get("price"),
                 "fee": entry.get("fee", 0),
             })
+        if kind == "network_fee":
+            event["network"] = entry.get("network", "onchain")
+        if decimal_value(entry.get("fee_btc")) > 0:
+            event["fee_btc"] = entry.get("fee_btc")
+            if bool(entry.get("fee_btc_affects_stack")):
+                event["fee_btc_affects_stack"] = True
         result.append(event)
     return result
 
@@ -1282,7 +1322,7 @@ def _validate_backup_payload(payload: dict[str, Any]) -> None:
         raise ValueError("Backup contains too many goals")
     for item in entries:
         if not isinstance(item, dict) or item.get("type") not in {
-            "purchase", "sale", "stack", "expense"
+            "purchase", "income", "sale", "stack", "expense", "network_fee"
         }:
             raise ValueError("Backup contains an invalid ledger entry")
     if fifo_result(entries, long_term_days=365)["oversold_btc"] > 0:
@@ -2426,6 +2466,20 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 raise web.HTTPBadGateway(text=str(err)) from err
             return respond(result)
 
+        if route == "api/history/reference-price" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            runtime["security"].require_unlocked(requester)
+            currency = str(q("currency") or "").upper()
+            timestamp = q("timestamp")
+            live_prices = (runtime["coordinator"].data or {}).get("prices", {})
+            return respond(_json_safe(historical_reference_price(
+                runtime["history_storage"].data,
+                currency,
+                timestamp,
+                live_price=live_prices.get(currency),
+            )))
+
         if route == "api/history/intraday" and method == "POST":
             entry_id = str(_panel_json_body(body_text).get("entry_id") or "")
             runtime = _runtime(self.hass, entry_id)
@@ -2579,9 +2633,32 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             currency=call.data[CONF_CURRENCY],
             price=call.data[CONF_PRICE],
             fee=call.data.get(CONF_FEE, 0),
+            fee_btc=call.data.get(CONF_FEE_BTC, 0),
+            fee_btc_affects_stack=call.data.get(CONF_FEE_BTC_AFFECTS_STACK, True),
             note=call.data.get(CONF_NOTE, ""),
             depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
         )
+        _notify_entities(runtime)
+        return _json_safe(item)
+
+    async def add_income(call: ServiceCall) -> dict[str, Any]:
+        runtime = _runtime(hass, call.data[CONF_CONFIG_ENTRY_ID])
+        amount_btc = amount_to_btc(call.data[CONF_AMOUNT], call.data[CONF_AMOUNT_UNIT])
+        _validate_positive_transaction(amount_btc, call.data[CONF_PRICE])
+        try:
+            item = await runtime["storage"].async_add_income(
+                timestamp=parse_timestamp(call.data.get(CONF_TIMESTAMP)),
+                amount_btc=amount_btc,
+                currency=call.data[CONF_CURRENCY],
+                price=call.data[CONF_PRICE],
+                fee=call.data.get(CONF_FEE, 0),
+                fee_btc=call.data.get(CONF_FEE_BTC, 0),
+                fee_btc_affects_stack=call.data.get(CONF_FEE_BTC_AFFECTS_STACK, True),
+                note=call.data.get(CONF_NOTE, ""),
+                depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
+            )
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
         _notify_entities(runtime)
         return _json_safe(item)
 
@@ -2599,6 +2676,49 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 currency=call.data[CONF_CURRENCY],
                 price=call.data[CONF_PRICE],
                 fee=call.data.get(CONF_FEE, 0),
+                fee_btc=call.data.get(CONF_FEE_BTC, 0),
+                fee_btc_affects_stack=call.data.get(CONF_FEE_BTC_AFFECTS_STACK, True),
+                note=call.data.get(CONF_NOTE, ""),
+                depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
+            )
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
+        _notify_entities(runtime)
+        return _json_safe(item)
+
+    async def add_expense(call: ServiceCall) -> dict[str, Any]:
+        runtime = _runtime(hass, call.data[CONF_CONFIG_ENTRY_ID])
+        amount_btc = amount_to_btc(call.data[CONF_AMOUNT], call.data[CONF_AMOUNT_UNIT])
+        _validate_positive_transaction(amount_btc, call.data[CONF_PRICE])
+        try:
+            item = await runtime["storage"].async_add_expense(
+                timestamp=parse_timestamp(call.data.get(CONF_TIMESTAMP)),
+                amount_btc=amount_btc,
+                currency=call.data[CONF_CURRENCY],
+                price=call.data[CONF_PRICE],
+                fee=call.data.get(CONF_FEE, 0),
+                fee_btc=call.data.get(CONF_FEE_BTC, 0),
+                fee_btc_affects_stack=call.data.get(CONF_FEE_BTC_AFFECTS_STACK, True),
+                note=call.data.get(CONF_NOTE, ""),
+                depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
+            )
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
+        _notify_entities(runtime)
+        return _json_safe(item)
+
+    async def add_network_fee(call: ServiceCall) -> dict[str, Any]:
+        runtime = _runtime(hass, call.data[CONF_CONFIG_ENTRY_ID])
+        amount_btc = amount_to_btc(call.data[CONF_AMOUNT], call.data[CONF_AMOUNT_UNIT])
+        if amount_btc <= 0:
+            raise vol.Invalid("Amount must be greater than zero")
+        try:
+            item = await runtime["storage"].async_add_network_fee(
+                timestamp=parse_timestamp(call.data.get(CONF_TIMESTAMP)),
+                amount_btc=amount_btc,
+                currency=call.data[CONF_CURRENCY],
+                price=call.data[CONF_PRICE],
+                network=call.data.get(CONF_NETWORK, "onchain"),
                 note=call.data.get(CONF_NOTE, ""),
                 depot_id=call.data.get(CONF_DEPOT_ID, DEFAULT_DEPOT_ID),
             )
@@ -2716,8 +2836,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         if existing is None:
             raise vol.Invalid("Ledger entry was not found")
 
-        kind = str(existing.get("type") or "").lower()
-        if kind not in {"purchase", "sale", "stack", "expense"}:
+        kind = str(call.data.get("type", existing.get("type")) or "").lower()
+        if kind not in {"purchase", "income", "sale", "stack", "expense", "network_fee"}:
             raise vol.Invalid("Unsupported ledger entry type")
         amount_btc = amount_to_btc(call.data[CONF_AMOUNT], call.data[CONF_AMOUNT_UNIT])
         if amount_btc <= 0:
@@ -2735,31 +2855,52 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             "amount_btc": btc_string(amount_btc),
             "note": note,
         }
-        if kind in {"purchase", "sale"}:
+        if kind == "network_fee":
+            currency = str(call.data.get(CONF_CURRENCY, existing.get("currency", "")) or "").strip().upper()
+            price = decimal_value(call.data.get(CONF_PRICE, existing.get("price", 0)))
+            network = str(call.data.get(CONF_NETWORK, existing.get("network", "onchain")) or "onchain").lower()
+            if not currency:
+                raise vol.Invalid("Currency is required")
+            if price <= 0:
+                raise vol.Invalid("Reference price must be greater than zero")
+            if network not in {"onchain", "lightning"}:
+                raise vol.Invalid("Network must be onchain or lightning")
+            replacement.update({
+                "currency": currency,
+                "price": money_string(price),
+                "network": network,
+                "fee_btc": "0",
+                "fee_btc_affects_stack": False,
+            })
+        elif kind in {"purchase", "income", "sale", "expense"}:
+            # When the booking type is changed, stale fields from the old kind
+            # must never leak into the new transaction.  The form therefore
+            # sends the complete priced transaction payload.
             currency = str(call.data.get(CONF_CURRENCY, existing.get("currency", "")) or "").strip().upper()
             price = decimal_value(call.data.get(CONF_PRICE, existing.get("price", 0)))
             fee = decimal_value(call.data.get(CONF_FEE, existing.get("fee", 0)))
+            fee_btc = decimal_value(call.data.get(CONF_FEE_BTC, existing.get("fee_btc", 0)))
+            fee_btc_affects_stack = bool(call.data.get(
+                CONF_FEE_BTC_AFFECTS_STACK, existing.get("fee_btc_affects_stack", False)
+            ))
             if not currency:
                 raise vol.Invalid("Currency is required")
             if price <= 0:
                 raise vol.Invalid("Price must be greater than zero")
+            if fee < 0 or fee_btc < 0:
+                raise vol.Invalid("Fees must not be negative")
             replacement.update({
                 "currency": currency,
                 "price": money_string(price),
                 "fee": money_string(fee),
+                "fee_btc": btc_string(fee_btc) if fee_btc > 0 else "0",
+                "fee_btc_affects_stack": bool(fee_btc > 0 and fee_btc_affects_stack),
             })
-        elif kind == "expense":
-            currency = str(call.data.get(CONF_CURRENCY, existing.get("currency", "")) or "").strip().upper()
-            price = decimal_value(call.data.get(CONF_PRICE, existing.get("price", 0)))
-            fee = decimal_value(call.data.get(CONF_FEE, existing.get("fee", 0)))
-            if bool(currency) != (price > 0):
-                raise vol.Invalid("Expense currency and price must be supplied together")
-            if currency and price > 0:
-                replacement.update({
-                    "currency": currency,
-                    "price": money_string(price),
-                    "fee": money_string(fee),
-                })
+        else:
+            # Stack entries are unknown-basis BTC and cannot carry a transaction
+            # price or a BTC network fee in the manual editor.
+            replacement["fee_btc"] = "0"
+            replacement["fee_btc_affects_stack"] = False
 
         try:
             # Storage validates the candidate atomically against the previous
@@ -3251,7 +3392,10 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
     registrations = [
         (SERVICE_ADD_PURCHASE, add_purchase, _with_requester(TRANSACTION_SCHEMA), SupportsResponse.OPTIONAL),
+        (SERVICE_ADD_INCOME, add_income, _with_requester(TRANSACTION_SCHEMA), SupportsResponse.OPTIONAL),
         (SERVICE_ADD_SALE, add_sale, _with_requester(TRANSACTION_SCHEMA), SupportsResponse.OPTIONAL),
+        (SERVICE_ADD_EXPENSE, add_expense, _with_requester(TRANSACTION_SCHEMA), SupportsResponse.OPTIONAL),
+        (SERVICE_ADD_NETWORK_FEE, add_network_fee, _with_requester(NETWORK_FEE_SCHEMA), SupportsResponse.OPTIONAL),
         (SERVICE_ADD_STACK, add_stack, _with_requester(ADD_STACK_SCHEMA), SupportsResponse.OPTIONAL),
         (SERVICE_BULK_IMPORT, bulk_import, _with_requester(BULK_IMPORT_SCHEMA), SupportsResponse.ONLY),
         (SERVICE_ADD_DEPOT, add_depot, _with_requester(ADD_DEPOT_SCHEMA), SupportsResponse.OPTIONAL),

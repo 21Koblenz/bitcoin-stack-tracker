@@ -10,7 +10,7 @@ RUN = (ROOT / "bitcoin_stack_tracker_dashboard/run.sh").read_text(encoding="utf-
 def test_each_range_uses_one_uniform_finest_practical_interval():
     assert "function chartIntervalMinutesForRange()" in APP
     assert 'state.historyRange === "1") return 5' in APP
-    assert 'state.historyRange === "30") return 60' in APP
+    assert 'state.historyRange === "30" || state.historyRange === "month_start") return 60' in APP
     assert 'state.historyRange === "90") return 240' in APP
     assert 'state.historyRange === "ytd" || state.historyRange === "365") return 720' in APP
     assert "function resampleSeriesUniform" in APP

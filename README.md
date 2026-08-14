@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.8
+# Bitcoin Stack Tracker v0.21.0.9
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -34,14 +34,16 @@ The Tor Gateway has no access to the purchase ledger, portfolio data, tracker pa
 - German and English
 - desktop and smartphone layouts
 
-#### Purchases, sales and FIFO
+#### Ledger, fees and FIFO
 
-- purchases with amount, price, fiat currency, fee, date, portfolio and note
-- sales with per-portfolio FIFO assignment
+- purchases and income with amount, price, fiat currency, fee, date, portfolio and note
+- sales and expenses with per-portfolio FIFO assignment and realized profit/loss
+- standalone **on-chain / Lightning transaction fees** in sats or BTC; they reduce the tracked stack and are valued in fiat at the historical BTC price of the booking time
 - holdings with unknown cost basis
-- plausibility checks before saving
+- manual booking type can be corrected later without deleting/recreating the row; FIFO is fully revalidated after the change
+- non-blocking historical-price plausibility warning for manual priced bookings from **10% deviation**
 - configurable holding period, 365 days by default
-- FIFO disposals for sales and valued expenses with lot assignment, cost basis, proceeds/value, profit/loss and holding period
+- FIFO disposals for sales, valued expenses and BTC transaction fees with lot assignment, cost basis, proceeds/value, profit/loss/FIFO effect and holding period
 - additionally per disposal: **historical average purchase price up to that date**, BTC-weighted across all purchases up to the disposal date, plus a separate average-price P/L comparison; this does not replace FIFO
 - pagination and mobile card layout
 
@@ -49,7 +51,9 @@ The FIFO/holding-period view is a calculation aid and not tax advice.
 
 #### CSV import
 
-Editable import preview for **Kraken, Coinbase, Binance, Bitpanda, Peach Bitcoin, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace** and CoinTracking-compatible files. Duplicates and invalid transactions are checked; original CSV/ZIP files are not stored permanently.
+Editable import preview for **Kraken, Coinbase, Binance, Bitpanda, Revolut X, Peach Bitcoin, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace** and CoinTracking-compatible files. Duplicates and invalid transactions are checked; original CSV/ZIP files are not stored permanently.
+
+For **Revolut X**, the compact `Symbol, Type, Quantity, Price, Value, Fees, Date` statement is detected automatically. BTC/XBT `Buy` and `Sell` rows are imported; `Quantity` is BTC and `Fees` is a separate fiat fee.
 
 For Peach Bitcoin, `Amount` is interpreted as satoshis. `Premium` is a percentage value. For purchases, the premium included in `Bitcoin Price` is mathematically removed and shown as a fiat fee, while `Price` remains the authoritative total amount actually paid.
 
@@ -71,8 +75,8 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - cost basis plus unrealized profit/loss
 - combined overlays
 - independent linear/logarithmic scaling for the left and right Y axes
-- time ranges from Today to Max
-- TWR, XIRR, BTC CAGR, DCA, drawdown and cash-flow-neutral HODL benchmark
+- time ranges: **1 day · week-to-date · 1 week · month-to-date · 30 days · 90 days · YTD · 1 year · 3 years · 5 years · 10 years · since first purchase · Max**
+- TWR, selected-range annualized XIRR, BTC-market CAGR, DCA, drawdown and cash-flow-neutral HODL benchmark
 - stacking velocity, net fiat investment, fee ratios and stack-age distribution
 - Bitcoin network, milestone and halving markers
 
@@ -80,7 +84,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 
 The encrypted portable `.bstbackup` intentionally contains only:
 
-1. purchases and sales
+1. ledger entries (purchases, income, sales, expenses, transaction fees and stack entries)
 2. portfolios
 3. targets
 4. history
@@ -146,18 +150,21 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.8**. This small release adds the **Peach Bitcoin CSV importer** and makes the project README fully bilingual in German and English.
+Current project version: **v0.21.0.9**. This release adds the **Revolut X CSV importer** and extends the ledger with income, expenses and explicit on-chain/Lightning transaction fees while preserving FIFO and performance accounting.
 
-#### Changes since v0.21.0.7
+#### Changes since v0.21.0.8
 
-- **Peach Bitcoin:** dedicated CSV parser for `Date`, `Trade ID`, `Type`, `Amount`, `Price`, `Bitcoin Price`, `Currency` and `Premium`.
-- **Correct satoshi handling:** Peach `Amount` is explicitly interpreted as an integer satoshi amount and converted to BTC.
-- **Premium/fee handling:** `Premium` is treated as a percentage. For purchases, the markup included in `Bitcoin Price` is reversed mathematically (`Bitcoin Price / (1 + Premium/100)`); the difference to the authoritative paid `Price` is tracked as a fiat fee without double-counting cost basis.
-- **Duplicate detection:** `Trade ID` is used as the stable import identity; the raw ID is not stored in the ledger and only participates through the existing local hash mechanism.
-- **Documentation:** README is fully bilingual German/English and Peach Bitcoin is documented in `CSV-IMPORT.md`.
-- **Regression tests:** targeted Peach tests cover satoshi conversion, premium/fee calculation, Trade-ID duplicates, missing premium and sales.
+- **Revolut X:** dedicated CSV parser for `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees` and `Date`; BTC/XBT Buy/Sell only, with separate fiat fees and robust date parsing.
+- **Manual income and expenses:** income creates a priced FIFO acquisition lot like a purchase; expenses remain separate from sales but realize FIFO profit/loss.
+- **Transaction fees:** standalone on-chain/Lightning fees can be entered in sats or BTC. They reduce the actual tracked stack, consume FIFO BTC with zero sale proceeds, and are shown with their historical fiat equivalent.
+- **Editable booking type:** a saved row can be corrected between purchase, income, sale, expense, transaction fee and stack; the full FIFO state is revalidated after each edit.
+- **Historical plausibility warning:** manual priced bookings are compared with the historical BTC price at the booking timestamp; deviations of 10% or more show a non-blocking warning.
+- **Overview:** separate sales, expenses, income and transaction-fee aggregates plus total realized profit/loss; “Fiat moved into Bitcoin” is renamed to **“Purchasing power secured”**.
+- **Chart ranges:** added week-to-date, rolling 1 week and month-to-date in short-to-long order. XIRR remains annualized for the selected range; TWR remains cash-flow neutral. CAGR wording now makes clear that it is Bitcoin-market growth, not personal return.
+- **Fee analytics:** total fee value includes the fiat equivalent of recorded BTC/sat fees without mixing standalone network fees into trading-volume fee ratios.
+- **Quality assurance:** targeted regression tests cover Revolut X, historical reference pricing, income, expense realization, network-fee stack reduction and legacy BTC-fee compatibility; the final local suite passes **373 tests + 8 subtests**.
 
-The **Tor Gateway remains at v0.21.0.3**, because v0.21.0.8 only affects the custom integration and documentation.
+The **Tor Gateway remains at v0.21.0.3**, because v0.21.0.9 only changes the custom integration and documentation.
 
 The baseline calculation, privacy and security audit from [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) remains unchanged.
 
@@ -214,14 +221,16 @@ Das Tor Gateway hat keinen Zugriff auf Kaufbuch, Depotdaten, Tracker-Passwörter
 - Deutsch und Englisch
 - Desktop- und Smartphone-Ansicht
 
-#### Käufe, Verkäufe und FIFO
+#### Buchungen, Gebühren und FIFO
 
-- Käufe mit Menge, Kurs, Fiatwährung, Gebühr, Datum, Depot und Notiz
-- Verkäufe mit depotweiser FIFO-Zuordnung
+- Käufe und Einnahmen mit Menge, Kurs, Fiatwährung, Gebühr, Datum, Depot und Notiz
+- Verkäufe und Ausgaben mit depotweiser FIFO-Zuordnung und realisiertem Gewinn/Verlust
+- eigenständige **On-Chain-/Lightning-Transaktionsgebühren** in sats oder BTC; sie mindern den erfassten Stack und werden zum historischen BTC-Kurs des Buchungszeitpunkts in Fiat bewertet
 - Bestand ohne bekannten Einstand
-- Plausibilitätsprüfung vor dem Speichern
+- Buchungsart kann später korrigiert werden, ohne die Buchung zu löschen; FIFO wird danach vollständig neu validiert
+- nicht blockierende historische Kurs-Plausibilitätswarnung bei manuellen bewerteten Buchungen ab **10 % Abweichung**
 - frei einstellbare Haltezeit, standardmäßig 365 Tage
-- FIFO-Abgänge für Verkäufe und bewertete Ausgaben mit Lot-Zuordnung, Einstand, Gegenwert, Gewinn/Verlust und Haltezeit
+- FIFO-Abgänge für Verkäufe, bewertete Ausgaben und BTC-Transaktionsgebühren mit Lot-Zuordnung, Einstand, Gegenwert, Gewinn/Verlust/FIFO-Effekt und Haltezeit
 - Zusätzlich je Abgang: **Ø Einkauf bis dahin** als BTC-gewichteter historischer Einstand aller Käufe bis zu diesem Zeitpunkt sowie ein separater Ø-P/L-Vergleich; dieser Vergleich ersetzt FIFO nicht
 - Pagination und mobile Kartenansicht
 
@@ -229,7 +238,9 @@ Die FIFO-/Haltezeitanzeige ist eine Rechenhilfe und keine Steuerberatung.
 
 #### CSV-Import
 
-Bearbeitbare Importvorschau für unter anderem **Kraken, Coinbase, Binance, Bitpanda, Peach Bitcoin, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace** und CoinTracking-kompatible Dateien. Dubletten und unzulässige Buchungen werden geprüft; Original-CSV-/ZIP-Dateien werden nicht dauerhaft gespeichert.
+Bearbeitbare Importvorschau für unter anderem **Kraken, Coinbase, Binance, Bitpanda, Revolut X, Peach Bitcoin, Coinfinity, Pocket Bitcoin, Relai, Bittr/getbittr, Wavespace** und CoinTracking-kompatible Dateien. Dubletten und unzulässige Buchungen werden geprüft; Original-CSV-/ZIP-Dateien werden nicht dauerhaft gespeichert.
+
+Beim **Revolut-X-Import** wird das kompakte Format `Symbol, Type, Quantity, Price, Value, Fees, Date` automatisch erkannt. Übernommen werden BTC/XBT `Buy` und `Sell`; `Quantity` ist BTC und `Fees` ist eine separate Fiatgebühr.
 
 Beim Peach-Bitcoin-Import wird `Amount` als Satoshi-Betrag interpretiert. `Premium` ist ein Prozentwert. Der in `Bitcoin Price` enthaltene Premium-Aufschlag wird für Käufe rechnerisch entfernt und als Fiatgebühr ausgewiesen, während `Price` als tatsächlich gezahlter Gesamtbetrag erhalten bleibt.
 
@@ -251,8 +262,8 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - Einstand + Buchgewinn/-verlust
 - kombinierte Overlays
 - linke und rechte Y-Achse unabhängig linear/logarithmisch
-- Zeiträume von Heute bis Max
-- TWR, XIRR, BTC-CAGR, DCA-, Drawdown- und cashflow-neutraler HODL-Benchmark
+- Zeiträume: **1 Tag · seit Wochenbeginn · 1 Woche · seit Monatsbeginn · 30 Tage · 90 Tage · YTD · 1 Jahr · 3 Jahre · 5 Jahre · 10 Jahre · seit erstem Kauf · Max**
+- TWR, auf den gewählten Zeitraum annualisierte XIRR, BTC-Markt-CAGR, DCA-, Drawdown- und cashflow-neutraler HODL-Benchmark
 - Stacking-Geschwindigkeit, Netto-Fiat-Investment, Gebührenquoten und Stack-Altersverteilung
 - Bitcoin-Netzwerk-, Milestone- und Halving-Markierungen
 
@@ -260,7 +271,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 
 Das verschlüsselte portable `.bstbackup` enthält bewusst nur:
 
-1. Käufe und Verkäufe
+1. Buchungen (Käufe, Einnahmen, Verkäufe, Ausgaben, Transaktionsgebühren und Stack-Einträge)
 2. Depots
 3. Ziele
 4. Historie
@@ -326,18 +337,21 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.8**. Dieser kleine Release ergänzt den **Peach-Bitcoin-CSV-Import** und erweitert die Projekt-README vollständig um Deutsch und Englisch.
+Aktueller Projektstand: **v0.21.0.9**. Dieses Release ergänzt den **Revolut-X-CSV-Import** und erweitert das Buchungsmodell um Einnahmen, Ausgaben sowie eigenständige On-Chain-/Lightning-Transaktionsgebühren, ohne FIFO- und Performance-Rechnung zu vermischen.
 
-#### Änderungen seit v0.21.0.7
+#### Änderungen seit v0.21.0.8
 
-- **Peach Bitcoin:** eigener CSV-Parser für `Date`, `Trade ID`, `Type`, `Amount`, `Price`, `Bitcoin Price`, `Currency` und `Premium`.
-- **Sats korrekt:** `Amount` wird bei Peach ausdrücklich als ganzzahliger Satoshi-Betrag interpretiert und in BTC umgerechnet.
-- **Premium/Gebühr:** `Premium` wird als Prozentwert behandelt. Für Käufe wird der in `Bitcoin Price` enthaltene Aufschlag mathematisch entfernt (`Bitcoin Price / (1 + Premium/100)`); die Differenz zum tatsächlich gezahlten `Price` wird als Fiatgebühr geführt, ohne den Einstand doppelt zu belasten.
-- **Dubletten:** `Trade ID` wird als stabile Import-Identität verwendet; die Roh-ID wird nicht im Ledger gespeichert, sondern nur über den bestehenden lokalen Hash-Mechanismus berücksichtigt.
-- **Dokumentation:** README vollständig zweisprachig Deutsch/Englisch; Peach Bitcoin ist zusätzlich in `CSV-IMPORT.md` dokumentiert.
-- **Regressionstests:** gezielte Peach-Tests für Sats-Umrechnung, Premium-/Gebührenrechnung, Trade-ID-Dubletten, fehlendes Premium und Verkäufe.
+- **Revolut X:** eigener CSV-Parser für `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees` und `Date`; nur BTC/XBT Buy/Sell, separate Fiatgebühren und robuste Datumsformate.
+- **Manuelle Einnahmen und Ausgaben:** Einnahmen erzeugen wie Käufe einen bewerteten FIFO-Zugang; Ausgaben bleiben von Verkäufen getrennt, realisieren aber FIFO-Gewinn/-Verlust.
+- **Transaktionsgebühren:** On-Chain-/Lightning-Gebühren können eigenständig in sats oder BTC erfasst werden. Sie mindern den echten Stack, verbrauchen FIFO-BTC ohne Verkaufserlös und zeigen zusätzlich ihren historischen Fiat-Gegenwert.
+- **Buchungsart korrigierbar:** gespeicherte Buchungen können zwischen Kauf, Einnahme, Verkauf, Ausgabe, Transaktionsgebühr und Stack geändert werden; FIFO wird nach jeder Änderung vollständig neu validiert.
+- **Historische Plausibilitätswarnung:** manuelle bewertete Buchungen werden gegen den historischen BTC-Kurs des Buchungszeitpunkts geprüft; ab 10 % Abweichung erscheint eine Warnung, Speichern bleibt möglich.
+- **Übersicht:** getrennte Summen für Verkäufe, Ausgaben, Einnahmen und Transaktionsgebühren sowie gesamter realisierter Gewinn/Verlust; **„Fiat in Sicherheit gebracht“** heißt jetzt **„Kaufkraft in Sicherheit gebracht“**.
+- **Chart-Zeiträume:** ergänzt wurden seit Wochenbeginn, rollierende 1 Woche und seit Monatsbeginn in der gewünschten Reihenfolge von kurz nach lang. XIRR bleibt für den gewählten Zeitraum annualisiert; TWR bleibt cashflow-neutral. CAGR wird klar als Wachstum des Bitcoin-Marktpreises beschrieben.
+- **Gebührenanalyse:** gesamte Gebühren enthalten auch den Fiat-Gegenwert erfasster BTC-/Sats-Gebühren, ohne reine Netzwerkgebühren in Handelsvolumen-Quoten einzumischen.
+- **Qualitätssicherung:** gezielte Tests für Revolut X, historische Referenzkurse, Einnahmen, realisierte Ausgaben, Netzwerkgebühren und Legacy-BTC-Gebühren; die finale lokale Suite besteht **373 Tests + 8 Subtests**.
 
-Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.8 ausschließlich die Custom Integration und Dokumentation betrifft.
+Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.9 ausschließlich die Custom Integration und Dokumentation betrifft.
 
 Der grundlegende Berechnungs-, Datenschutz- und Security-Audit aus [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) bleibt unverändert bestehen.
 

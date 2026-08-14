@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
-APP = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
+APP = (FRONTEND / "static" / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
 CSS = (FRONTEND / "static" / "style-v021006-733b783d.css").read_text(encoding="utf-8")
 
 

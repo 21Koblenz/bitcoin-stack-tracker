@@ -1,4 +1,4 @@
-# Installation · Bitcoin Stack Tracker v0.21.0.7
+# Installation · Bitcoin Stack Tracker v0.21.0.9
 
 ## Voraussetzungen
 

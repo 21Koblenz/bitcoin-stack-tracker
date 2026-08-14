@@ -148,7 +148,7 @@ def _ledger_sort_key(row: dict[str, Any]) -> tuple[datetime, int, str]:
         parsed = datetime.max.replace(tzinfo=timezone.utc)
     return (
         parsed,
-        1 if row.get("type") in {"sale", "expense"} else 0,
+        1 if row.get("type") in {"sale", "expense", "network_fee"} else 0,
         str(row.get("id", "")),
     )
 
@@ -191,7 +191,7 @@ def _preview_import_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     """Normalize one reviewed preview row exactly enough for duplicate matching."""
     try:
         kind = str(raw.get("type") or "").strip().lower()
-        if kind not in {"purchase", "sale", "expense"}:
+        if kind not in {"purchase", "income", "sale", "expense"}:
             return None
         timestamp = _normalized_utc_timestamp(str(raw.get("timestamp") or "").strip())
         amount = decimal_value(raw.get("amount_btc"))
@@ -800,31 +800,91 @@ class BitcoinLedgerStore:
         return any(item.get("id") == depot_id for item in self._data.get("depots", []))
     async def async_add_purchase(
         self, *, timestamp: datetime, amount_btc: Any, currency: str, price: Any,
-        fee: Any = 0, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
+        fee: Any = 0, fee_btc: Any = 0, fee_btc_affects_stack: bool = True, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
     ) -> dict[str, Any]:
         return await self._async_add_transaction(
             kind="purchase", timestamp=timestamp, amount_btc=amount_btc,
-            currency=currency, price=price, fee=fee, note=note, depot_id=depot_id,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc,
+            fee_btc_affects_stack=fee_btc_affects_stack, note=note, depot_id=depot_id,
+        )
+
+    async def async_add_income(
+        self, *, timestamp: datetime, amount_btc: Any, currency: str, price: Any,
+        fee: Any = 0, fee_btc: Any = 0, fee_btc_affects_stack: bool = True, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
+    ) -> dict[str, Any]:
+        return await self._async_add_transaction(
+            kind="income", timestamp=timestamp, amount_btc=amount_btc,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc,
+            fee_btc_affects_stack=fee_btc_affects_stack, note=note, depot_id=depot_id,
         )
 
     async def async_add_sale(
         self, *, timestamp: datetime, amount_btc: Any, currency: str, price: Any,
-        fee: Any = 0, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
+        fee: Any = 0, fee_btc: Any = 0, fee_btc_affects_stack: bool = True, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
     ) -> dict[str, Any]:
         return await self._async_add_transaction(
             kind="sale", timestamp=timestamp, amount_btc=amount_btc,
-            currency=currency, price=price, fee=fee, note=note, depot_id=depot_id,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc,
+            fee_btc_affects_stack=fee_btc_affects_stack, note=note, depot_id=depot_id,
         )
+
+    async def async_add_expense(
+        self, *, timestamp: datetime, amount_btc: Any, currency: str, price: Any,
+        fee: Any = 0, fee_btc: Any = 0, fee_btc_affects_stack: bool = True, note: str = "", depot_id: str = DEFAULT_DEPOT_ID
+    ) -> dict[str, Any]:
+        return await self._async_add_transaction(
+            kind="expense", timestamp=timestamp, amount_btc=amount_btc,
+            currency=currency, price=price, fee=fee, fee_btc=fee_btc,
+            fee_btc_affects_stack=fee_btc_affects_stack, note=note, depot_id=depot_id,
+        )
+
+    async def async_add_network_fee(
+        self, *, timestamp: datetime, amount_btc: Any, currency: str, price: Any,
+        network: str = "onchain", note: str = "", depot_id: str = DEFAULT_DEPOT_ID
+    ) -> dict[str, Any]:
+        """Add a pure BTC network fee with zero fiat proceeds.
+
+        The BTC amount is removed from the tracked stack and FIFO lots. ``price``
+        is only the transaction-date reference price used to report the fee's
+        fiat equivalent; it is not treated as sale proceeds.
+        """
+        if not self.has_depot(depot_id):
+            raise ValueError("Unknown depot")
+        amount = decimal_value(amount_btc)
+        reference_price = decimal_value(price)
+        network_name = str(network or "onchain").strip().lower()
+        if amount <= 0 or reference_price <= 0:
+            raise ValueError("Amount and reference price must be greater than zero")
+        if network_name not in {"onchain", "lightning"}:
+            raise ValueError("Network must be onchain or lightning")
+        item = {
+            "id": uuid4().hex,
+            "type": "network_fee",
+            "timestamp": _validated_ledger_timestamp(timestamp),
+            "depot_id": depot_id,
+            "amount_btc": btc_string(amount),
+            "currency": str(currency or "").strip().upper(),
+            "price": money_string(reference_price),
+            "network": network_name,
+            "note": str(note).strip()[:MAX_NOTE_LENGTH],
+        }
+        if not item["currency"]:
+            raise ValueError("Currency is required")
+        await self._async_append(item)
+        return deepcopy(item)
 
     async def _async_add_transaction(
         self, *, kind: str, timestamp: datetime, amount_btc: Any, currency: str,
-        price: Any, fee: Any, note: str, depot_id: str
+        price: Any, fee: Any, fee_btc: Any, fee_btc_affects_stack: bool, note: str, depot_id: str
     ) -> dict[str, Any]:
         if not self.has_depot(depot_id):
             raise ValueError("Unknown depot")
         amount = decimal_value(amount_btc)
+        btc_fee = decimal_value(fee_btc)
         if amount <= 0 or decimal_value(price) <= 0:
             raise ValueError("Amount and price must be greater than zero")
+        if decimal_value(fee) < 0 or btc_fee < 0:
+            raise ValueError("Fees must not be negative")
         clean_note = str(note).strip()[:MAX_NOTE_LENGTH]
         item = {
             "id": uuid4().hex,
@@ -837,6 +897,10 @@ class BitcoinLedgerStore:
             "fee": money_string(decimal_value(fee)),
             "note": clean_note,
         }
+        if btc_fee > 0:
+            item["fee_btc"] = btc_string(btc_fee)
+            if fee_btc_affects_stack:
+                item["fee_btc_affects_stack"] = True
         await self._async_append(item)
         return deepcopy(item)
 
@@ -923,7 +987,7 @@ class BitcoinLedgerStore:
                 if not isinstance(raw, dict):
                     raise ValueError(f"Import row {index} is invalid")
                 kind = str(raw.get("type") or "").strip().lower()
-                if kind not in {"purchase", "sale", "expense"}:
+                if kind not in {"purchase", "income", "sale", "expense"}:
                     raise ValueError(f"Import row {index}: unknown transaction type")
                 depot_id = str(raw.get("depot_id") or DEFAULT_DEPOT_ID)
                 if depot_id not in depots:
@@ -1181,9 +1245,18 @@ class BitcoinLedgerStore:
                 updated["included_fee"] = money_string(original_included_fee)
                 if bool(entries[index].get("included_fee_estimated")):
                     updated["included_fee_estimated"] = True
-            original_fee_btc = decimal_value(entries[index].get("fee_btc"))
-            if original_fee_btc > 0:
-                updated["fee_btc"] = btc_string(original_fee_btc)
+            if "fee_btc" in updated:
+                replacement_fee_btc = decimal_value(updated.get("fee_btc"))
+                if replacement_fee_btc < 0:
+                    raise ValueError("BTC fee must not be negative")
+                if replacement_fee_btc > 0:
+                    updated["fee_btc"] = btc_string(replacement_fee_btc)
+                else:
+                    updated.pop("fee_btc", None)
+            else:
+                original_fee_btc = decimal_value(entries[index].get("fee_btc"))
+                if original_fee_btc > 0:
+                    updated["fee_btc"] = btc_string(original_fee_btc)
             updated["note"] = str(updated.get("note") or "").strip()[:MAX_NOTE_LENGTH]
             if updated.get("timestamp"):
                 updated["timestamp"] = _validated_ledger_timestamp(updated["timestamp"])

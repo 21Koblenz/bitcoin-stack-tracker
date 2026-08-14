@@ -44,7 +44,7 @@ def test_goal_sensor_is_capped_and_exposes_reached_attributes():
 
 def test_backup_accepts_expenses_and_does_not_match_users_by_display_name():
     init = INIT_PATH.read_text(encoding="utf-8")
-    assert '"purchase", "sale", "stack", "expense"' in init
+    assert '"purchase", "income", "sale", "stack", "expense", "network_fee"' in init
     assert "current_by_name" not in init
     assert "backup_name" not in init
 
@@ -63,10 +63,10 @@ def test_current_version_and_native_assets_match():
     manifest = (COMP / "manifest.json").read_text(encoding="utf-8")
     index = INDEX_PATH.read_text(encoding="utf-8")
     panel = (COMP / "panel.py").read_text(encoding="utf-8")
-    assert '"version": "0.21.0.7"' in manifest
-    assert "app-v021007-050b734c.js" in index
+    assert '"version": "0.21.0.9"' in manifest
+    assert "app-v021009-1ef3c90f.js" in index
     assert "style-v021006-733b783d.css" in index
-    assert "panel-v021006-733b783d.js" in panel
+    assert "panel-v021009-ae7b9cb3.js" in panel
 
 
 def test_secret_and_portfolio_data_path_excludes_tor_addon():
@@ -127,5 +127,5 @@ def test_public_networking_is_fail_closed_in_core_and_tor_gateway():
 
 def test_release_does_not_ship_stale_versioned_frontend_bundles():
     static = COMP / "frontend/static"
-    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021007-050b734c.js"]
+    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021009-1ef3c90f.js"]
     assert [p.name for p in static.glob("style-v*.css")] == ["style-v021006-733b783d.css"]

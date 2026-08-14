@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.21.0.9 — Revolut X, manuelle Buchungen & Netzwerkgebühren
+
+### Revolut X CSV
+- Neuer eigener Parser für `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees`, `Date`.
+- `BTC`/`XBT` wird übernommen; andere Assets werden übersprungen.
+- `Buy` wird Kauf, `Sell` wird Verkauf; `Quantity` ist BTC und `Fees` eine separate Fiatgebühr.
+- `Value` bleibt der Brutto-Handelswert vor Gebühren: Kauf-Gesamtbetrag = `Value + Fees`, Verkaufs-Nettoerlös = `Value - Fees`.
+- Unterstützt u. a. `21 Jan 2026, 21:21:21` sowie Monat-zuerst mit AM/PM; fehlt `Price`, wird er aus `Value / Quantity` rekonstruiert.
+
+### Manuelle Buchungen & FIFO
+- Neue Buchungsart **Einnahme**: bewerteter BTC-Zugang mit FIFO-Einstand wie bei einem Kauf, aber separat ausgewiesen.
+- **Ausgabe** ist nun auch manuell auswählbar und realisiert Gewinn/Verlust über dieselbe depotweise FIFO-Logik wie ein Verkauf, bleibt aber semantisch getrennt.
+- Die Buchungsart kann beim Bearbeiten geändert werden. Danach wird die vollständige FIFO-Kette atomar neu validiert; ein neu erzeugter/größerer Oversell wird weiterhin verhindert.
+- Übersicht ergänzt um getrennte Summen für Verkäufe, Ausgaben, Einnahmen und Transaktionsgebühren sowie den gesamten realisierten Gewinn/Verlust.
+- **„Fiat in Sicherheit gebracht“** wurde in **„Kaufkraft in Sicherheit gebracht“** umbenannt; Einnahmen zählen dort bewusst nicht als Fiat-Kauf.
+
+### On-Chain- und Lightning-Transaktionsgebühren
+- Neue eigenständige Buchungsart **Transaktionsgebühr** mit Netzwerk `On-Chain` oder `Lightning` und Betrag in BTC/Sats.
+- Die Gebühr mindert den tatsächlichen Stack und verbraucht die entsprechenden FIFO-Lots, ohne einen fiktiven Verkaufserlös zu erzeugen.
+- Der historische BTC-Kurs am Buchungszeitpunkt dient zur Anzeige des Fiat-Gegenwerts der Gebühr.
+- Bestehende importierte `fee_btc`-Werte reduzieren den Stack nur zusätzlich, wenn sie ausdrücklich als stack-wirksam markiert sind; dadurch werden Legacy-/Nettoimporte nicht doppelt belastet.
+- Gebührenanalyse: Gesamte Gebühren enthalten explizite Fiatgebühren plus Fiat-Gegenwerte erfasster BTC-/Sats-Gebühren; reine Netzwerkgebühren verzerren keine Handelsvolumenquote.
+
+### Historische Plausibilitätsprüfung
+- Manuelle Käufe, Einnahmen, Verkäufe und Ausgaben werden nicht blockierend mit dem historischen BTC-Kurs des Buchungszeitpunkts verglichen.
+- Ab **10 %** Abweichung erscheint eine Warnung mit eingegebenem Kurs, Referenzkurs und prozentualer Abweichung.
+- Für alte Buchungen wird niemals der heutige Live-Kurs als Ersatz benutzt. Ist kein historischer Referenzkurs vorhanden, wird die Prüfung nur übersprungen.
+
+### Performance & Zeiträume
+- Neue Reihenfolge: **1 Tag · seit Wochenbeginn · 1 Woche · seit Monatsbeginn · 30 Tage · 90 Tage · YTD · 1 Jahr · 3 Jahre · 5 Jahre · 10 Jahre · seit erstem Kauf · Max**.
+- `seit Wochenbeginn` startet Montag 00:00; `1 Woche` ist rollierend sieben Tage; `seit Monatsbeginn` startet am Monatsersten 00:00.
+- XIRR bleibt die geldgewichtete persönliche Rendite des **gewählten Zeitraums**, auf ein Jahr hochgerechnet.
+- TWR bleibt cashflow-neutral: zusätzliche Käufe/Einnahmen erhöhen die Rendite nicht künstlich; Transaktionsgebühren bleiben echte Performancekosten.
+- CAGR wird klarer als durchschnittliche annualisierte Entwicklung des Bitcoin-Marktpreises beschrieben und von persönlicher XIRR/TWR abgegrenzt.
+
+### Kompatibilität & Tests
+- Home-Assistant-Integration: **v0.21.0.9**.
+- Tor Gateway: weiterhin **v0.21.0.3**.
+- Neue gezielte Regressionstests für Revolut X, historische Referenzkurse, Einnahmen, Ausgaben/FIFO und Netzwerkgebühren.
+- Finale lokale Testsuite: **373 Tests + 8 Subtests bestanden**; zusätzlich JavaScript-Syntax, Python-Compile, JSON/YAML und Versionskonsistenz geprüft.
+
 ## v0.21.0.8 — Peach Bitcoin CSV Import
 
 ### Peach Bitcoin

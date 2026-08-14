@@ -33,7 +33,7 @@ def test_csv_export_includes_fiat_total_control_column() -> None:
 
 def test_frontend_has_three_way_transaction_calculator_and_csv_controls() -> None:
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    js = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
+    js = (FRONTEND / "static" / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
     assert 'name="fiat_total"' in html
     assert 'data-i18n="fiatTotal"' in html
     assert 'data-field="fiat_total"' in js
@@ -42,12 +42,12 @@ def test_frontend_has_three_way_transaction_calculator_and_csv_controls() -> Non
     assert "function transactionPriceFromTotal" in js
     assert "function transactionAmountFromTotal" in js
     assert "function transactionControlCheck" in js
-    assert 'if (type === "purchase") return gross + charge;' in js
+    assert 'if (type === "purchase" || type === "income") return gross + charge;' in js
     assert '(type === "sale" || type === "expense") ? total + charge : total' in js
     assert 'toast(t("fiatControlBlocked"))' in js
 
 
 def test_satoshi_input_formatting_never_strips_integer_trailing_zeros() -> None:
-    js = (FRONTEND / "static" / "app-v021007-050b734c.js").read_text(encoding="utf-8")
+    js = (FRONTEND / "static" / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
     assert r'return digits <= 0 ? fixed : fixed.replace(/\.?0+$/, "");' in js
     assert 'Math.round(btc * SATS_PER_BTC)' in js

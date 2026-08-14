@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021007-050b734c.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 FIFO = (COMP / "fifo.py").read_text(encoding="utf-8")
@@ -10,7 +10,7 @@ HISTORY = (COMP / "history.py").read_text(encoding="utf-8")
 
 
 def test_fifo_matches_include_expenses_as_disposals_without_retyping_ledger_entry():
-    assert '"disposition_type": "expense"' in FIFO
+    assert '"disposition_type": "fee" if is_transaction_fee else "expense"' in FIFO
     assert '"disposition_type": "sale"' in FIFO
     assert 'if kind == "expense":' in FIFO
     assert 'expenses[str(item.get("id"))] = expense_summary' in FIFO

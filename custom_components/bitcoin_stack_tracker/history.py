@@ -965,7 +965,7 @@ def _daily_fifo_snapshots(
         numeric = _timestamp_value(row.get("timestamp"))
         return (
             numeric if numeric is not None else float("inf"),
-            1 if row.get("type") in {"sale", "expense"} else 0,
+            1 if row.get("type") in {"sale", "expense", "network_fee"} else 0,
             str(row.get("id", "")),
         )
 
@@ -993,6 +993,7 @@ def _daily_fifo_snapshots(
     realized_long_by_currency: dict[str, Any] = {}
     realized_short_by_currency: dict[str, Any] = {}
     purchase_fees_by_currency: dict[str, Any] = {}
+    income_fees_by_currency: dict[str, Any] = {}
     sale_fees_by_currency: dict[str, Any] = {}
 
     def add(mapping: dict[str, Any], key: str, value: Any) -> None:
@@ -1025,6 +1026,7 @@ def _daily_fifo_snapshots(
         sale_currency: str | None = None,
         sale_price: Any = None,
         sale_fee: Any = None,
+        zero_proceeds: bool = False,
     ) -> None:
         nonlocal total_btc, long_term_btc, short_term_btc
         lots = lots_by_depot.setdefault(depot_id, [])
@@ -1061,7 +1063,7 @@ def _daily_fifo_snapshots(
                 add(invested_by_currency, lot_currency, -(used * unit_basis))
                 if is_sale and lot_currency == sale_currency:
                     fee_share = sale_fee_value * used / amount if amount > 0 else zero
-                    proceeds = used * sale_price_value - fee_share
+                    proceeds = zero if zero_proceeds else used * sale_price_value - fee_share
                     gain = proceeds - used * unit_basis
                     add(realized_by_currency, sale_currency, gain)
                     if lot.get("holding_status") == "long_term":
@@ -1076,6 +1078,22 @@ def _daily_fifo_snapshots(
         # Oversold BTC is deliberately not subtracted from the running stack;
         # fifo_result() likewise reports it separately while open-lot total stays
         # at zero. Imports reject oversold ledgers before they reach this cache.
+
+    def consume_transaction_fee(item: dict[str, Any], depot_id: str, timestamp_value: float) -> None:
+        """Consume a BTC/sats network fee as an extra FIFO disposition."""
+        fee_btc = max(decimal_value(item.get("fee_btc")), zero)
+        if fee_btc <= 0 or not bool(item.get("fee_btc_affects_stack")):
+            return
+        currency = str(item.get("currency") or "").upper()
+        price = decimal_value(item.get("price"))
+        if currency and price > 0:
+            consume_lots(
+                depot_id=depot_id, amount=fee_btc, timestamp_value=timestamp_value,
+                sale_currency=currency, sale_price=price, sale_fee=zero,
+                zero_proceeds=True,
+            )
+        else:
+            consume_lots(depot_id=depot_id, amount=fee_btc, timestamp_value=timestamp_value)
 
     snapshots: dict[str, dict[str, Any]] = {}
     position = 0
@@ -1102,22 +1120,23 @@ def _daily_fifo_snapshots(
                 continue
             depot_id = str(item.get("depot_id") or "main")
 
-            if kind in {"purchase", "stack"}:
+            if kind in {"purchase", "income", "stack"}:
+                priced_acquisition = kind in {"purchase", "income"}
                 currency = (
                     str(item.get("currency") or "").upper()
-                    if kind == "purchase" and item.get("currency")
+                    if priced_acquisition and item.get("currency")
                     else ""
                 )
-                price = decimal_value(item.get("price")) if kind == "purchase" else zero
-                fee = decimal_value(item.get("fee")) if kind == "purchase" else zero
-                total_basis = amount * price + fee if kind == "purchase" else None
+                price = decimal_value(item.get("price")) if priced_acquisition else zero
+                fee = decimal_value(item.get("fee")) if priced_acquisition else zero
+                total_basis = amount * price + fee if priced_acquisition else None
                 unit_basis = total_basis / amount if total_basis is not None and amount > 0 else None
                 lot = {
                     "remaining_btc": amount,
                     "depot_id": depot_id,
                     "currency": currency or None,
                     "unit_basis": unit_basis,
-                    "known_cost": kind == "purchase",
+                    "known_cost": priced_acquisition,
                     "holding_status": "short_term",
                 }
                 lots_by_depot.setdefault(depot_id, []).append(lot)
@@ -1130,7 +1149,24 @@ def _daily_fifo_snapshots(
                 if currency:
                     add(known_btc_by_currency, currency, amount)
                     add(invested_by_currency, currency, total_basis)
-                    add(purchase_fees_by_currency, currency, fee)
+                    if kind == "income":
+                        add(income_fees_by_currency, currency, fee)
+                    else:
+                        add(purchase_fees_by_currency, currency, fee)
+                consume_transaction_fee(item, depot_id, numeric)
+                continue
+
+            if kind == "network_fee":
+                fee_currency = str(item.get("currency") or "").upper()
+                fee_price = decimal_value(item.get("price"))
+                if fee_currency and fee_price > 0:
+                    consume_lots(
+                        depot_id=depot_id, amount=amount, timestamp_value=numeric,
+                        sale_currency=fee_currency, sale_price=fee_price, sale_fee=zero,
+                        zero_proceeds=True,
+                    )
+                else:
+                    consume_lots(depot_id=depot_id, amount=amount, timestamp_value=numeric)
                 continue
 
             if kind == "expense":
@@ -1157,6 +1193,7 @@ def _daily_fifo_snapshots(
                         amount=amount,
                         timestamp_value=numeric,
                     )
+                consume_transaction_fee(item, depot_id, numeric)
                 continue
 
             if kind == "sale":
@@ -1172,6 +1209,7 @@ def _daily_fifo_snapshots(
                     sale_price=item.get("price"),
                     sale_fee=sale_fee,
                 )
+                consume_transaction_fee(item, depot_id, numeric)
 
         mature_until(cutoff)
 
@@ -1182,6 +1220,7 @@ def _daily_fifo_snapshots(
             | set(realized_long_by_currency)
             | set(realized_short_by_currency)
             | set(purchase_fees_by_currency)
+            | set(income_fees_by_currency)
             | set(sale_fees_by_currency)
         )
         currency_summaries = {
@@ -1192,6 +1231,7 @@ def _daily_fifo_snapshots(
                 "realized_long_term_gain": realized_long_by_currency.get(currency, zero),
                 "realized_short_term_gain": realized_short_by_currency.get(currency, zero),
                 "purchase_fees": purchase_fees_by_currency.get(currency, zero),
+                "income_fees": income_fees_by_currency.get(currency, zero),
                 "sale_fees": sale_fees_by_currency.get(currency, zero),
             }
             for currency in currencies
@@ -1228,6 +1268,7 @@ def _snapshot_currency_summary(snapshot: dict[str, Any], currency: str) -> dict[
         "realized_long_term_gain": value.get("realized_long_term_gain", zero),
         "realized_short_term_gain": value.get("realized_short_term_gain", zero),
         "purchase_fees": value.get("purchase_fees", zero),
+        "income_fees": value.get("income_fees", zero),
         "sale_fees": value.get("sale_fees", zero),
     }
 

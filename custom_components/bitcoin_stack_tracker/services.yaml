@@ -46,12 +46,22 @@ add_purchase:
       selector:
         text: null
     fee:
-      name: Fee
+      name: Fiat fee
       default: 0
       selector:
         number:
           min: 0
           max: 1000000
+          step: any
+          mode: box
+    fee_btc:
+      name: Bitcoin transaction fee
+      description: Additional BTC network/transaction fee in BTC. It reduces the stack and is valued at the booking price.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 21
           step: any
           mode: box
     timestamp:
@@ -62,10 +72,82 @@ add_purchase:
       name: Note
       selector:
         text: null
+add_income:
+  name: Add Bitcoin income
+  description: Add received BTC with a known transaction-date fiat value. It creates a FIFO acquisition lot like a purchase but remains categorized as income.
+  fields: *id001
 add_sale:
   name: Add Bitcoin sale
   description: Add a BTC sale. FIFO is calculated inside the selected depot.
   fields: *id001
+add_expense:
+  name: Add Bitcoin expense
+  description: Add BTC spent on goods or services. It is a FIFO disposition and realizes gain/loss like a sale while remaining categorized as an expense.
+  fields: *id001
+add_network_fee:
+  name: Add Bitcoin network fee
+  description: Record an on-chain or Lightning fee as a pure BTC stack outflow. The transaction-date BTC price is used only for the fiat fee equivalent; no fiat sale proceeds are created.
+  fields:
+    config_entry_id:
+      name: Portfolio
+      required: true
+      selector:
+        config_entry:
+          integration: bitcoin_stack_tracker
+    depot_id:
+      name: Depot ID
+      default: main
+      selector:
+        text: null
+    amount:
+      name: Fee amount
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 2100000000000000
+          step: any
+          mode: box
+    amount_unit:
+      name: Amount unit
+      default: sats
+      selector:
+        select:
+          options:
+          - sats
+          - BTC
+    price:
+      name: Historical BTC price
+      description: BTC reference price at the booking date. The dashboard fills this automatically from local history when available.
+      required: true
+      selector:
+        number:
+          min: 1.0e-08
+          max: 1000000000
+          step: any
+          mode: box
+    currency:
+      name: Currency
+      required: true
+      example: EUR
+      selector:
+        text: null
+    network:
+      name: Network
+      default: onchain
+      selector:
+        select:
+          options:
+          - onchain
+          - lightning
+    timestamp:
+      name: Time
+      selector:
+        datetime: null
+    note:
+      name: Note
+      selector:
+        text: null
 add_stack:
   name: Add BTC without cost basis
   description: Add existing BTC without assigning a purchase price.
@@ -220,7 +302,7 @@ delete_goal:
         text: null
 delete_all_entries:
   name: Delete all ledger entries
-  description: Permanently delete every local purchase, sale, expense, and stack entry.
+  description: Permanently delete every local purchase, income, sale, expense, transaction-fee, and stack entry.
     The dashboard requires two confirmations first.
   fields:
     config_entry_id: *id002
@@ -234,6 +316,17 @@ update_entry:
       required: true
       selector:
         text: null
+    type:
+      name: Booking type
+      selector:
+        select:
+          options:
+          - purchase
+          - income
+          - sale
+          - expense
+          - network_fee
+          - stack
     amount:
       name: Amount
       required: true
@@ -263,7 +356,16 @@ update_entry:
           step: any
           mode: box
     fee:
-      name: Fee
+      name: Fiat fee
+      default: 0
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+    fee_btc:
+      name: Bitcoin transaction fee
+      description: Additional transaction fee in BTC. The dashboard can accept sats and converts them to BTC before calling this action.
       default: 0
       selector:
         number:
@@ -284,7 +386,7 @@ update_entry:
         text: null
 delete_entry:
   name: Delete ledger entry
-  description: Permanently delete one local purchase, sale, or stack entry by ID.
+  description: Permanently delete one local purchase, income, sale, expense, transaction-fee, or stack entry by ID.
   fields:
     config_entry_id: *id002
     ledger_entry_id:

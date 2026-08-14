@@ -94,8 +94,8 @@ def goal_reached_at(
 ) -> str | None:
     """Return the first ledger timestamp at which a BTC goal was reached.
 
-    Purchases and stack entries increase the running balance; sales and expenses
-    decrease it. ISO timestamps are sorted as actual UTC instants instead of plain
+    Purchases, income and stack entries increase the running balance; sales, expenses,
+    standalone network fees and explicitly stack-affecting BTC fees decrease it. ISO timestamps are sorted as actual UTC instants instead of plain
     strings, so old imports with different offsets cannot move the crossing date.
     """
     target = decimal_value(target_btc)
@@ -109,17 +109,21 @@ def goal_reached_at(
         ),
         key=lambda row: (
             _ledger_timestamp(row.get("timestamp"))[0],
-            1 if str(row.get("type", "")) in {"sale", "expense"} else 0,
+            1 if str(row.get("type", "")) in {"sale", "expense", "network_fee"} else 0,
             str(row.get("id", "")),
         ),
     )
     for row in scoped:
         amount = decimal_value(row.get("amount_btc"))
+        fee_btc = max(decimal_value(row.get("fee_btc")), Decimal("0"))
+        fee_affects_stack = bool(row.get("fee_btc_affects_stack"))
         kind = str(row.get("type") or "").lower()
-        if kind in {"purchase", "stack"}:
+        if kind in {"purchase", "income", "stack"}:
             balance += amount
-        elif kind in {"sale", "expense"}:
+        elif kind in {"sale", "expense", "network_fee"}:
             balance -= amount
+        if fee_affects_stack:
+            balance -= fee_btc
         if balance >= target:
             _parsed, timestamp = _ledger_timestamp(row.get("timestamp"))
             return timestamp or None

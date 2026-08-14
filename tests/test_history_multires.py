@@ -62,7 +62,7 @@ def test_reached_goal_ring_is_bitcoin_orange():
 
 
 def test_prior_overview_privacy_requests_are_carried_forward():
-    assert 'fiatSecured:"Fiat in Sicherheit gebracht"' in APP
+    assert 'fiatSecured:"Kaufkraft in Sicherheit gebracht"' in APP
     assert "function lifetimeFiatSecured(currency)" in APP
     assert 'if (state.discreet) {' in APP
     assert '#milestonesPanel' in APP

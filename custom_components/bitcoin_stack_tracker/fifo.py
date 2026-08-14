@@ -26,7 +26,7 @@ def _sorted_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             parsed = datetime.max.replace(tzinfo=timezone.utc)
         return (
             parsed,
-            1 if row.get("type") in {"sale", "expense"} else 0,
+            1 if row.get("type") in {"sale", "expense", "network_fee"} else 0,
             str(row.get("id", "")),
         )
 
@@ -99,7 +99,7 @@ def cumulative_average_entry_price_by_disposition(
         if amount <= 0:
             continue
 
-        if kind == "purchase":
+        if kind in {"purchase", "income"}:
             currency = str(item.get("currency") or "").upper()
             price = decimal_value(item.get("price"))
             if not currency or price <= 0:
@@ -126,6 +126,57 @@ def cumulative_average_entry_price_by_disposition(
         result[entry_id] = bucket["basis"] / bucket["btc"]
 
     return result
+
+
+def _entries_with_btc_fee_disposals(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expand pure BTC fees into internal zero-proceeds FIFO disposals.
+
+    Imported legacy rows may already contain a net ``amount_btc`` while retaining
+    ``fee_btc`` for analytics.  Therefore only rows explicitly marked
+    ``fee_btc_affects_stack`` create an additional disposal.  A standalone
+    ``network_fee`` row always represents the BTC actually paid to the network.
+
+    The synthetic rows are never persisted. Their transaction-date ``price`` is
+    retained only to report the fiat equivalent of the fee; FIFO proceeds are
+    deliberately zero so fees cannot masquerade as sales.
+    """
+    expanded: list[dict[str, Any]] = []
+    for raw in entries:
+        original = deepcopy(raw)
+        kind = str(original.get("type") or "")
+        if kind == "network_fee":
+            synthetic = deepcopy(original)
+            synthetic["type"] = "expense"
+            synthetic["fee"] = ZERO
+            synthetic["_transaction_fee"] = True
+            synthetic["_source_entry_id"] = str(original.get("id") or "")
+            synthetic["_source_type"] = "network_fee"
+            expanded.append(synthetic)
+            continue
+
+        expanded.append(original)
+        fee_btc = max(decimal_value(original.get("fee_btc")), ZERO)
+        if fee_btc <= 0 or not bool(original.get("fee_btc_affects_stack")):
+            continue
+        source_id = str(original.get("id") or "")
+        synthetic = {
+            "id": f"{source_id}::btc_fee",
+            "type": "expense",
+            "timestamp": original.get("timestamp"),
+            "depot_id": original.get("depot_id", "main"),
+            "amount_btc": fee_btc,
+            "fee": ZERO,
+            "_transaction_fee": True,
+            "_source_entry_id": source_id,
+            "_source_type": original.get("type"),
+        }
+        currency = str(original.get("currency") or "").upper()
+        price = decimal_value(original.get("price"))
+        if currency and price > 0:
+            synthetic["currency"] = currency
+            synthetic["price"] = price
+        expanded.append(synthetic)
+    return expanded
 
 
 def fifo_result(
@@ -157,7 +208,9 @@ def fifo_result(
     sales: dict[str, dict[str, Any]] = {}
     expenses: dict[str, dict[str, Any]] = {}
     purchase_fees: dict[str, Decimal] = {}
+    income_fees: dict[str, Decimal] = {}
     sale_fees: dict[str, Decimal] = {}
+    transaction_fees: dict[str, dict[str, Any]] = {}
     realized: dict[str, Decimal] = {}
     realized_long_term: dict[str, Decimal] = {}
     realized_short_term: dict[str, Decimal] = {}
@@ -166,7 +219,7 @@ def fifo_result(
 
     filtered = [
         item
-        for item in _sorted_entries(entries)
+        for item in _sorted_entries(_entries_with_btc_fee_disposals(entries))
         if depot_id is None or str(item.get("depot_id", "main")) == depot_id
     ]
 
@@ -178,15 +231,16 @@ def fifo_result(
             continue
         lots = lots_by_depot.setdefault(current_depot, [])
 
-        if kind in {"purchase", "stack"}:
+        if kind in {"purchase", "income", "stack"}:
+            priced_acquisition = kind in {"purchase", "income"}
             currency = (
                 str(item.get("currency", "")).upper()
-                if kind == "purchase" and item.get("currency")
+                if priced_acquisition and item.get("currency")
                 else None
             )
-            price = decimal_value(item.get("price")) if kind == "purchase" else ZERO
-            fee = decimal_value(item.get("fee")) if kind == "purchase" else ZERO
-            total_basis = amount * price + fee if kind == "purchase" else None
+            price = decimal_value(item.get("price")) if priced_acquisition else ZERO
+            fee = decimal_value(item.get("fee")) if priced_acquisition else ZERO
+            total_basis = amount * price + fee if priced_acquisition else None
             unit_basis = total_basis / amount if total_basis is not None and amount > 0 else None
             lots.append(
                 {
@@ -197,29 +251,35 @@ def fifo_result(
                     "remaining_btc": amount,
                     "currency": currency,
                     "unit_basis": unit_basis,
-                    "known_cost": kind == "purchase",
+                    "known_cost": priced_acquisition,
                     "source_type": kind,
                 }
             )
             if currency:
-                purchase_fees[currency] = purchase_fees.get(currency, ZERO) + fee
+                fee_bucket = income_fees if kind == "income" else purchase_fees
+                fee_bucket[currency] = fee_bucket.get(currency, ZERO) + fee
             continue
 
         if kind == "expense":
+            is_transaction_fee = bool(item.get("_transaction_fee"))
+            source_entry_id = str(item.get("_source_entry_id") or item.get("id") or "")
             expense_timestamp = item.get("timestamp")
             expense_currency = str(item.get("currency", "")).upper()
             expense_price = decimal_value(item.get("price"))
             expense_fee = decimal_value(item.get("fee"))
-            priced_expense = bool(expense_currency and expense_price > 0)
+            fee_reference_priced = bool(expense_currency and expense_price > 0)
+            priced_expense = bool(fee_reference_priced and not is_transaction_fee)
             remaining_expense = amount
             expense_summary: dict[str, Any] = {
-                "entry_id": item.get("id"),
+                "entry_id": source_entry_id if is_transaction_fee else item.get("id"),
                 "timestamp": expense_timestamp,
+                "disposition_type": "fee" if is_transaction_fee else "expense",
                 "depot_id": current_depot,
                 "amount_btc": amount,
-                "currency": expense_currency if priced_expense else "",
-                "gross_proceeds": amount * expense_price if priced_expense else None,
-                "fee": expense_fee if priced_expense else ZERO,
+                "currency": expense_currency if fee_reference_priced else "",
+                "gross_proceeds": ZERO if is_transaction_fee else amount * expense_price if priced_expense else None,
+                "fee_value_fiat": amount * expense_price if is_transaction_fee and fee_reference_priced else None,
+                "fee": ZERO if is_transaction_fee else expense_fee if priced_expense else ZERO,
                 "resolved_btc": ZERO,
                 "unresolved_btc": ZERO,
                 "oversold_btc": ZERO,
@@ -251,14 +311,16 @@ def fifo_result(
                     else ZERO
                 )
                 proceeds = (
-                    used * expense_price - fee_share
+                    ZERO
+                    if is_transaction_fee
+                    else used * expense_price - fee_share
                     if priced_expense
                     else None
                 )
                 lot_currency = lot.get("currency")
                 known_cost = bool(lot.get("known_cost"))
                 same_currency = bool(
-                    priced_expense and lot_currency and lot_currency == expense_currency
+                    lot_currency and expense_currency and lot_currency == expense_currency
                 )
                 cost_basis = (
                     used * decimal_value(lot.get("unit_basis"))
@@ -273,11 +335,11 @@ def fifo_result(
                 match_status = (
                     "resolved"
                     if gain is not None
-                    else "unknown_proceeds"
-                    if not priced_expense
                     else "unknown_cost_basis"
                     if not known_cost
                     else "currency_conversion_required"
+                    if is_transaction_fee or fee_reference_priced
+                    else "unknown_proceeds"
                 )
 
                 holding = _holding_details(lot.get("timestamp"), expense_timestamp, threshold)
@@ -319,16 +381,16 @@ def fifo_result(
                         # Keep sale_id for compatibility with older frontend/index
                         # code, while disposition_type makes the actual ledger kind
                         # explicit. Card payments remain expenses in the ledger.
-                        "sale_id": item.get("id"),
-                        "disposition_id": item.get("id"),
-                        "disposition_type": "expense",
+                        "sale_id": source_entry_id,
+                        "disposition_id": source_entry_id,
+                        "disposition_type": "fee" if is_transaction_fee else "expense",
                         "sale_timestamp": expense_timestamp,
                         "purchase_id": lot.get("entry_id"),
                         "purchase_timestamp": lot.get("timestamp"),
                         "depot_id": current_depot,
                         "amount_btc": used,
                         "purchase_currency": lot_currency,
-                        "sale_currency": expense_currency if priced_expense else "",
+                        "sale_currency": expense_currency if fee_reference_priced else "",
                         "cost_basis": cost_basis,
                         "net_proceeds": proceeds,
                         "realized_gain": gain,
@@ -348,9 +410,9 @@ def fifo_result(
                 unresolved_btc += remaining_expense
                 matches.append(
                     {
-                        "sale_id": item.get("id"),
-                        "disposition_id": item.get("id"),
-                        "disposition_type": "expense",
+                        "sale_id": source_entry_id,
+                        "disposition_id": source_entry_id,
+                        "disposition_type": "fee" if is_transaction_fee else "expense",
                         "sale_timestamp": expense_timestamp,
                         "purchase_id": None,
                         "purchase_timestamp": None,
@@ -360,7 +422,9 @@ def fifo_result(
                         "sale_currency": expense_currency if priced_expense else "",
                         "cost_basis": None,
                         "net_proceeds": (
-                            remaining_expense * expense_price
+                            ZERO
+                            if is_transaction_fee
+                            else remaining_expense * expense_price
                             - (expense_fee * remaining_expense / amount if amount > 0 else ZERO)
                             if priced_expense
                             else None
@@ -395,7 +459,10 @@ def fifo_result(
                 expense_summary["holding_status"] = "short_term"
             else:
                 expense_summary["holding_status"] = "unknown"
-            expenses[str(item.get("id"))] = expense_summary
+            if is_transaction_fee:
+                transaction_fees[source_entry_id] = expense_summary
+            else:
+                expenses[str(item.get("id"))] = expense_summary
             continue
 
         if kind != "sale":
@@ -613,6 +680,7 @@ def fifo_result(
         "matches": matches,
         "sales": sales,
         "expenses": expenses,
+        "transaction_fees": transaction_fees,
         "total_btc": total_btc,
         "known_btc": known_btc,
         "unknown_btc": unknown_btc,
@@ -625,6 +693,7 @@ def fifo_result(
         "realized_long_term": realized_long_term,
         "realized_short_term": realized_short_term,
         "purchase_fees": purchase_fees,
+        "income_fees": income_fees,
         "sale_fees": sale_fees,
         "unresolved_btc": unresolved_btc,
         "oversold_btc": oversold_btc,
@@ -680,6 +749,7 @@ def currency_summary_from_result(
         "realized_long_term_gain": result["realized_long_term"].get(currency, ZERO),
         "realized_short_term_gain": result["realized_short_term"].get(currency, ZERO),
         "purchase_fees": result["purchase_fees"].get(currency, ZERO),
+        "income_fees": result.get("income_fees", {}).get(currency, ZERO),
         "sale_fees": result["sale_fees"].get(currency, ZERO),
         "unresolved_btc": result["unresolved_btc"],
         "long_term_btc": result["long_term_btc"],

@@ -10,7 +10,7 @@ HISTORY = (COMP / "history.py").read_text(encoding="utf-8")
 def test_fixed_chart_resolution_by_selected_range():
     fn = APP.split("function chartIntervalMinutesForRange()", 1)[1].split("function resampleSeriesUniform", 1)[0]
     assert 'state.historyRange === "1") return 5' in fn
-    assert 'state.historyRange === "30") return 60' in fn
+    assert 'state.historyRange === "30" || state.historyRange === "month_start") return 60' in fn
     assert 'state.historyRange === "90") return 240' in fn
     assert 'state.historyRange === "ytd" || state.historyRange === "365") return 720' in fn
     assert "return 1440" in fn

@@ -29,6 +29,7 @@ Vor der Bestätigung wird nichts in das Kaufbuch geschrieben. Der bestätigte St
 - Binance Trade History
 - Binance Transaction History / Transaction Record
 - Bitpanda Transaction Report
+- Revolut X Crypto Account Statement (`Symbol, Type, Quantity, Price, Value, Fees, Date`)
 - Peach Bitcoin Trade History (`Date, Trade ID, Type, Amount, Price, Bitcoin Price, Currency, Premium`)
 - CoinTracking Universal CSV
 - Coinfinity „My Activities“ mit On-Chain- und Lightning-Auszahlungen
@@ -38,6 +39,28 @@ Beim aktuellen Coinfinity-Format ist `Amount Crypto` ein BTC-Dezimalwert. Die Sa
 Für Relai, Bittr/getbittr und Wavespace gibt es eine flexible Broker-Erkennung anhand des Dateinamens und üblicher Spaltenbezeichnungen. Pocket Bitcoin wird in zwei eigenen Varianten unterstützt: dem CoinTracking-kompatiblen Export (`Type, Buy Amount, Buy Cur., ...`) und dem nativen Pocket-Dashboard-Export (`type,date,reference,price.currency,...`). Beim CoinTracking-kompatiblen Pocket-Export ist eine Fiat-Gebühr bereits im `Sell Amount` enthalten: für den Ausführungskurs wird deshalb `Sell Amount - Fee Amount` verwendet, während die Gebühr separat erhalten bleibt. So entspricht der gesamte Einstand weiterhin exakt dem tatsächlich eingezahlten Fiatbetrag. Bei einer CoinTracking-`Withdrawal` ist der Wallet-Eingang `Sell Amount - Fee Amount`, wenn die Gebühr in BTC/Sats angegeben ist. Mehrere Käufe dürfen in einer einzigen Pocket-Auszahlung gebündelt werden: Der Parser sortiert Trade und Withdrawal chronologisch, sammelt alle noch nicht ausgezahlten Käufe seit der vorherigen Withdrawal und verteilt den Netto-Walletbetrag proportional nach BTC-Menge auf diesen Block. Dadurch funktionieren auch Auszahlungen nach Mitternacht (z. B. 01:55 oder 02:24 Uhr), ohne einen späteren Kauf nach der Auszahlung fälschlich einzubeziehen. Beim nativen Pocket-Dashboard-CSV ist dagegen `value.amount` bereits der Netto-Walletbetrag und wird nicht noch einmal um `fee.amount` reduziert. Werden dort mehrere Käufe in einer Withdrawal zusammen ausgezahlt, sammelt der Parser ebenfalls alle Käufe seit der vorherigen Withdrawal, auch über Mitternacht hinweg, und verteilt `value.amount` proportional nach Brutto-BTC auf diese Käufe. Der jeweilige Anteil der gemeinsamen Netzwerkgebühr ergibt sich aus der Differenz zwischen Brutto- und Netto-BTC und wird mit dem Kaufkurs des jeweiligen Trades in Fiat berücksichtigt. Bei Pocket erzeugt nur der eigentliche Trade/Kauf eine Buchung; Deposit und Withdrawal werden als Transfers behandelt. Andere Anbieter werden über den generischen Bitcoin-CSV-Parser erkannt, sofern die Datei verständliche Felder für Art, Datum, BTC-Menge sowie Fiatbetrag oder BTC-Kurs enthält.
 
 Da Anbieter ihre Exportformate ändern können, ist die Vorschau immer verbindlich. Eine Zeile mit fehlenden oder widersprüchlichen Werten wird nicht automatisch ausgewählt und muss vor dem Import korrigiert werden.
+
+## Revolut X
+
+Revolut X wird direkt an der kompakten Spaltenstruktur `Symbol, Type, Quantity, Price, Value, Fees, Date` erkannt. Der Dateiname ist dafür nicht erforderlich.
+
+- `Symbol = BTC` beziehungsweise `XBT` → Bitcoin; andere Assets werden übersprungen.
+- `Type = Buy` → Kauf.
+- `Type = Sell` → Verkauf.
+- `Quantity` ist ein **BTC-Dezimalbetrag**, kein Satoshi-Betrag.
+- `Price` ist der BTC-Kurs in EUR pro BTC.
+- `Value` ist der Fiat-Handelswert **vor** der separaten Gebühr.
+- `Fees` ist die separate Fiatgebühr.
+- `Date` unterstützt unter anderem `21 Jan 2026, 21:21:21` sowie Monat-zuerst mit AM/PM wie `Jan 3, 2025, 6:18:28 PM`.
+
+Für die Rechenkontrolle gilt:
+
+```text
+Kauf:    Fiat-Gesamtbetrag = Value + Fees
+Verkauf: Nettoerlös        = Value - Fees
+```
+
+Die Gebühr wird dadurch genau einmal berücksichtigt. Fehlt `Price`, aber `Quantity` und `Value` sind vorhanden, wird `Price = Value / Quantity` rekonstruiert. Das Revolut-X-Format enthält keine stabile Trade-/Transaction-ID; deshalb verwendet die Dublettenerkennung bei diesem Import den bestehenden Wertevergleich aus Art, Zeitpunkt, BTC-Menge, Währung, Kurs und Gebühr.
 
 ## Peach Bitcoin
 

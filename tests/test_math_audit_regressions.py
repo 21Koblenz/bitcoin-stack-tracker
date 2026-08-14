@@ -87,4 +87,4 @@ def test_undefined_average_and_return_sensors_are_not_reported_as_zero():
 
 def test_performance_events_use_fifo_compatible_same_timestamp_order():
     assert 'sourceSequence' in APP
-    assert 'Number(["sale","expense"].includes(a.kind))-Number(["sale","expense"].includes(b.kind))' in APP
+    assert 'Number(["sale","expense","network_fee"].includes(a.kind))-Number(["sale","expense","network_fee"].includes(b.kind))' in APP

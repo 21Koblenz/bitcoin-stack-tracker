@@ -4,7 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 STORAGE = (COMP / "storage.py").read_text(encoding="utf-8")
-APP = (COMP / "frontend/static/app-v021007-050b734c.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
 HTML = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 SERVICES = (COMP / "services.yaml").read_text(encoding="utf-8")
 
@@ -38,9 +38,9 @@ def test_consumed_purchase_is_not_falsely_shown_as_unknown():
     assert 'holdingReasonInsufficient' in APP
 
 
-def test_edit_revalidates_fifo_and_preserves_entry_type():
+def test_edit_revalidates_fifo_and_allows_entry_type_correction():
     block = INIT.split("async def update_entry(call", 1)[1].split("async def delete_entry(call", 1)[0]
-    assert 'kind = str(existing.get("type")' in block
+    assert 'kind = str(call.data.get("type", existing.get("type"))' in block
     assert 'await storage.async_update_entry(item_id, replacement)' in block
     # FIFO validation is centralized in storage so the exact validated cache is
     # reused for persistence instead of performing the expensive calculation twice.
@@ -48,4 +48,4 @@ def test_edit_revalidates_fifo_and_preserves_entry_type():
     assert 'fifo_cache = await self._async_validate_fifo_change(before, entries)' in storage_block
     assert 'await self._async_save(refresh_fifo_cache=False)' in storage_block
     frontend = APP.split("function beginEditEntry(entryId)", 1)[1].split("function openDeleteEntryDialog", 1)[0]
-    assert 'type.disabled=true' in frontend
+    assert 'type.disabled=false' in frontend

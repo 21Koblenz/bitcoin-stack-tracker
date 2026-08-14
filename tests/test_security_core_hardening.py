@@ -14,7 +14,7 @@ INIT_PATH = COMP / "__init__.py"
 PANEL_PATH = COMP / "panel.py"
 APP_PATH = COMP / "frontend/static/app.js"
 INDEX_PATH = COMP / "frontend/index.html"
-PANEL_JS_PATH = COMP / "frontend/panel-v021006-733b783d.js"
+PANEL_JS_PATH = COMP / "frontend/panel-v021009-ae7b9cb3.js"
 ADDON = ROOT / "bitcoin_stack_tracker_dashboard"
 RUN_PATH = ADDON / "run.sh"
 
@@ -348,7 +348,7 @@ def test_cyclonedx_sboms_are_v17_and_current_release():
     for bom in (release, source):
         assert bom["bomFormat"] == "CycloneDX"
         assert bom["specVersion"] == "1.7"
-    assert release["metadata"]["component"]["version"] == "0.21.0.7"
+    assert release["metadata"]["component"]["version"] == "0.21.0.9"
     assert source["metadata"]["component"]["version"] == "0.21.0.3"
     gateway = next(component for component in release["components"] if component["name"] == "bitcoin-stack-tracker-tor-gateway")
     assert gateway["version"] == "0.21.0.3"
