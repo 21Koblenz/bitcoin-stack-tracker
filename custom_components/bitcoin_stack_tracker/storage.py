@@ -383,6 +383,7 @@ class BitcoinLedgerStore:
             # Sensitive chart values are part of the ledger so password mode
             # encrypts them together with transactions, depots and goals.
             "chart_cache": {"revision": None, "data": {}},
+            "wallet_watch": {"enabled": False, "poll_interval_seconds": 60, "query_source": "auto", "electrum_kind": "fulcrum", "electrum_host": "", "electrum_port": 50001, "electrum_tls": False, "electrum_verify_ssl": True, "electrum_pinned_cert_pem": "", "allow_public_tor": False, "persistent_notification": True, "notification_detail": "discreet", "notification_services": [], "notification_targets": [], "monitors": []},
         }
 
     @property
@@ -774,6 +775,24 @@ class BitcoinLedgerStore:
     def tax_settings(self) -> dict[str, Any]:
         self.require_unlocked()
         return deepcopy(self._data.get("tax_settings", {}))
+
+    @property
+    def wallet_watch_config(self) -> dict[str, Any]:
+        """Return the full sensitive Sats Sentinel configuration from the user vault."""
+        self.require_unlocked()
+        raw = self._data.get("wallet_watch", {})
+        return deepcopy(raw if isinstance(raw, dict) else {})
+
+    async def async_set_wallet_watch_config(self, config: dict[str, Any]) -> None:
+        """Persist the full Sats Sentinel configuration inside the normal encrypted vault."""
+        async with self._lock:
+            self.require_unlocked()
+            self._data["wallet_watch"] = deepcopy(config)
+            await self._async_save(refresh_fifo_cache=False)
+
+    async def async_device_binding_secret(self, *, create: bool = True) -> bytes:
+        """Return the Core-local binding secret for domain-separated encrypted side caches."""
+        return await self._async_device_secret(create=create)
 
     @property
     def chart_cache(self) -> dict[str, Any]:

@@ -164,8 +164,10 @@
       "settings": {
         "title": "Price update settings",
         "data": {
-          "update_interval": "Price update interval"
-        }
+          "update_interval": "Own/local price sources",
+          "public_update_interval": "Public price sources through Tor"
+        },
+        "description": "Own/local price sources and public Tor-routed sources use separate cadences. Defaults: own mempool instance 300 s, additional public sources 60 s through Tor. The dashboard reads the already cached live price more frequently from Home Assistant."
       },
       "history_settings": {
         "title": "Historical daily values",
@@ -422,6 +424,9 @@
       },
       "depot_realized_short_term_profit_loss": {
         "name": "{depot} realized short-term FIFO profit/loss {currency}"
+      },
+      "buy_opportunity": {
+        "name": "Market assessment"
       }
     }
   },

@@ -561,3 +561,48 @@ bulk_import:
       description: Normalized purchase/sale/expense objects from the CSV review dialog.
       selector:
         object: null
+
+set_buy_opportunity_settings:
+  name: Set market-assessment settings
+  description: Owner-only action. Tune the public price-history-only Bitcoin market assessment. This is not a buy signal, forecast, or investment recommendation and does not expose portfolio data.
+  fields:
+    config_entry_id: *id002
+    profile:
+      name: Scoring profile
+      selector:
+        select:
+          options:
+            - balanced
+            - long_term
+            - dip
+            - cycle
+            - custom
+    currency:
+      name: Reference currency
+      selector:
+        text: null
+    weights:
+      name: Component weights
+      description: Non-negative weights for long_term, drawdown, range, deviation, momentum, and cycle. Available components are normalized automatically.
+      selector:
+        object: null
+    signal_weights:
+      name: Individual signal weights
+      description: Nested weights for each signal inside the six valuation groups. A weight of 0 disables that signal.
+      selector:
+        object: null
+    model:
+      name: Adaptive model parameters
+      description: Time windows, minimum reference data, volatility normalization, trend periods, momentum periods, and regime thresholds.
+      selector:
+        object: null
+    thresholds:
+      name: Score thresholds
+      description: Strictly ascending thresholds for very_expensive_max, expensive_max, interesting, cheap, very_cheap, and extreme.
+      selector:
+        object: null
+    reset_defaults:
+      name: Restore backtested defaults
+      description: Restore the current backtested standard model while keeping the selected reference currency.
+      selector:
+        boolean: null

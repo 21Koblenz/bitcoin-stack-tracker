@@ -6,6 +6,7 @@ import asyncio
 from datetime import timedelta
 import logging
 from math import isfinite
+from time import monotonic
 from typing import Any
 
 from aiohttp import ClientError, ClientResponseError
@@ -23,8 +24,11 @@ from .const import (
     CONF_SOURCE_TYPE,
     CONF_SOURCES,
     CONF_UPDATE_INTERVAL,
+    CONF_PUBLIC_UPDATE_INTERVAL,
+    CONF_MEMPOOL_OWN_INSTANCE,
     CONF_VERIFY_SSL,
     DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_PUBLIC_UPDATE_INTERVAL,
     DOMAIN,
     SOURCE_ENTITY,
     SOURCE_KRAKEN,
@@ -50,12 +54,21 @@ class BitcoinPriceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.history_store = history_store
         settings = {**entry.data, **entry.options}
-        interval = int(settings.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL))
+        local_interval = max(60, int(settings.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)))
+        public_interval = max(30, int(settings.get(CONF_PUBLIC_UPDATE_INTERVAL, DEFAULT_PUBLIC_UPDATE_INTERVAL)))
+        has_fast_public = any(self._is_public_source(source) for source in settings.get(CONF_SOURCES, []))
+        coordinator_interval = min(local_interval, public_interval) if has_fast_public else local_interval
+        self.local_interval_seconds = local_interval
+        self.public_interval_seconds = public_interval
+        self._source_cache: dict[int, dict[str, Any]] = {}
+        self._source_last_attempt: dict[int, float] = {}
+        self._last_persisted_updated_at: str | None = None
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(seconds=interval),
+            update_interval=timedelta(seconds=coordinator_interval),
             always_update=False,
         )
 
@@ -64,53 +77,129 @@ class BitcoinPriceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the effective config entry settings."""
         return {**self.entry.data, **self.entry.options}
 
-    async def _async_update_data(self) -> dict[str, Any]:
-        prices: dict[str, float] = {}
-        errors: list[str] = []
-        price_details: dict[str, Any] = {}
+    @staticmethod
+    def _is_public_source(source: Any) -> bool:
+        """Return True for sources that must use the fast Tor/public lane."""
+        if not isinstance(source, dict):
+            return False
+        source_type = source.get(CONF_SOURCE_TYPE)
+        if source_type == SOURCE_KRAKEN:
+            return True
+        return source_type == SOURCE_MEMPOOL and not bool(source.get(CONF_MEMPOOL_OWN_INSTANCE, False))
 
-        for source in self.settings.get(CONF_SOURCES, []):
-            source_type = source.get(CONF_SOURCE_TYPE)
-            source_currencies = (
-                [str(source.get(CONF_CURRENCY, "")).upper()]
-                if source_type == SOURCE_ENTITY
-                else [str(item).upper() for item in source.get(CONF_CURRENCIES, [])]
-            )
-            # Sources are ordered by priority. Do not contact a later fallback
-            # when every one of its currencies already has a live price.
-            if source_currencies and all(
-                currency in prices for currency in source_currencies
-            ):
+    def _source_interval_seconds(self, source: dict[str, Any]) -> int:
+        return self.public_interval_seconds if self._is_public_source(source) else self.local_interval_seconds
+
+    def _cache_is_fresh(self, source: dict[str, Any], cached: dict[str, Any], now_mono: float) -> bool:
+        last_success = float(cached.get("last_success_mono", 0.0) or 0.0)
+        if last_success <= 0:
+            return False
+        # A failed public ticker should stop masking a healthy local source after
+        # a short grace period. Local sources get a wider window because their
+        # normal cadence is intentionally slower.
+        max_age = max(90, self._source_interval_seconds(source) * 3)
+        return (now_mono - last_success) <= max_age
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        errors: list[str] = []
+        now_mono = monotonic()
+        sources = [source for source in self.settings.get(CONF_SOURCES, []) if isinstance(source, dict)]
+
+        # Refresh each source on its own cadence. Own/local sources keep the
+        # normal five-minute default, while configured public sources can run
+        # on the faster Tor-only interval (default 60 s).
+        for index, source in enumerate(sources):
+            interval = self._source_interval_seconds(source)
+            last_attempt = self._source_last_attempt.get(index, 0.0)
+            due = index not in self._source_cache or (now_mono - last_attempt) >= interval
+            if not due:
                 continue
+            self._source_last_attempt[index] = now_mono
+            source_prices: dict[str, float] = {}
+            source_details: dict[str, Any] = {}
+            source_type = source.get(CONF_SOURCE_TYPE)
             try:
                 if source_type == SOURCE_ENTITY:
-                    self._read_entity_source(source, prices)
+                    self._read_entity_source(source, source_prices)
                 elif source_type == SOURCE_MEMPOOL:
-                    await self._read_mempool_source(source, prices)
+                    await self._read_mempool_source(source, source_prices)
                 elif source_type == SOURCE_KRAKEN:
-                    await self._read_public_market_average_source(source, prices, price_details)
+                    await self._read_public_market_average_source(source, source_prices, source_details)
+                else:
+                    raise ValueError(f"Unsupported source type {source_type}")
+                if not source_prices:
+                    raise ValueError("source returned no usable BTC price")
+                refreshed_at = dt_util.utcnow().isoformat()
+                self._source_cache[index] = {
+                    "prices": dict(source_prices),
+                    "price_details": dict(source_details),
+                    "updated_at": refreshed_at,
+                    "last_success_mono": monotonic(),
+                    "source_type": source_type,
+                    "public_fast_lane": self._is_public_source(source),
+                }
             except (ClientError, asyncio.TimeoutError, ValueError) as err:
                 errors.append(f"{source_type}: {err}")
 
+        prices: dict[str, float] = {}
+        price_details: dict[str, Any] = {}
+        live_source_by_currency: dict[str, Any] = {}
+        selected_timestamps: list[str] = []
+
+        # When an additional public source is configured it is intentionally the
+        # live fast lane. It updates the dashboard between the slower own-node
+        # anchor polls. Within each lane the user's configured source order remains
+        # the priority order. If the public lane becomes stale, local/own data
+        # automatically takes over; this is price-source failover only and is
+        # completely separate from Sats Sentinel's strict own-node-only policy.
+        ordered_indices = [
+            index for index, source in enumerate(sources) if self._is_public_source(source)
+        ] + [
+            index for index, source in enumerate(sources) if not self._is_public_source(source)
+        ]
+        for index in ordered_indices:
+            source = sources[index]
+            cached = self._source_cache.get(index)
+            if not cached or not self._cache_is_fresh(source, cached, now_mono):
+                continue
+            updated_at = str(cached.get("updated_at") or "")
+            for currency, value in (cached.get("prices") or {}).items():
+                code = str(currency).upper()
+                if code in prices:
+                    continue
+                prices[code] = float(value)
+                if updated_at:
+                    selected_timestamps.append(updated_at)
+                details = (cached.get("price_details") or {}).get(code)
+                if isinstance(details, dict):
+                    price_details[code] = dict(details)
+                live_source_by_currency[code] = {
+                    "source_type": str(source.get(CONF_SOURCE_TYPE) or "unknown"),
+                    "source_index": index,
+                    "route": "tor" if self._is_public_source(source) or mempool_source_uses_tor(source) else ("ha-local" if source.get(CONF_SOURCE_TYPE) == SOURCE_ENTITY else "local-direct"),
+                    "updated_at": updated_at or None,
+                    "public_fast_lane": self._is_public_source(source),
+                    "interval_seconds": self._source_interval_seconds(source),
+                }
+
         if not prices:
-            # Replace any previous live value with an explicitly offline result.
-            # Cached daily history remains in BitcoinHistoryStore and the dashboard
-            # stays usable, but no stale value is presented as a current live price.
             return {
                 "prices": {},
                 "errors": errors or ["No live Bitcoin price is available"],
                 "updated_at": dt_util.utcnow().isoformat(),
                 "live_data_available": False,
-                "price_details": price_details,
+                "price_details": {},
+                "live_source_by_currency": {},
+                "local_interval_seconds": self.local_interval_seconds,
+                "public_interval_seconds": self.public_interval_seconds,
             }
 
-        updated_at = dt_util.utcnow().isoformat()
-        if self.history_store is not None:
+        updated_at = max(selected_timestamps) if selected_timestamps else dt_util.utcnow().isoformat()
+        if self.history_store is not None and updated_at != self._last_persisted_updated_at:
             try:
                 await self.history_store.async_add_price_samples(prices, updated_at)
+                self._last_persisted_updated_at = updated_at
             except (OSError, ValueError) as err:
-                # Live pricing must not fail merely because fine-grained local
-                # chart sampling could not be persisted.
                 _LOGGER.warning("Could not persist adaptive live-price sample: %s", err)
 
         return {
@@ -119,6 +208,9 @@ class BitcoinPriceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "updated_at": updated_at,
             "live_data_available": True,
             "price_details": price_details,
+            "live_source_by_currency": live_source_by_currency,
+            "local_interval_seconds": self.local_interval_seconds,
+            "public_interval_seconds": self.public_interval_seconds,
         }
 
     def _read_entity_source(

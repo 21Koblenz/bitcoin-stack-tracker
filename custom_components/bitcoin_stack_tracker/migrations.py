@@ -220,6 +220,26 @@ def migrate_ledger_data(data: dict[str, Any] | None) -> tuple[dict[str, Any], bo
         goal["currency"] = str(goal.get("currency") or "EUR").upper()
         normalized_goals.append(goal)
     migrated["goals"] = normalized_goals
+    if not isinstance(migrated.get("wallet_watch"), dict):
+        migrated["wallet_watch"] = {
+            "enabled": False,
+            "poll_interval_seconds": 60,
+            "allow_public_tor": False,
+            "persistent_notification": True,
+            "notification_detail": "discreet",
+            "notification_services": [],
+            "notification_targets": [],
+            "monitors": [],
+        }
+    else:
+        migrated["wallet_watch"].setdefault("notification_targets", [])
+        migrated["wallet_watch"].setdefault("query_source", "auto")
+        migrated["wallet_watch"].setdefault("electrum_kind", "fulcrum")
+        migrated["wallet_watch"].setdefault("electrum_host", "")
+        migrated["wallet_watch"].setdefault("electrum_port", 50001)
+        migrated["wallet_watch"].setdefault("electrum_tls", False)
+        migrated["wallet_watch"].setdefault("electrum_verify_ssl", True)
+        migrated["wallet_watch"].setdefault("electrum_pinned_cert_pem", "")
     if not isinstance(migrated.get("chart_cache"), dict):
         migrated["chart_cache"] = {"revision": None, "data": {}}
     else:

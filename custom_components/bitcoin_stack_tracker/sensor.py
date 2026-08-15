@@ -15,7 +15,15 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import ALL_DEPOTS, BRAND_NAME, CONF_NAME, DOMAIN, VERSION
+from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
+from .const import (
+    ALL_DEPOTS,
+    BRAND_NAME,
+    CONF_BUY_OPPORTUNITY_SETTINGS,
+    CONF_NAME,
+    DOMAIN,
+    VERSION,
+)
 from .coordinator import BitcoinPriceCoordinator
 from .fifo import currency_summary_from_result
 from .helpers import configured_currencies, effective_settings
@@ -77,6 +85,7 @@ async def async_setup_entry(
     )
 
     entities: list[SensorEntity] = [
+        BitcoinBuyOpportunitySensor(entry, coordinator, history_storage),
         BitcoinHistoryStatusSensor(
             entry, coordinator, storage, history_storage, "history_last_sync"
         ),
@@ -89,6 +98,7 @@ async def async_setup_entry(
         # standard installations. Therefore secure mode exposes price-only sensors.
         registry = er.async_get(hass)
         safe_unique_ids = {
+            f"{entry.entry_id}_buy_opportunity",
             f"{entry.entry_id}_history_last_sync",
             f"{entry.entry_id}_history_daily_points",
             *(
@@ -489,6 +499,121 @@ class BitcoinGoalSensor(BitcoinBaseSensor):
                 "goal_reached_at": reached_at,
             })
         return attributes
+
+
+class BitcoinBuyOpportunitySensor(CoordinatorEntity[BitcoinPriceCoordinator], SensorEntity):
+    """Public price-history-only Bitcoin market-assessment score, always exposed in HA."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "buy_opportunity"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:chart-line"
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: BitcoinPriceCoordinator,
+        history_storage: BitcoinHistoryStore,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entry = entry
+        self.history_storage = history_storage
+        self._attr_unique_id = f"{entry.entry_id}_buy_opportunity"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=effective_settings(entry).get(CONF_NAME, entry.title),
+            manufacturer=BRAND_NAME,
+            model="Only Bitcoin · local portfolio tracker",
+            sw_version=VERSION,
+        )
+        self._buy_opportunity_cache_key: tuple[Any, ...] | None = None
+        self._buy_opportunity_cache: dict[str, Any] | None = None
+
+    def _result(self) -> dict[str, Any]:
+        current_settings = effective_settings(self.entry)
+        currencies = configured_currencies(current_settings)
+        scoring_settings = normalize_buy_opportunity_settings(
+            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+        )
+        currency = scoring_settings["currency"]
+        prices = (self.coordinator.data or {}).get("prices", {})
+        current_price = prices.get(currency)
+        history = self.history_storage.data.get("prices", {}).get(currency, {})
+        price_source = "live"
+        # Keep the public 0-100 market score available across HA restarts even
+        # when the first live-price request is still warming up. The most recent
+        # locally cached daily market price is public data and is replaced
+        # automatically as soon as the live coordinator has a fresh value.
+        if current_price is None and isinstance(history, dict) and history:
+            for day in sorted(history, reverse=True):
+                try:
+                    candidate = float(history[day])
+                except (TypeError, ValueError):
+                    continue
+                if candidate > 0:
+                    current_price = candidate
+                    price_source = "history_fallback"
+                    break
+        today = dt_util.utcnow().date()
+        history_last_sync = self.history_storage.data.get("last_sync")
+        latest_history_day = max(history, default=None) if isinstance(history, dict) else None
+        cache_key = (
+            currency,
+            current_price,
+            price_source,
+            history_last_sync,
+            len(history) if isinstance(history, dict) else 0,
+            latest_history_day,
+            repr(scoring_settings),
+            today,
+        )
+        if cache_key == self._buy_opportunity_cache_key and self._buy_opportunity_cache is not None:
+            return self._buy_opportunity_cache
+        result = calculate_buy_opportunity(
+            history,
+            current_price,
+            currency=currency,
+            settings=scoring_settings,
+            as_of_day=today,
+        )
+        self._buy_opportunity_cache_key = cache_key
+        self._buy_opportunity_cache = result
+        return result
+
+    @property
+    def available(self) -> bool:
+        return self._result().get("score") is not None
+
+    @property
+    def native_value(self) -> float | None:
+        result = self._result()
+        value = result.get("score_raw", result.get("score"))
+        if value is None:
+            return None
+        return round(max(0.0, min(100.0, float(value))), 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = self._result()
+        current_settings = effective_settings(self.entry)
+        currencies = configured_currencies(current_settings)
+        scoring_settings = normalize_buy_opportunity_settings(
+            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+        )
+        currency = scoring_settings["currency"]
+        live_price = (self.coordinator.data or {}).get("prices", {}).get(currency)
+        # The complete diagnostic breakdown is intentionally public: it contains
+        # market prices and derived statistics only, never ledger/portfolio data.
+        attrs = {key: value for key, value in result.items() if key != "score"}
+        attrs.update({
+            "score_min": 0,
+            "score_max": 100,
+            "range": "0-100",
+            "live_price_available": live_price is not None,
+            "price_source": "live" if live_price is not None else "local_history_fallback",
+        })
+        return attrs
 
 
 class BitcoinHistoryStatusSensor(BitcoinBaseSensor):

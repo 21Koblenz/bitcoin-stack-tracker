@@ -40,6 +40,7 @@ from .const import (
     CONF_HISTORY_ENABLED,
     CONF_HISTORY_TOR_PROXY,
     CONF_BASE_URL,
+    CONF_BUY_OPPORTUNITY_SETTINGS,
     CONF_MEMPOOL_OWN_INSTANCE,
     CONF_SOURCE_TYPE,
     CONF_SOURCES,
@@ -57,6 +58,15 @@ from .const import (
     UNIT_SATS,
     V4V_LIGHTNING_ADDRESS,
     VERSION,
+)
+from .buy_opportunity import (
+    DEFAULT_MODEL_SETTINGS,
+    DEFAULT_SIGNAL_WEIGHTS,
+    DEFAULT_TURNING_POINT_WEIGHTS,
+    PROFILE_WEIGHTS,
+    calculate_buy_opportunity,
+    calculate_buy_opportunity_history,
+    normalize_buy_opportunity_settings,
 )
 from .coordinator import BitcoinPriceCoordinator
 from .crypto import (
@@ -85,6 +95,7 @@ from .network import async_routed_session, async_tor_gateway_host, mempool_sourc
 from .rate_limit import OperationRateLimiter
 from .csv_import import MAX_IMPORT_BYTES, parse_transaction_upload
 from .storage import BitcoinHistoryStore, BitcoinLedgerStore
+from .wallet_watch import WalletWatchManager, normalize_watch_config
 from .security import (
     BitcoinSecurityStore,
     ENCRYPTION_NONE,
@@ -129,6 +140,7 @@ SERVICE_SET_ENCRYPTION = "set_encryption"
 SERVICE_CHANGE_VAULT_PASSWORD = "change_vault_password"
 SERVICE_PURGE_STATISTICS = "purge_statistics"
 SERVICE_SET_HISTORY_SETTINGS = "set_history_settings"
+SERVICE_SET_BUY_OPPORTUNITY_SETTINGS = "set_buy_opportunity_settings"
 
 DASHBOARD_ACTION_SERVICES = {
     SERVICE_LIST_PORTFOLIOS,
@@ -152,6 +164,7 @@ DASHBOARD_ACTION_SERVICES = {
     SERVICE_EXPORT_CSV,
     SERVICE_SYNC_HISTORY,
     SERVICE_SET_HISTORY_SETTINGS,
+    SERVICE_SET_BUY_OPPORTUNITY_SETTINGS,
     SERVICE_LIST_USERS,
     SERVICE_SET_ALLOWED_USERS,
     SERVICE_SECURITY_STATUS,
@@ -333,6 +346,82 @@ SET_HISTORY_SETTINGS_SCHEMA = vol.Schema({
     vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
     vol.Required(CONF_ENABLED): cv.boolean,
     vol.Required(CONF_AUTO_SYNC): cv.boolean,
+})
+BUY_OPPORTUNITY_WEIGHTS_SCHEMA = vol.Schema({
+    vol.Optional("long_term"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    vol.Optional("drawdown"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    vol.Optional("range"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    vol.Optional("deviation"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    vol.Optional("momentum"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    vol.Optional("cycle"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+})
+BUY_OPPORTUNITY_THRESHOLDS_SCHEMA = vol.Schema({
+    vol.Optional("very_expensive_max"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+    vol.Optional("expensive_max"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+    vol.Optional("interesting"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+    vol.Optional("cheap"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+    vol.Optional("very_cheap"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+    vol.Optional("extreme"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
+})
+BUY_OPPORTUNITY_MODEL_SCHEMA = vol.Schema({
+    vol.Optional("minimum_history_points"): vol.All(vol.Coerce(int), vol.Range(min=90, max=3650)),
+    vol.Optional("adaptive_window_days"): vol.All(vol.Coerce(int), vol.Range(min=365, max=3650)),
+    vol.Optional("adaptive_min_reference_points"): vol.All(vol.Coerce(int), vol.Range(min=60, max=1460)),
+    vol.Optional("volatility_window_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=1460)),
+    vol.Optional("volatility_min_points"): vol.All(vol.Coerce(int), vol.Range(min=20, max=730)),
+    vol.Optional("volatility_floor_pct"): vol.All(vol.Coerce(float), vol.Range(min=1, max=100)),
+    vol.Optional("drawdown_window_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=3650)),
+    vol.Optional("drawdown_min_points"): vol.All(vol.Coerce(int), vol.Range(min=20, max=1460)),
+    vol.Optional("regime_high_min_points"): vol.All(vol.Coerce(int), vol.Range(min=60, max=1460)),
+    vol.Optional("percentile_window_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=3650)),
+    vol.Optional("percentile_min_points"): vol.All(vol.Coerce(int), vol.Range(min=20, max=1460)),
+    vol.Optional("short_deviation_days"): vol.All(vol.Coerce(int), vol.Range(min=5, max=365)),
+    vol.Optional("trend_short_days"): vol.All(vol.Coerce(int), vol.Range(min=10, max=730)),
+    vol.Optional("pi_short_days"): vol.All(vol.Coerce(int), vol.Range(min=20, max=730)),
+    vol.Optional("trend_base_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=1460)),
+    vol.Optional("pi_long_days"): vol.All(vol.Coerce(int), vol.Range(min=50, max=1460)),
+    vol.Optional("trend_mid_days"): vol.All(vol.Coerce(int), vol.Range(min=60, max=1460)),
+    vol.Optional("trend_long_days"): vol.All(vol.Coerce(int), vol.Range(min=120, max=2500)),
+    vol.Optional("trend_cycle_days"): vol.All(vol.Coerce(int), vol.Range(min=365, max=3650)),
+    vol.Optional("rsi_period_days"): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
+    vol.Optional("momentum_short_days"): vol.All(vol.Coerce(int), vol.Range(min=7, max=180)),
+    vol.Optional("momentum_long_days"): vol.All(vol.Coerce(int), vol.Range(min=14, max=365)),
+    vol.Optional("two_year_multiplier"): vol.All(vol.Coerce(float), vol.Range(min=1, max=10)),
+    vol.Optional("power_law_min_points"): vol.All(vol.Coerce(int), vol.Range(min=180, max=1460)),
+    vol.Optional("volatility_regime_low_ratio"): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=1.0)),
+    vol.Optional("volatility_regime_high_ratio"): vol.All(vol.Coerce(float), vol.Range(min=1.0, max=4.0)),
+    vol.Optional("turning_point_lookback_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=730)),
+    vol.Optional("turning_point_separation_days"): vol.All(vol.Coerce(int), vol.Range(min=3, max=90)),
+    vol.Optional("turning_zone_memory_days"): vol.All(vol.Coerce(int), vol.Range(min=5, max=180)),
+    vol.Optional("divergence_price_tolerance_pct"): vol.All(vol.Coerce(float), vol.Range(min=1, max=30)),
+    vol.Optional("volatility_fast_window_days"): vol.All(vol.Coerce(int), vol.Range(min=7, max=180)),
+    vol.Optional("volatility_slow_window_days"): vol.All(vol.Coerce(int), vol.Range(min=30, max=365)),
+    vol.Optional("volatility_cooling_lookback_days"): vol.All(vol.Coerce(int), vol.Range(min=10, max=180)),
+    vol.Optional("exhaustion_short_days"): vol.All(vol.Coerce(int), vol.Range(min=3, max=30)),
+    vol.Optional("confirmation_zone_gate"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    vol.Optional("turning_zone_threshold"): vol.All(vol.Coerce(float), vol.Range(min=50, max=95)),
+    vol.Optional("turning_confirmation_threshold"): vol.All(vol.Coerce(float), vol.Range(min=25, max=95)),
+    vol.Optional("turning_extreme_threshold"): vol.All(vol.Coerce(float), vol.Range(min=60, max=99)),
+})
+BUY_OPPORTUNITY_SIGNAL_COMPONENT_SCHEMA = vol.Schema({str: vol.All(vol.Coerce(float), vol.Range(min=0, max=100))})
+BUY_OPPORTUNITY_SIGNAL_WEIGHTS_SCHEMA = vol.Schema({
+    vol.Optional(component): BUY_OPPORTUNITY_SIGNAL_COMPONENT_SCHEMA
+    for component in DEFAULT_SIGNAL_WEIGHTS
+})
+BUY_OPPORTUNITY_TURNING_WEIGHTS_SCHEMA = vol.Schema({
+    vol.Optional(model_name): BUY_OPPORTUNITY_SIGNAL_COMPONENT_SCHEMA
+    for model_name in DEFAULT_TURNING_POINT_WEIGHTS
+})
+SET_BUY_OPPORTUNITY_SETTINGS_SCHEMA = vol.Schema({
+    vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
+    vol.Optional("profile"): vol.In([*PROFILE_WEIGHTS.keys(), "custom"]),
+    vol.Optional(CONF_CURRENCY): cv.string,
+    vol.Optional("weights"): BUY_OPPORTUNITY_WEIGHTS_SCHEMA,
+    vol.Optional("signal_weights"): BUY_OPPORTUNITY_SIGNAL_WEIGHTS_SCHEMA,
+    vol.Optional("turning_point_weights"): BUY_OPPORTUNITY_TURNING_WEIGHTS_SCHEMA,
+    vol.Optional("thresholds"): BUY_OPPORTUNITY_THRESHOLDS_SCHEMA,
+    vol.Optional("model"): BUY_OPPORTUNITY_MODEL_SCHEMA,
+    vol.Optional("reset_defaults"): cv.boolean,
 })
 
 
@@ -1893,6 +1982,9 @@ async def _panel_restore_payload(
         "goals": incoming_ledger.get("goals", []),
         "tax_settings": previous_ledger.get("tax_settings", {}),
         "chart_cache": {"revision": None, "data": {}},
+        # Sats Sentinel is installation-sensitive and not imported from a portable
+        # backup, but an existing local watch configuration must survive restore.
+        "wallet_watch": previous_ledger.get("wallet_watch", {}),
     }
     try:
         await runtime["storage"].async_replace(restored_ledger)
@@ -2250,6 +2342,9 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 elif operation == "disable":
                     security.require_owner(requester)
                     security.require_unlocked(requester)
+                    watch_config = storage.wallet_watch_config
+                    if isinstance(watch_config, dict) and (watch_config.get("monitors") or watch_config.get("notification_targets")):
+                        raise vol.Invalid("Remove all Sats Sentinel targets and notification endpoints before disabling vault encryption")
                     if security.encryption_mode == ENCRYPTION_PASSWORD:
                         await storage.async_disable_password()
                     elif security.encryption_mode == ENCRYPTION_NONE:
@@ -2413,6 +2508,265 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             now = datetime.now(timezone.utc).isoformat()
             await _panel_mark_health(self.hass, entry_id, last_restore_at=now, last_restore_test_at=now)
             return respond(result)
+
+        if route == "api/wallet-watch" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            config = normalize_watch_config(runtime["storage"].wallet_watch_config)
+            manager: WalletWatchManager = runtime["wallet_watch"]
+            notify_services = sorted(self.hass.services.async_services().get("notify", {}).keys())
+            return respond({
+                "config": config,
+                "status": manager.public_status(include_addresses=True),
+                "notify_services": notify_services,
+                "activity_log": manager.public_activity_log(config, page=1, category="all"),
+            })
+
+        if route == "api/wallet-watch/status" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            return respond(runtime["wallet_watch"].public_status(include_addresses=False))
+
+        if route == "api/wallet-watch/log" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            config = normalize_watch_config(runtime["storage"].wallet_watch_config)
+            try:
+                page = max(1, int(q("page") or 1))
+            except ValueError:
+                page = 1
+            try:
+                page_size = min(25, max(1, int(q("page_size") or 10)))
+            except ValueError:
+                page_size = 10
+            category = str(q("category") or "all").lower()
+            return respond(runtime["wallet_watch"].public_activity_log(config, page=page, category=category, page_size=page_size))
+
+        if route == "api/wallet-watch" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            try:
+                config = normalize_watch_config(incoming.get("config"))
+                if (config.get("monitors") or config.get("notification_targets")) and runtime["security"].encryption_mode != ENCRYPTION_PASSWORD:
+                    raise ValueError("Sats Sentinel requires the password-encrypted vault before watch-only data or notification credentials can be stored")
+                await runtime["storage"].async_set_wallet_watch_config(config)
+                # Saving must be immediate. A slow address history request must
+                # never make the UI look as if the Save button did nothing.
+                status = await runtime["wallet_watch"].async_apply_full_config(config, poll=False)
+            except ValueError as err:
+                raise web.HTTPBadRequest(text=str(err)) from err
+            return respond({"saved": True, "config": config, "status": status, "notify_services": sorted(self.hass.services.async_services().get("notify", {}).keys()), "activity_log": runtime["wallet_watch"].public_activity_log(config, page=1, category="all")})
+
+        if route == "api/wallet-watch/source-test" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            try:
+                config = normalize_watch_config(incoming.get("config"))
+                result = await runtime["wallet_watch"].async_test_source(config)
+            except (ValueError, OSError, asyncio.TimeoutError, ConnectionError, RuntimeError) as err:
+                raise web.HTTPBadRequest(text=f"Sats Sentinel source test failed: {type(err).__name__}: {err}") from err
+            return respond(result)
+
+        if route == "api/wallet-watch/poll" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            return respond(await runtime["wallet_watch"].async_poll(force=True))
+
+        if route == "api/wallet-watch/simulate" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            try:
+                result = await runtime["wallet_watch"].async_simulate_activity(
+                    monitor_id=str(incoming.get("monitor_id") or ""),
+                    direction=str(incoming.get("direction") or "outgoing"),
+                    amount_sats=int(incoming.get("amount_sats") or 100000),
+                    confirmed=bool(incoming.get("confirmed", False)),
+                    rbf=bool(incoming.get("rbf", False)),
+                )
+            except (TypeError, ValueError) as err:
+                raise web.HTTPBadRequest(text=str(err)) from err
+            return respond(result)
+
+        if route == "api/wallet-watch/live-test" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            try:
+                result = await runtime["wallet_watch"].async_live_test_transaction(
+                    txid=str(incoming.get("txid") or ""),
+                    direction=str(incoming.get("direction") or "outgoing"),
+                )
+            except ValueError as err:
+                raise web.HTTPBadRequest(text=str(err)) from err
+            return respond(result)
+
+        if route == "api/wallet-watch/notify-test" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            return respond(await runtime["wallet_watch"].async_test_notifications())
+
+        if route == "api/live-price" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            live = runtime["coordinator"].data or {}
+            return respond({
+                "prices": live.get("prices", {}),
+                "price_details": live.get("price_details", {}),
+                "live_source_by_currency": live.get("live_source_by_currency", {}),
+                "live_data_available": bool(live.get("live_data_available")),
+                "errors": live.get("errors", []),
+                "updated_at": live.get("updated_at"),
+                "local_interval_seconds": live.get("local_interval_seconds", getattr(runtime["coordinator"], "local_interval_seconds", 300)),
+                "public_interval_seconds": live.get("public_interval_seconds", getattr(runtime["coordinator"], "public_interval_seconds", 60)),
+                "dashboard_poll_seconds": 15,
+            })
+
+        if route == "api/market-assessment/history" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            entry = self.hass.config_entries.async_get_entry(entry_id)
+            if entry is None:
+                raise web.HTTPBadRequest(text="Config entry was not found")
+            current_settings = effective_settings(entry)
+            currencies = configured_currencies(current_settings)
+            market_settings = normalize_buy_opportunity_settings(
+                current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+            )
+            currency = market_settings["currency"]
+            live = runtime["coordinator"].data or {}
+            prices = live.get("prices", {}) if isinstance(live.get("prices", {}), dict) else {}
+            history_data = runtime["history_storage"].data
+            today = dt_util.utcnow().date()
+            range_key = str(q("range") or "1y").lower()
+            if range_key == "1d":
+                start_day = today - timedelta(days=1)
+            elif range_key == "7d":
+                start_day = today - timedelta(days=7)
+            elif range_key == "week_start":
+                start_day = today - timedelta(days=today.weekday())
+            elif range_key == "30d":
+                start_day = today - timedelta(days=30)
+            elif range_key == "month_start":
+                start_day = today.replace(day=1)
+            elif range_key == "90d":
+                start_day = today - timedelta(days=90)
+            elif range_key == "ytd":
+                start_day = today.replace(month=1, day=1)
+            elif range_key == "1y":
+                start_day = today - timedelta(days=365)
+            elif range_key == "3y":
+                start_day = today - timedelta(days=365 * 3)
+            elif range_key == "5y":
+                start_day = today - timedelta(days=365 * 5)
+            elif range_key == "10y":
+                start_day = today - timedelta(days=365 * 10)
+            else:
+                start_day = None
+                range_key = "max"
+            result = await self.hass.async_add_executor_job(partial(
+                calculate_buy_opportunity_history,
+                history_data.get("prices", {}).get(currency, {}),
+                prices.get(currency),
+                currency=currency,
+                settings=market_settings,
+                as_of_day=today,
+                start_day=start_day,
+                max_points=420,
+            ))
+            return respond({**result, "range": range_key, "calculated_at": datetime.now(timezone.utc).isoformat()})
+
+        if route == "api/market-assessment" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            # Market assessment contains public market data only.  Keep the
+            # normal portfolio access boundary, but it does not require the
+            # password vault to be unlocked.
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            entry = self.hass.config_entries.async_get_entry(entry_id)
+            if entry is None:
+                raise web.HTTPBadRequest(text="Config entry was not found")
+            current_settings = effective_settings(entry)
+            currencies = configured_currencies(current_settings)
+            market_settings = normalize_buy_opportunity_settings(
+                current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+            )
+            currency = market_settings["currency"]
+            live = runtime["coordinator"].data or {}
+            prices = live.get("prices", {}) if isinstance(live.get("prices", {}), dict) else {}
+            history_data = runtime["history_storage"].data
+            result = calculate_buy_opportunity(
+                history_data.get("prices", {}).get(currency, {}),
+                prices.get(currency),
+                currency=currency,
+                settings=market_settings,
+                as_of_day=dt_util.utcnow().date(),
+            )
+            return respond({
+                "buy_opportunity": result,
+                "buy_opportunity_settings": market_settings,
+                "live_price_updated_at": live.get("updated_at"),
+                "calculated_at": datetime.now(timezone.utc).isoformat(),
+                "automatic": True,
+            })
 
         if route == "api/core-network" and method == "GET":
             entry_id = q("entry_id")
@@ -3031,6 +3385,89 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             "history_timer_active": timer_active,
         }
 
+    async def set_buy_opportunity_settings(call: ServiceCall) -> dict[str, Any]:
+        """Update the public, price-history-only market-assessment model."""
+        entry_id = call.data[CONF_CONFIG_ENTRY_ID]
+        await _authorize_call(
+            hass, call, entry_id, owner_only=True, require_unlocked=False
+        )
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            raise vol.Invalid("Config entry was not found")
+        currencies = configured_currencies(effective_settings(entry))
+        current = normalize_buy_opportunity_settings(
+            effective_settings(entry).get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+        )
+        if bool(call.data.get("reset_defaults")):
+            normalized = normalize_buy_opportunity_settings(
+                {"currency": str(call.data.get(CONF_CURRENCY, current["currency"])).upper()},
+                currencies,
+            )
+        else:
+            requested_profile = str(call.data.get("profile", current["profile"]))
+            merged = {
+                "profile": requested_profile,
+                "currency": str(call.data.get(CONF_CURRENCY, current["currency"])).upper(),
+                "weights": dict(
+                    PROFILE_WEIGHTS.get(requested_profile, current["weights"])
+                    if "profile" in call.data and "weights" not in call.data
+                    else current["weights"]
+                ),
+                "signal_weights": {
+                    component: dict(values)
+                    for component, values in current["signal_weights"].items()
+                },
+                "turning_point_weights": {
+                    model_name: dict(values)
+                    for model_name, values in current["turning_point_weights"].items()
+                },
+                "thresholds": dict(current["thresholds"]),
+                "model": dict(current["model"]),
+            }
+            if isinstance(call.data.get("weights"), dict):
+                merged["weights"].update(call.data["weights"])
+            if isinstance(call.data.get("thresholds"), dict):
+                merged["thresholds"].update(call.data["thresholds"])
+            if isinstance(call.data.get("model"), dict):
+                merged["model"].update(call.data["model"])
+            if isinstance(call.data.get("signal_weights"), dict):
+                for component, values in call.data["signal_weights"].items():
+                    if component in merged["signal_weights"] and isinstance(values, dict):
+                        merged["signal_weights"][component].update(values)
+            if isinstance(call.data.get("turning_point_weights"), dict):
+                for model_name, values in call.data["turning_point_weights"].items():
+                    if model_name in merged["turning_point_weights"] and isinstance(values, dict):
+                        merged["turning_point_weights"][model_name].update(values)
+            threshold_values = [
+                float(merged["thresholds"][key])
+                for key in ("very_expensive_max", "expensive_max", "interesting", "cheap", "very_cheap", "extreme")
+            ]
+            if not all(left < right for left, right in zip(threshold_values, threshold_values[1:])):
+                raise vol.Invalid(
+                    "Score thresholds must be strictly ascending: very_expensive_max < expensive_max < interesting < cheap < very_cheap < extreme"
+                )
+            if float(merged["model"]["volatility_regime_low_ratio"]) >= float(merged["model"]["volatility_regime_high_ratio"]):
+                raise vol.Invalid("Volatility regime low ratio must be below high ratio")
+            if int(merged["model"]["volatility_fast_window_days"]) >= int(merged["model"]["volatility_slow_window_days"]):
+                raise vol.Invalid("Fast volatility window must be shorter than slow volatility window")
+            if int(merged["model"]["turning_point_separation_days"]) >= int(merged["model"]["turning_point_lookback_days"]):
+                raise vol.Invalid("Turning-point swing separation must be shorter than the turning-point lookback")
+            if float(merged["model"]["turning_zone_threshold"]) >= float(merged["model"]["turning_extreme_threshold"]):
+                raise vol.Invalid("Turning-point zone threshold must be below extreme threshold")
+            normalized = normalize_buy_opportunity_settings(merged, currencies)
+
+        options = dict(entry.options)
+        options[CONF_BUY_OPPORTUNITY_SETTINGS] = normalized
+        hass.config_entries.async_update_entry(entry, options=options)
+        runtime = _runtime(hass, entry_id)
+        _notify_entities(runtime)
+        return {
+            "settings": normalized,
+            "reload_scheduled": False,
+            "vault_session_retained": True,
+            "notice": "Additional model-based market assessment only; not a buy signal or investment recommendation.",
+        }
+
     async def list_portfolios(call: ServiceCall) -> dict[str, Any]:
         requester = await _authenticated_service_user_id(hass, call)
         portfolios = []
@@ -3270,6 +3707,18 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             "all_cached": history_days == 0,
             "series_loaded": False,
         }
+        buy_opportunity_settings = normalize_buy_opportunity_settings(
+            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+        )
+        buy_currency = buy_opportunity_settings["currency"]
+        buy_opportunity = calculate_buy_opportunity(
+            history_data.get("prices", {}).get(buy_currency, {}),
+            prices.get(buy_currency),
+            currency=buy_currency,
+            settings=buy_opportunity_settings,
+            as_of_day=dt_util.utcnow().date(),
+        )
+
         result: dict[str, Any] = {
             "locked": False,
             "section": "summary",
@@ -3285,6 +3734,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 "lightning_address": V4V_LIGHTNING_ADDRESS,
             },
             "settings": dashboard_settings,
+            "buy_opportunity_settings": buy_opportunity_settings,
+            "buy_opportunity_profiles": [*PROFILE_WEIGHTS.keys(), "custom"],
+            "buy_opportunity": buy_opportunity,
             "tax_settings": tax_settings,
             "depots": depots,
             "goals": calculations["goals"],
@@ -3412,6 +3864,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         (SERVICE_EXPORT_CSV, export_csv, _with_requester(EXPORT_CSV_SCHEMA), SupportsResponse.ONLY),
         (SERVICE_SYNC_HISTORY, sync_history, _with_requester(ENTRY_SCHEMA), SupportsResponse.ONLY),
         (SERVICE_SET_HISTORY_SETTINGS, set_history_settings, SET_HISTORY_SETTINGS_SCHEMA, SupportsResponse.ONLY),
+        (SERVICE_SET_BUY_OPPORTUNITY_SETTINGS, set_buy_opportunity_settings, SET_BUY_OPPORTUNITY_SETTINGS_SCHEMA, SupportsResponse.ONLY),
         (SERVICE_LIST_PORTFOLIOS, list_portfolios, vol.Schema(REQUESTER_SCHEMA), SupportsResponse.ONLY),
         (SERVICE_DASHBOARD_DATA, dashboard_data, _with_requester(DASHBOARD_DATA_SCHEMA), SupportsResponse.ONLY),
         (SERVICE_LIST_USERS, list_users, _with_requester(ENTRY_SCHEMA), SupportsResponse.ONLY),
@@ -3447,6 +3900,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                         SERVICE_SET_SENSITIVE_SENSORS, SERVICE_PURGE_STATISTICS,
                         SERVICE_DELETE_ALL_ENTRIES,
                         SERVICE_SET_HISTORY_SETTINGS,
+                        SERVICE_SET_BUY_OPPORTUNITY_SETTINGS,
                     }:
                         requester = await _authorize_call(hass, call, entry_id)
                     result = await _handler(call)
@@ -3556,15 +4010,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     history_storage = BitcoinHistoryStore(hass, entry.entry_id)
     await history_storage.async_load()
     coordinator = BitcoinPriceCoordinator(hass, entry, history_storage)
-    await coordinator.async_refresh()
+    await coordinator.async_config_entry_first_refresh()
+    # Keep one integration-owned listener registered permanently. Home Assistant's
+    # DataUpdateCoordinator only schedules update_interval refreshes while it has
+    # at least one listener. Price refreshes must therefore never depend on an
+    # open dashboard or on a particular HA sensor entity being enabled.
+    cancel_price_refresh_listener = coordinator.async_add_listener(lambda: None)
 
+    wallet_watch = WalletWatchManager(hass, entry, storage)
     runtime: dict[str, Any] = {
         "storage": storage,
         "history_storage": history_storage,
         "coordinator": coordinator,
+        "cancel_price_refresh_listener": cancel_price_refresh_listener,
         "security": security,
+        "wallet_watch": wallet_watch,
     }
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+    await wallet_watch.async_start()
+    if not storage.is_locked:
+        try:
+            await wallet_watch.async_apply_full_config(normalize_watch_config(storage.wallet_watch_config))
+        except ValueError as err:
+            _LOGGER.warning("Sats Sentinel configuration was not activated: %s", err)
 
     _configure_history_timer(
         hass, entry, runtime, sync_if_stale=True
@@ -3592,6 +4060,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove private storage and all tracked external statistics."""
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    if isinstance(runtime, dict) and isinstance(runtime.get("wallet_watch"), WalletWatchManager):
+        await runtime["wallet_watch"].async_stop()
+        await runtime["wallet_watch"].runtime_store.async_remove()
     history_store = BitcoinHistoryStore(hass, entry.entry_id)
     await history_store.async_load()
     statistic_ids = list(history_store.data.get("statistics_ids", []))
@@ -3610,9 +4082,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    if isinstance(runtime, dict) and isinstance(runtime.get("wallet_watch"), WalletWatchManager):
+        await runtime["wallet_watch"].async_stop()
     if cancel := runtime.get("cancel_history_sync"):
         cancel()
     if cancel := runtime.get("cancel_tor_rotation"):
+        cancel()
+    if cancel := runtime.get("cancel_price_refresh_listener"):
         cancel()
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:

@@ -164,8 +164,10 @@
       "settings": {
         "title": "Preis-Aktualisierung",
         "data": {
-          "update_interval": "Preis-Aktualisierungsintervall"
-        }
+          "update_interval": "Eigene/lokale Preisquellen",
+          "public_update_interval": "Öffentliche Preisquellen über Tor"
+        },
+        "description": "Eigene/lokale Preisquellen und öffentliche Tor-Quellen laufen mit getrennten Takten. Standard: eigene Mempool-Instanz 300 s, zusätzliche öffentliche Quellen 60 s über Tor. Das Dashboard liest den bereits gecachten Live-Preis häufiger lokal aus Home Assistant."
       },
       "history_settings": {
         "title": "Historische Tageswerte",
@@ -422,6 +424,9 @@
       },
       "depot_realized_short_term_profit_loss": {
         "name": "{depot} realisierter Kurzzeit-FIFO-Gewinn/Verlust {currency}"
+      },
+      "buy_opportunity": {
+        "name": "Markteinschätzung"
       }
     }
   },

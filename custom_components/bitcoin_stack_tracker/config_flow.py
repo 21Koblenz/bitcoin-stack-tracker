@@ -43,6 +43,7 @@ from .const import (
     CONF_SOURCE_TYPE,
     CONF_SOURCES,
     CONF_UPDATE_INTERVAL,
+    CONF_PUBLIC_UPDATE_INTERVAL,
     CONF_VERIFY_SSL,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_HISTORY_TOR_PROXY,
@@ -51,14 +52,17 @@ from .const import (
     DEFAULT_TAX_NOTE,
     DEFAULT_MEMPOOL_URL,
     DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_PUBLIC_UPDATE_INTERVAL,
     DOMAIN,
     KRAKEN_CURRENCIES,
     MAX_HISTORY_DAYS,
     MAX_LONG_TERM_DAYS,
     MAX_UPDATE_INTERVAL,
+    MAX_PUBLIC_UPDATE_INTERVAL,
     MIN_HISTORY_DAYS,
     MIN_LONG_TERM_DAYS,
     MIN_UPDATE_INTERVAL,
+    MIN_PUBLIC_UPDATE_INTERVAL,
     MEMPOOL_ROUTE_DIRECT,
     MEMPOOL_ROUTE_TOR,
     SOURCE_ENTITY,
@@ -766,12 +770,16 @@ class BitcoinStackTrackerOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             updated = deepcopy(current)
             updated[CONF_UPDATE_INTERVAL] = int(user_input[CONF_UPDATE_INTERVAL])
+            updated[CONF_PUBLIC_UPDATE_INTERVAL] = int(user_input[CONF_PUBLIC_UPDATE_INTERVAL])
             return self._finish(updated)
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema({
                 vol.Required(CONF_UPDATE_INTERVAL, default=current.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=MIN_UPDATE_INTERVAL, max=MAX_UPDATE_INTERVAL, step=30, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="s")
+                ),
+                vol.Required(CONF_PUBLIC_UPDATE_INTERVAL, default=current.get(CONF_PUBLIC_UPDATE_INTERVAL, DEFAULT_PUBLIC_UPDATE_INTERVAL)): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=MIN_PUBLIC_UPDATE_INTERVAL, max=MAX_PUBLIC_UPDATE_INTERVAL, step=30, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="s")
                 ),
             }),
         )

@@ -276,6 +276,24 @@ def tor_proxy_from_settings(settings: dict[str, Any]) -> str:
     return normalize_proxy_url(DEFAULT_HISTORY_TOR_PROXY)
 
 
+async def async_tor_socks_connection_info(hass: HomeAssistant, settings: dict[str, Any]) -> dict[str, Any]:
+    """Return the resolved internal Tor SOCKS endpoint with isolation credentials.
+
+    This is used by non-HTTP protocols such as Electrum. The target hostname is
+    still sent to Tor in the SOCKS CONNECT request, so public/onion DNS never
+    resolves through the Home Assistant host.
+    """
+    proxy = await _resolve_bundled_proxy_url(tor_proxy_from_settings(settings))
+    isolated = _proxy_with_isolation(hass, proxy)
+    parsed = urlparse(isolated)
+    return {
+        "host": parsed.hostname or "",
+        "port": parsed.port or 9050,
+        "username": parsed.username or "",
+        "password": parsed.password or "",
+    }
+
+
 def is_onion_url(url: str) -> bool:
     """Return whether a URL targets a Tor onion service."""
     host = (urlparse(str(url)).hostname or "").lower().rstrip(".")
