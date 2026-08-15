@@ -7,7 +7,7 @@ PANEL = (FRONTEND / "panel-v021009-ae7b9cb3.js").read_text(encoding="utf-8")
 
 def test_header_uses_existing_full_color_brand_asset_without_resizing_rules():
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    css = (FRONTEND / "static" / "style-v021006-733b783d.css").read_text(encoding="utf-8")
+    css = (FRONTEND / "static" / "style-v021009-c577172d.css").read_text(encoding="utf-8")
     asset = FRONTEND / "static" / "assets" / "bitcoin-stack-tracker-logo.png"
     assert asset.exists()
     assert 'src="static/assets/bitcoin-stack-tracker-logo.png"' in html

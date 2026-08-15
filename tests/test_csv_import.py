@@ -643,7 +643,7 @@ TRANSACTION,2026-08-05 09:00:00,card-pay-1,CARD_AUTHORIZATION,BTC,0.001,EUR,60,C
 
     def test_delete_all_ui_uses_two_step_dashboard_modal_and_compat_fallback(self):
         static = APP / "static"
-        script = (static / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
+        script = (static / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="deleteAllEntries"', html)
         self.assertIn('id="deleteAllModal"', html)
@@ -723,9 +723,9 @@ TRANSACTION,2026-08-04 12:00:00,card-paywave,CARD_AUTHORIZATION,BTC,0.001,EUR,60
 
     def test_csv_scroller_initializes_after_modal_and_import_button_is_not_silent(self):
         static = APP / "static"
-        script = (static / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
+        script = (static / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
+        style = (static / "style-v021009-c577172d.css").read_text(encoding="utf-8")
         self.assertIn("queueCsvHorizontalScrollUpdate", script)
         self.assertIn('modal.classList.remove("hidden")', script)
         self.assertIn("requestAnimationFrame(()=>requestAnimationFrame(updateCsvHorizontalScroll))", script)
@@ -748,7 +748,7 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
         self.assertTrue(all(row["currency"] == "EUR" and float(row["price"]) > 0 for row in result["rows"]))
         self.assertTrue(all(row["import_hints"]["wavespace_kind"] == "card_creation" for row in result["rows"]))
         static = APP / "static"
-        script = (static / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
+        script = (static / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
         self.assertIn("localImportPrice", script)
         self.assertIn("2.99", script)
         self.assertIn("29.99", script)
@@ -756,8 +756,8 @@ FEE,2026-08-05 08:00:00,card-create-2,APPLICATION_FEE,BTC,0.0005,BTC,0.0005,Appl
 
     def test_goal_reached_timestamp_is_rendered_and_progress_is_capped(self):
         static = APP / "static"
-        script = (static / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
-        style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
+        script = (static / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
+        style = (static / "style-v021009-c577172d.css").read_text(encoding="utf-8")
         self.assertIn("goal.goal_reached_at", script)
         self.assertIn("goalReachedAt", script)
         self.assertIn("currentlyReached ? 100 : Math.min(99.9, rawProgress)", script)
@@ -787,9 +787,9 @@ t1,o1,{pair},2026-08-01 12:00:00,buy,market,60000,600,1.5,0.01
 
     def test_optional_note_fields_are_disabled_by_default_in_ui(self):
         static = APP / "static"
-        script = (static / "app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
+        script = (static / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
         html = (APP / "index.html").read_text(encoding="utf-8")
-        style = (static / "style-v021006-733b783d.css").read_text(encoding="utf-8")
+        style = (static / "style-v021009-c577172d.css").read_text(encoding="utf-8")
         self.assertIn("result.optional_note_selection = [];", script)
         self.assertIn('id="csvOptionalFields"', html)
         self.assertIn('data-i18n="optionalFieldsTitle"', html)

@@ -4,8 +4,8 @@ ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-APP = (COMP / "frontend/static/app-v021009-1ef3c90f.js").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021006-733b783d.css").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app-v021009-bba91c83.js").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style-v021009-c577172d.css").read_text(encoding="utf-8")
 
 
 def test_chart_has_independent_milestone_and_halving_toggles():

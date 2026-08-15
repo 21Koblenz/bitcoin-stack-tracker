@@ -64,8 +64,8 @@ def test_current_version_and_native_assets_match():
     index = INDEX_PATH.read_text(encoding="utf-8")
     panel = (COMP / "panel.py").read_text(encoding="utf-8")
     assert '"version": "0.21.0.9"' in manifest
-    assert "app-v021009-1ef3c90f.js" in index
-    assert "style-v021006-733b783d.css" in index
+    assert "app-v021009-bba91c83.js" in index
+    assert "style-v021009-c577172d.css" in index
     assert "panel-v021009-ae7b9cb3.js" in panel
 
 
@@ -127,5 +127,5 @@ def test_public_networking_is_fail_closed_in_core_and_tor_gateway():
 
 def test_release_does_not_ship_stale_versioned_frontend_bundles():
     static = COMP / "frontend/static"
-    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021009-1ef3c90f.js"]
-    assert [p.name for p in static.glob("style-v*.css")] == ["style-v021006-733b783d.css"]
+    assert [p.name for p in static.glob("app-v*.js")] == ["app-v021009-bba91c83.js"]
+    assert [p.name for p in static.glob("style-v*.css")] == ["style-v021009-c577172d.css"]

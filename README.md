@@ -66,9 +66,14 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - target per portfolio or for the aggregated portfolio
 - progress, remaining amount and optional required fiat amount
 
-#### Charts and analytics
+#### Charts, market assessment and analytics
 
 - Bitcoin price
+- adaptive **0–100 market assessment** from public historical price data; explicitly not a buy signal
+- causal historical market-assessment chart with BTC-price overlay, crosshair values, configurable price opacity and linear/log price axis
+- optional **causal EMA smoothing** (Off / 3 / 5 / 7 / 14 / 30 points); display-only and shared with the overview-chart overlay
+- overview chart mode **Bitcoin price + market assessment** with an independent linear score axis that auto-scales to the visible score range
+- bottom/top zone and confirmation diagnostics, configurable weights, thresholds and adaptive volatility/cycle windows
 - stack history
 - portfolio value
 - total profit/loss
@@ -79,6 +84,18 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - TWR, selected-range annualized XIRR, BTC-market CAGR, DCA, drawdown and cash-flow-neutral HODL benchmark
 - stacking velocity, net fiat investment, fee ratios and stack-age distribution
 - Bitcoin network, milestone and halving markers
+
+#### Sats Sentinel
+
+- privacy-first, watch-only Bitcoin monitoring for addresses, address groups, XPUB/YPUB/ZPUB and descriptors; no private keys, seeds, signing or spending
+- configurable query source: **automatic · Fulcrum/Electrum · electrs/Electrum · own Mempool · configured public Mempool over Tor**
+- explicit source selection is **fail closed**: if the selected own source is down, Sentinel reports offline/partial and never silently switches to a public provider
+- local/private Fulcrum/electrs/Mempool targets may be queried directly over LAN; `.onion` and public targets use Tor with remote DNS
+- Fulcrum/electrs support Electrum scripthash balance/history/UTXO queries; TLS and exact SHA-256 certificate pinning support self-signed Fulcrum certificates
+- encrypted device-bound runtime cache stores concrete derived addresses/scripts, not XPUB/descriptor secrets
+- movement journal with sender → direction → recipient flow, configurable categories, notes, thresholds and paging; TXIDs/addresses can link to the separately configured Mempool explorer
+- Home Assistant events, persistent notifications, multiple `notify.*` services, self-hosted ntfy and webhooks with discreet/normal/detailed payloads
+- removing a watch entry also permanently purges that monitor's journal history from the encrypted Sentinel cache
 
 ### Backup and data portability
 
@@ -150,27 +167,28 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.9**. This release adds the **Revolut X CSV importer** and extends the ledger with income, expenses and explicit on-chain/Lightning transaction fees while preserving FIFO and performance accounting.
+Current project version: **v0.21.0.9**. This updated build intentionally keeps the same semantic version and extends the v0.21.0.9 artifacts originally published on 2026-08-14 with **Sats Sentinel**, the adaptive/historical **market assessment**, faster live/chart refresh behavior and related privacy/UI hardening.
 
-#### Changes since v0.21.0.8
+#### Changes since v0.21.0.9
 
-- **Revolut X:** dedicated CSV parser for `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees` and `Date`; BTC/XBT Buy/Sell only, with separate fiat fees and robust date parsing.
-- **Manual income and expenses:** income creates a priced FIFO acquisition lot like a purchase; expenses remain separate from sales but realize FIFO profit/loss.
-- **Transaction fees:** standalone on-chain/Lightning fees can be entered in sats or BTC. They reduce the actual tracked stack, consume FIFO BTC with zero sale proceeds, and are shown with their historical fiat equivalent.
-- **Editable booking type:** a saved row can be corrected between purchase, income, sale, expense, transaction fee and stack; the full FIFO state is revalidated after each edit.
-- **Historical plausibility warning:** manual priced bookings are compared with the historical BTC price at the booking timestamp; deviations of 10% or more show a non-blocking warning.
-- **Overview:** separate sales, expenses, income and transaction-fee aggregates plus total realized profit/loss; “Fiat moved into Bitcoin” is renamed to **“Purchasing power secured”**.
-- **Chart ranges:** added week-to-date, rolling 1 week and month-to-date in short-to-long order. XIRR remains annualized for the selected range; TWR remains cash-flow neutral. CAGR wording now makes clear that it is Bitcoin-market growth, not personal return.
-- **Fee analytics:** total fee value includes the fiat equivalent of recorded BTC/sat fees without mixing standalone network fees into trading-volume fee ratios.
-- **Quality assurance:** targeted regression tests cover Revolut X, historical reference pricing, income, expense realization, network-fee stack reduction and legacy BTC-fee compatibility; the final local suite passes **373 tests + 8 subtests**.
+- **Sats Sentinel:** 24/7 watch-only address/XPUB/descriptor monitoring with encrypted runtime state, movement journal, test modes and configurable Home Assistant/ntfy/webhook notifications.
+- **Configurable Sentinel source:** automatic, Fulcrum/Electrum, electrs/Electrum, own Mempool, or configured public Mempool over Tor. Explicit selections are fail-closed with no hidden provider fallback.
+- **Fulcrum/electrs:** direct Electrum scripthash queries, local-LAN or Tor/onion routing, TLS support and exact SHA-256 pinning for self-signed server certificates.
+- **Sentinel privacy lifecycle:** XPUB/descriptors stay out of runtime cache, discreet notification mode hides wallet/amount/TXID/address details, and deleting a watch entry permanently removes its journal history.
+- **Adaptive market assessment:** modular 0–100 score, adaptive volatility/reference windows, configurable group/signal/turning-point weights, bottom/top zones and confirmation diagnostics. It remains an additional market assessment, not a buy signal or forecast.
+- **Causal history:** historical score reconstruction uses only information available at each historical date. The chart includes crosshair axis badges, BTC-price overlay, configurable opacity and linear/log price scale.
+- **Causal chart smoothing:** optional EMA smoothing (Off / 3 / 5 / 7 / 14 / 30 points). It changes only the displayed line, never the raw score or Home Assistant sensor, and the same setting is used by the overview overlay.
+- **Overview chart:** new **Bitcoin price + market assessment** view with an independent linear score axis that auto-scales to the visible score range. Historical scores are no longer forward-filled into every intraday BTC candle; causal score samples are aligned directly to the price timeline, completed daily scores become effective at day end and the live score at its actual calculation time.
+- **Live price/chart refresh:** public price fast lane and source-specific cadence, current live quote appended/replaced in charts, and real source refresh when changing chart ranges while preserving Tor-only public routing.
+- **Sats Sentinel UI:** status-only refresh no longer overwrites unsaved form input; saving and source tests show explicit success/error feedback.
+- **Quality assurance:** final release suite passes **457 tests + 8 subtests**, plus Python compile, JavaScript syntax and release-integrity checks.
 
-The **Tor Gateway remains at v0.21.0.3**, because v0.21.0.9 only changes the custom integration and documentation.
+The **Tor Gateway remains at v0.21.0.3**. The updated v0.21.0.9 build changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
 
-The baseline calculation, privacy and security audit from [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) remains unchanged.
+The baseline calculation/privacy/security audit from [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) remains the historical audit baseline. New Sats Sentinel and market-assessment paths are covered by dedicated regression tests in this release.
 
 Release changes: [`CHANGELOG.md`](CHANGELOG.md)  
 Release overview: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
-
 ### What this project explicitly is not
 
 - not a wallet
@@ -253,9 +271,14 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - Ziel pro Depot oder für das Gesamtdepot
 - Fortschritt, Restmenge und optional benötigter Fiatbetrag
 
-#### Charts und Auswertungen
+#### Charts, Markteinschätzung und Auswertungen
 
 - Bitcoin-Kurs
+- adaptive **0–100-Markteinschätzung** aus öffentlichen historischen Kursdaten; ausdrücklich kein Kaufsignal
+- kausaler historischer Markteinschätzungs-Chart mit BTC-Preis-Overlay, Fadenkreuzwerten, einstellbarer Preis-Deckkraft und linearer/logarithmischer Preisachse
+- optionale **kausale EMA-Glättung** (Aus / 3 / 5 / 7 / 14 / 30 Punkte); rein visuell und identisch für das Startseiten-Overlay
+- Startseiten-Chartmodus **Bitcoin-Kurs + Markteinschätzung** mit eigener linearer Scoreachse, die auf den sichtbaren Scorebereich skaliert
+- Boden-/Top-Zonen und Bestätigungsdiagnostik, einstellbare Gewichte, Schwellen sowie adaptive Volatilitäts-/Zyklusfenster
 - Stack-Verlauf
 - Portfoliowert
 - Gesamtgewinn/-verlust
@@ -266,6 +289,18 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - TWR, auf den gewählten Zeitraum annualisierte XIRR, BTC-Markt-CAGR, DCA-, Drawdown- und cashflow-neutraler HODL-Benchmark
 - Stacking-Geschwindigkeit, Netto-Fiat-Investment, Gebührenquoten und Stack-Altersverteilung
 - Bitcoin-Netzwerk-, Milestone- und Halving-Markierungen
+
+#### Sats Sentinel
+
+- Privacy-first Watch-only-Überwachung für Adressen, Adressgruppen, XPUB/YPUB/ZPUB und Descriptoren; keine Private Keys, Seeds, Signaturen oder Ausgaben
+- frei wählbare Abfragequelle: **Automatisch · Fulcrum/Electrum · electrs/Electrum · eigene Mempool-Instanz · konfigurierte öffentliche Mempool-Instanz über Tor**
+- explizite Quellenwahl ist **Fail Closed**: fällt die gewählte eigene Quelle aus, meldet Sentinel offline/teilweise und wechselt niemals heimlich zu einem öffentlichen Provider
+- lokale/private Fulcrum-/electrs-/Mempool-Ziele dürfen direkt im LAN laufen; `.onion` und öffentliche Ziele gehen über Tor mit Remote-DNS
+- Fulcrum/electrs nutzen Electrum-Scripthash-Abfragen für Balance/History/UTXOs; TLS und exaktes SHA-256-Zertifikat-Pinning unterstützen selbstsignierte Fulcrum-Zertifikate
+- verschlüsselter gerätegebundener Runtime-Cache enthält konkrete abgeleitete Adressen/Scripts, nicht XPUB-/Descriptor-Geheimnisse
+- Bewegungsjournal mit Sender → Richtung → Empfänger, Kategorien, Notizen, Schwellen und Pagination; TXIDs/Adressen können auf den getrennt konfigurierten Mempool-Explorer verlinken
+- Home-Assistant-Events, Persistent Notifications, mehrere `notify.*`-Dienste, self-hosted ntfy und Webhooks mit diskreter/normaler/detaillierter Darstellung
+- beim Entfernen eines Watch-Eintrags wird auch dessen komplette Journal-Historie dauerhaft aus dem verschlüsselten Sentinel-Cache gelöscht
 
 ### Backup und Datenportabilität
 
@@ -337,27 +372,28 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.9**. Dieses Release ergänzt den **Revolut-X-CSV-Import** und erweitert das Buchungsmodell um Einnahmen, Ausgaben sowie eigenständige On-Chain-/Lightning-Transaktionsgebühren, ohne FIFO- und Performance-Rechnung zu vermischen.
+Aktueller Projektstand: **v0.21.0.9**. Dieser aktualisierte Stand behält bewusst dieselbe semantische Version und erweitert die ursprünglich am 14.08.2026 veröffentlichten v0.21.0.9-Artefakte um **Sats Sentinel**, die adaptive/historische **Markteinschätzung**, schnellere Live-/Chart-Aktualisierung sowie die dazugehörige Privacy- und UI-Härtung.
 
-#### Änderungen seit v0.21.0.8
+#### Änderungen seit v0.21.0.9
 
-- **Revolut X:** eigener CSV-Parser für `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees` und `Date`; nur BTC/XBT Buy/Sell, separate Fiatgebühren und robuste Datumsformate.
-- **Manuelle Einnahmen und Ausgaben:** Einnahmen erzeugen wie Käufe einen bewerteten FIFO-Zugang; Ausgaben bleiben von Verkäufen getrennt, realisieren aber FIFO-Gewinn/-Verlust.
-- **Transaktionsgebühren:** On-Chain-/Lightning-Gebühren können eigenständig in sats oder BTC erfasst werden. Sie mindern den echten Stack, verbrauchen FIFO-BTC ohne Verkaufserlös und zeigen zusätzlich ihren historischen Fiat-Gegenwert.
-- **Buchungsart korrigierbar:** gespeicherte Buchungen können zwischen Kauf, Einnahme, Verkauf, Ausgabe, Transaktionsgebühr und Stack geändert werden; FIFO wird nach jeder Änderung vollständig neu validiert.
-- **Historische Plausibilitätswarnung:** manuelle bewertete Buchungen werden gegen den historischen BTC-Kurs des Buchungszeitpunkts geprüft; ab 10 % Abweichung erscheint eine Warnung, Speichern bleibt möglich.
-- **Übersicht:** getrennte Summen für Verkäufe, Ausgaben, Einnahmen und Transaktionsgebühren sowie gesamter realisierter Gewinn/Verlust; **„Fiat in Sicherheit gebracht“** heißt jetzt **„Kaufkraft in Sicherheit gebracht“**.
-- **Chart-Zeiträume:** ergänzt wurden seit Wochenbeginn, rollierende 1 Woche und seit Monatsbeginn in der gewünschten Reihenfolge von kurz nach lang. XIRR bleibt für den gewählten Zeitraum annualisiert; TWR bleibt cashflow-neutral. CAGR wird klar als Wachstum des Bitcoin-Marktpreises beschrieben.
-- **Gebührenanalyse:** gesamte Gebühren enthalten auch den Fiat-Gegenwert erfasster BTC-/Sats-Gebühren, ohne reine Netzwerkgebühren in Handelsvolumen-Quoten einzumischen.
-- **Qualitätssicherung:** gezielte Tests für Revolut X, historische Referenzkurse, Einnahmen, realisierte Ausgaben, Netzwerkgebühren und Legacy-BTC-Gebühren; die finale lokale Suite besteht **373 Tests + 8 Subtests**.
+- **Sats Sentinel:** 24/7-Watch-only-Überwachung für Adressen/XPUB/Descriptoren mit verschlüsseltem Runtime-Zustand, Bewegungsjournal, Testmodi und konfigurierbaren Home-Assistant-/ntfy-/Webhook-Benachrichtigungen.
+- **Einstellbare Sentinel-Quelle:** Automatisch, Fulcrum/Electrum, electrs/Electrum, eigene Mempool-Instanz oder konfigurierte öffentliche Mempool-Instanz über Tor. Explizite Auswahl bleibt Fail Closed ohne versteckten Provider-Fallback.
+- **Fulcrum/electrs:** direkte Electrum-Scripthash-Abfragen, lokales LAN bzw. Tor/Onion-Routing, TLS und exaktes SHA-256-Pinning für selbstsignierte Serverzertifikate.
+- **Sentinel-Privacy-Lebenszyklus:** XPUB/Descriptor bleiben aus dem Runtime-Cache, diskrete Benachrichtigungen verbergen Wallet/Betrag/TXID/Adresse und das Löschen eines Watch-Eintrags entfernt dauerhaft dessen Journal-Historie.
+- **Adaptive Markteinschätzung:** modularer 0–100-Score, adaptive Volatilitäts-/Referenzfenster, frei einstellbare Gruppen-/Signal-/Wendepunktgewichte sowie Boden-/Top-Zonen und Bestätigungsdiagnostik. Sie bleibt eine zusätzliche Markteinschätzung und kein Kaufsignal oder Forecast.
+- **Kausale Historie:** historische Scores werden ausschließlich mit Informationen rekonstruiert, die am jeweiligen Tag bereits vorhanden waren. Der Chart besitzt Fadenkreuz-Achsenwerte, BTC-Preis-Overlay, einstellbare Deckkraft und lineare/logarithmische Preisachse.
+- **Kausale Chart-Glättung:** optionale EMA-Glättung (Aus / 3 / 5 / 7 / 14 / 30 Punkte). Sie verändert ausschließlich die angezeigte Linie, niemals Rohscore oder HA-Sensor; dieselbe Einstellung wird auf der Startseite übernommen.
+- **Startseiten-Chart:** neue Ansicht **Bitcoin-Kurs + Markteinschätzung** mit eigener linearer Scoreachse, die automatisch auf den sichtbaren Scorebereich skaliert. Historische Scores werden nicht mehr in jedes Intraday-Kursintervall vorwärts aufgefüllt; kausale Score-Stützpunkte werden direkt auf die Kurszeitachse gelegt, abgeschlossene Tagesscores gelten am Tagesende und der Live-Score erst ab seinem tatsächlichen Berechnungszeitpunkt.
+- **Live-Kurs/Chart-Refresh:** Public-Price-Fast-Lane mit quellenabhängiger Frequenz, aktueller Live-Punkt in Charts und echte Quellenaktualisierung bei Zeitraumwechseln; öffentliche Verbindungen bleiben Tor-only.
+- **Sats-Sentinel-UI:** der Statusrefresh überschreibt keine ungespeicherten Formulareingaben mehr; Speichern und Quellen-Test liefern sichtbares Erfolgs-/Fehlerfeedback.
+- **Qualitätssicherung:** finale Release-Suite **457 Tests + 8 Subtests**, zusätzlich Python-Compile, JavaScript-Syntax und Release-Integritätsprüfung.
 
-Das **Tor Gateway bleibt v0.21.0.3**, da v0.21.0.9 ausschließlich die Custom Integration und Dokumentation betrifft.
+Das **Tor Gateway bleibt v0.21.0.3**. Der aktualisierte v0.21.0.9-Stand ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
 
-Der grundlegende Berechnungs-, Datenschutz- und Security-Audit aus [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) bleibt unverändert bestehen.
+Der grundlegende Berechnungs-/Datenschutz-/Security-Audit aus [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) bleibt die historische Audit-Basis. Die neuen Sats-Sentinel- und Markteinschätzungs-Pfade besitzen eigene Regressionstests.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
-
 ### Was das Projekt ausdrücklich nicht ist
 
 - keine Wallet
