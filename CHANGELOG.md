@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.21.0.10 — 2026-08-15: Sats Sentinel, adaptive market assessment & chart overlays
+## v0.21.0.10 — 2026-08-16: Sats Sentinel, adaptive market assessment & chart overlays
 
 ### English
 
