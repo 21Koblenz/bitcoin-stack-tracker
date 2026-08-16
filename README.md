@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.11
+# Bitcoin Stack Tracker v0.21.0.12
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -167,19 +167,21 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.11**. This release builds on **v0.21.0.10** and focuses on causal multi-cycle market markers, correct delayed bottom confirmation, a more compact Sats Sentinel UI and the final stable frontend release layout.
+Current project version: **v0.21.0.12**. This maintenance release builds on **v0.21.0.11** and corrects Sats Sentinel XPUB/YPUB/ZPUB/descriptor address discovery plus the per-watch balance/status display.
 
-#### Changes since v0.21.0.10
+#### Changes since v0.21.0.11
 
-- **Best values per market cycle:** `10 years` and `Max` now mark the true highest causal raw score in every 4-year window instead of only one global best value. The bucket maximum is determined before display sampling, so the real best day cannot disappear from the chart.
-- **Compact stars + details:** only small stars are drawn in the chart. The historical chart keeps a permanent date/score legend below it; desktop hover and touch tap open a popup. The same marker set is shown in the overview **Bitcoin price + market assessment** chart.
-- **Correct causal bottom confirmation:** a bottom no longer has to be confirmed on the exact best-score day. Each marker independently checks following days only inside the configured `turning_zone_memory_days` window and calculates every candidate strictly as of that date. The marker keeps its original score date while the popup can show the later confirmation date and lag. Default model thresholds are not loosened.
-- **Modular-model help:** every configurable model field includes an explanation of what it controls and the practical effect of increasing or decreasing it. Weight fields explicitly explain that more weight means more influence, not an automatic score increase.
-- **Collapsible Sats Sentinel:** status, journal, test lab, monitor settings, watch targets and privacy can be collapsed independently. The selected layout is saved per portfolio in browser storage and restored on reload/portfolio switch on the same device/browser.
-- **Stable frontend releases:** the canonical frontend files remain `index.html`, `panel.js`, `app.js`, `style.css` and `performance-math.js`; cache busting uses `?v=<VERSION>`. Legacy version/hash files are removed once during the v0.21.0.11 migration, and `.gitignore` prevents those patterns from returning.
-- **Quality assurance:** **485 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON parsing, performance-math numeric checks and release-integrity regressions.
+- **Receive is a true gap limit:** Sentinel keeps every used receive address under monitoring and continues deriving until the configured number of consecutive unused receive addresses has been reached. Five used receive addresses with gap 2 therefore monitor indexes 0–6.
+- **Change uses the same independent logic:** the change branch is scanned separately with its own gap limit. Used change addresses never consume the configured reserve count.
+- **Automatic forward extension:** a device-bound encrypted standby pool contains concrete pre-derived addresses only. When a reserve address becomes used, Sentinel can extend the active range without storing the XPUB/descriptor in the runtime cache.
+- **Correct watch-card balance/status:** the lightweight 15-second status refresh keeps privacy-safe per-monitor aggregates. When the transaction overview is loaded, its authoritative Current wallet balance is reused by the watch card so both balance displays remain identical.
+- **Restart-safe Sentinel state:** Fulcrum/Electrum settings, saved watch targets and encrypted derived-address runtime coverage are restored across Home Assistant restarts.
+- **Non-blocking XPUB saves:** saving an HD watch target persists immediately; the long Fulcrum gap scan continues in a Home Assistant background task instead of timing out the UI request.
+- **Clearer watch cards:** XPUB/descriptor targets show the actual active split, for example `Receive 7 · Change 5`, alongside the total derived-address and UTXO counts.
+- **Stable frontend release layout retained:** v0.21.0.12 continues to overwrite only `index.html`, `panel.js`, `app.js`, `style.css` and `performance-math.js`; no version/hash-named frontend files are created and no recurring GitHub cleanup is required.
+- **Quality assurance:** **502 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON/SBOM parsing and performance-math checks.
 
-The **Tor Gateway remains at v0.21.0.3**. v0.21.0.11 changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
+The **Tor Gateway remains at v0.21.0.3**.
 
 Release changes: [`CHANGELOG.md`](CHANGELOG.md)  
 Release overview: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
@@ -367,19 +369,21 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.11**. Dieses Release baut auf **v0.21.0.10** auf und konzentriert sich auf kausale Multi-Zyklus-Marktmarker, die korrekte verzögerte Bodenbestätigung, eine kompaktere Sats-Sentinel-Oberfläche und die endgültige stabile Frontend-Release-Struktur.
+Aktueller Projektstand: **v0.21.0.12**. Dieses Wartungsrelease baut auf **v0.21.0.11** auf und korrigiert die Adresssuche von Sats Sentinel für XPUB/YPUB/ZPUB und Descriptoren sowie die Bestands-/Statusanzeige pro Watch-Eintrag.
 
-#### Änderungen seit v0.21.0.10
+#### Änderungen seit v0.21.0.11
 
-- **Bestwerte je Marktzyklus:** `10 Jahre` und `Max` markieren jetzt in jedem 4-Jahres-Fenster den tatsächlich höchsten kausalen Rohscore statt nur eines globalen Bestwerts. Das Fenstermaximum wird vor dem Darstellungs-Sampling ermittelt, damit der echte Besttag nicht aus dem Chart verschwinden kann.
-- **Kompakte Sterne + Details:** Im Chart werden nur kleine Sterne gezeichnet. Unter dem Historical-Chart bleibt eine permanente Datum-/Score-Legende sichtbar; am PC öffnet Hover und auf Touch-Geräten Antippen ein Popup. Dieselben Marker erscheinen im Startseitenchart **Bitcoin-Kurs + Markteinschätzung**.
-- **Korrekte kausale Bodenbestätigung:** Ein Boden muss nicht mehr am exakten Bestscore-Tag bestätigt sein. Jeder Marker prüft unabhängig nur innerhalb des eingestellten `turning_zone_memory_days`-Fensters die Folgetage und berechnet jeden Kandidaten strikt mit den bis zu diesem Tag verfügbaren Daten. Der Marker behält seinen ursprünglichen Score-Tag; das Popup kann das spätere Bestätigungsdatum und die Verzögerung anzeigen. Die Default-Schwellen werden dafür nicht gelockert.
-- **Hilfen im modularen Modell:** Jedes einstellbare Modellfeld erklärt seinen Zweck und die praktische Auswirkung von Erhöhen oder Verringern. Bei Gewichten wird ausdrücklich erklärt: mehr Gewicht bedeutet mehr Einfluss, nicht automatisch einen höheren Endscore.
-- **Einklappbarer Sats Sentinel:** Status, Journal, Testlabor, Überwachungseinstellungen, Watch-Ziele und Datenschutz lassen sich unabhängig einklappen. Die gewählte Ansicht wird pro Portfolio im Browser gespeichert und auf demselben Gerät/Browser nach Neuladen oder Portfolio-Wechsel wiederhergestellt.
-- **Stabile Frontend-Releases:** Die kanonischen Frontend-Dateien bleiben dauerhaft `index.html`, `panel.js`, `app.js`, `style.css` und `performance-math.js`; Cache-Busting läuft über `?v=<VERSION>`. Alte Versions-/Hash-Dateien werden beim Wechsel auf v0.21.0.11 einmalig entfernt und `.gitignore` verhindert, dass diese Muster zurückkehren.
-- **Qualitätssicherung:** **485 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON-Parsing, Performance-Math-Numeriktests und Release-Integritätsregressionen.
+- **Receive ist ein echtes Gap-Limit:** Sentinel überwacht weiterhin jede bereits benutzte Receive-Adresse und leitet so lange weiter ab, bis die eingestellte Zahl aufeinanderfolgender unbenutzter Receive-Adressen erreicht ist. Fünf benutzte Receive-Adressen mit Gap 2 ergeben damit die überwachten Indizes 0–6.
+- **Change verwendet dieselbe unabhängige Logik:** Der Change-Branch wird separat mit seinem eigenen Gap-Limit gescannt. Bereits benutzte Change-Adressen verbrauchen die eingestellte Reserve nicht.
+- **Automatisches Nachrücken:** Ein gerätegebunden verschlüsselter Standby-Pool enthält ausschließlich konkrete vorab abgeleitete Adressen. Wird eine Reserveadresse benutzt, kann Sentinel den aktiven Bereich erweitern, ohne XPUB/Descriptor im Runtime-Cache zu speichern.
+- **Korrekte Bestands-/Statusanzeige:** Der leichte 15-Sekunden-Statusrefresh behält datenschutzfreundliche Aggregate pro Watch-Eintrag. Sobald die Transaktionsübersicht geladen wurde, übernimmt die Watch-Karte deren maßgeblichen „Aktuellen Wallet-Bestand“, damit beide Bestandsanzeigen identisch bleiben.
+- **Neustartfester Sentinel-Zustand:** Fulcrum-/Electrum-Einstellungen, gespeicherte Watch-Ziele und die verschlüsselte Runtime-Abdeckung der abgeleiteten Adressen werden über Home-Assistant-Neustarts wiederhergestellt.
+- **Nicht-blockierendes XPUB-Speichern:** Ein HD-Watch-Ziel wird sofort dauerhaft gespeichert; der lange Fulcrum-Gap-Scan läuft danach als Home-Assistant-Hintergrundtask weiter, statt den UI-Request in einen Timeout laufen zu lassen.
+- **Eindeutigere Watch-Karten:** XPUB-/Descriptor-Ziele zeigen die tatsächlich aktive Aufteilung, zum Beispiel `Receive 7 · Change 5`, zusätzlich zur Gesamtzahl der abgeleiteten Adressen und UTXOs.
+- **Stabile Frontend-Release-Struktur bleibt erhalten:** v0.21.0.12 überschreibt weiterhin nur `index.html`, `panel.js`, `app.js`, `style.css` und `performance-math.js`; es entstehen keine versions-/hashbasierten Frontend-Dateien und bei GitHub ist kein wiederkehrendes Aufräumen nötig.
+- **Qualitätssicherung:** **502 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON-/SBOM-Parsing und Performance-Math-Prüfungen.
 
-Das **Tor Gateway bleibt v0.21.0.3**. v0.21.0.11 ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
+Das **Tor Gateway bleibt v0.21.0.3**.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)

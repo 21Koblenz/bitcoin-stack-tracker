@@ -1,5 +1,85 @@
 # Changelog
 
+## v0.21.0.12 — 2026-08-16: Sats Sentinel HD-wallet reliability, persistence & non-blocking scans
+
+### English
+
+This maintenance release builds on **v0.21.0.11** and hardens Sats Sentinel for real XPUB/YPUB/ZPUB and descriptor wallets: correct independent gap-limit discovery, restart persistence, non-blocking saves, consistent balances and complete active-address transaction coverage.
+
+#### XPUB/descriptor gap discovery
+- `receive_count` is a true **Receive gap limit**, not a cap on total monitored receive addresses. Sentinel keeps all used receive addresses and stops only after the configured number of consecutive unused addresses after the used range.
+- `change_count` follows the **same independent gap-limit logic** on the change branch. Receive and Change are never combined into a shared limit.
+- Example with gap 2: five used Receive addresses result in indexes 0–6 being active; three used Change addresses result in indexes 0–4 being active.
+- Full Sentinel activation on startup/reload and global settings save uses the same HD gap discovery as saving an individual watch target. An already discovered XPUB/descriptor can no longer collapse back to raw `Receive N + Change N` counts.
+- A device-bound encrypted standby pool contains **concrete pre-derived addresses only**, allowing the active gap to advance while the main vault is locked. Raw XPUB/descriptor secrets remain outside the runtime cache.
+- XPUB/descriptor watch cards show the actual active `Receive … · Change …` split.
+
+#### Balance, UTXOs and transaction history
+- The lightweight 15-second status refresh returns privacy-safe per-monitor aggregates so watch cards retain balance, derived-address counts and UTXO counts without opening transaction history.
+- Current wallet balance, UTXO totals and historical transaction discovery use the **same active used-address + gap set**; inactive encrypted standby addresses are excluded.
+- The watch-card **Balance** now reuses the already authoritative **Current wallet balance** returned by the transaction overview whenever that overview is available, so both displays stay identical instead of diverging through separate frontend calculations.
+- Loading the transaction overview immediately refreshes the watch card with that authoritative balance.
+- Transaction counts are deduplicated by real Bitcoin transaction ID: one Bitcoin transaction touching several wallet addresses is counted once.
+- Concrete derived addresses remain omitted from the lightweight status endpoint.
+
+#### Restart persistence and Fulcrum settings
+- Fulcrum/Electrum connection settings and the encrypted concrete-address runtime state are restored after a Home Assistant restart instead of silently reverting to defaults.
+- After the main vault is unlocked, the persisted Sats Sentinel configuration is reactivated from the password-protected vault so saved addresses, XPUB/YPUB/ZPUB targets, descriptors, labels and gap limits return as the authoritative configuration.
+- Saving a watch target first persists changed Sentinel/Fulcrum settings, preventing a newly entered host/port/TLS configuration from being lost when the watch entry is saved immediately afterwards.
+- Restart regression coverage uses fresh runtime-store instances and verifies restoration while keeping raw XPUB/descriptor secrets out of the device-bound runtime cache.
+
+#### Non-blocking XPUB saves
+- Saving an XPUB/descriptor no longer waits synchronously for the full Fulcrum gap scan and initial poll inside the HTTP request.
+- The encrypted watch configuration is persisted first and the request returns promptly; HD gap discovery and initial wallet synchronization continue as a Home Assistant background task.
+- A newer save supersedes/cancels an older pending scan so stale discovery results cannot overwrite the newest watch configuration.
+- The UI reports that the address scan is running in the background instead of timing out with “Home Assistant not reachable”.
+
+#### Release structure and validation
+- The stable frontend layout introduced in v0.21.0.11 remains permanent: `index.html`, `panel.js`, `static/app.js`, `static/style.css` and `static/performance-math.js` are overwritten in place and cache-busted with `?v=0.21.0.12`.
+- **No legacy frontend files need to be deleted from GitHub for v0.21.0.12.**
+- Home Assistant custom integration: **v0.21.0.12**.
+- Tor Gateway remains **v0.21.0.3**.
+- Final repository suite: **502 tests + 8 subtests**, plus Python compile, JavaScript syntax, JSON/SBOM and release-integrity checks.
+
+### Deutsch
+
+Dieses Wartungsrelease baut auf **v0.21.0.11** auf und härtet Sats Sentinel für echte XPUB/YPUB/ZPUB- und Descriptor-Wallets: korrekte getrennte Gap-Limits, Neustart-Persistenz, nicht-blockierendes Speichern, konsistente Bestände und vollständige TX-Abdeckung aller aktiven Adressen.
+
+#### XPUB-/Descriptor-Gap-Erkennung
+- `receive_count` ist ein echtes **Receive-Gap-Limit** und keine Obergrenze für die insgesamt überwachten Receive-Adressen. Sentinel behält alle benutzten Receive-Adressen und stoppt erst nach der eingestellten Zahl aufeinanderfolgender unbenutzter Adressen hinter dem benutzten Bereich.
+- `change_count` verwendet auf dem Change-Branch **dieselbe unabhängige Gap-Limit-Logik**. Receive und Change werden niemals zu einem gemeinsamen Limit zusammengefasst.
+- Beispiel mit Gap 2: fünf benutzte Receive-Adressen ergeben die aktiven Indizes 0–6; drei benutzte Change-Adressen ergeben die aktiven Indizes 0–4.
+- Die vollständige Sentinel-Aktivierung bei Start/Reload und beim globalen Speichern verwendet dieselbe HD-Gap-Erkennung wie das Speichern eines einzelnen Watch-Ziels. Ein bereits erkanntes XPUB-/Descriptor-Wallet kann nicht mehr auf die nackten Werte `Receive N + Change N` zurückfallen.
+- Ein gerätegebunden verschlüsselter Standby-Pool enthält **ausschließlich konkrete vorab abgeleitete Adressen**, damit der aktive Gap auch bei gesperrtem Haupttresor nach vorne wandern kann. Rohe XPUB-/Descriptor-Geheimnisse bleiben außerhalb des Runtime-Caches.
+- XPUB-/Descriptor-Watch-Karten zeigen die tatsächlich aktive Aufteilung `Receive … · Change …`.
+
+#### Bestand, UTXOs und Transaktionshistorie
+- Der leichte 15-Sekunden-Statusrefresh liefert datenschutzfreundliche Aggregate pro Watch-Eintrag, damit Bestand, abgeleitete Adressen und UTXO-Zahl auch ohne geöffnete Transaktionshistorie sichtbar bleiben.
+- Aktueller Wallet-Bestand, UTXO-Summen und historische TX-Erkennung verwenden **denselben aktiven Satz aus benutzten Adressen + Gap**; inaktive verschlüsselte Standby-Adressen werden ausgeschlossen.
+- Der **Bestand** auf der Watch-Karte übernimmt jetzt den bereits maßgeblichen **Aktuellen Wallet-Bestand** aus der Transaktionsübersicht, sobald diese Daten vorhanden sind. Dadurch können beide Anzeigen nicht mehr durch getrennte Frontend-Berechnungen auseinanderlaufen.
+- Nach dem Laden der Transaktionsübersicht wird die Watch-Karte sofort mit diesem maßgeblichen Bestand aktualisiert.
+- Transaktionszahlen werden anhand der echten Bitcoin-TXID dedupliziert: Eine Bitcoin-Transaktion, die mehrere eigene Wallet-Adressen berührt, zählt einmal.
+- Konkrete abgeleitete Adressen werden vom leichten Status-Endpunkt weiterhin nicht ausgegeben.
+
+#### Neustart-Persistenz und Fulcrum-Einstellungen
+- Fulcrum-/Electrum-Verbindungsdaten und der verschlüsselte Runtime-Zustand der konkreten abgeleiteten Adressen werden nach einem Home-Assistant-Neustart wiederhergestellt, statt still auf Standardwerte zurückzufallen.
+- Nach dem Entsperren des Haupttresors wird die gespeicherte Sats-Sentinel-Konfiguration erneut aus dem passwortgeschützten Tresor aktiviert. Gespeicherte Adressen, XPUB/YPUB/ZPUB-Ziele, Descriptoren, Labels und Gap-Limits sind damit wieder der maßgebliche Stand.
+- Beim Speichern eines Watch-Ziels werden geänderte Sentinel-/Fulcrum-Einstellungen zuerst dauerhaft gespeichert, damit ein neu eingetragener Host/Port/TLS-Stand nicht verloren geht.
+- Neustart-Regressionstests verwenden frische Runtime-Store-Instanzen und prüfen die Wiederherstellung, während rohe XPUB-/Descriptor-Geheimnisse weiterhin aus dem gerätegebundenen Runtime-Cache herausbleiben.
+
+#### Nicht-blockierendes XPUB-Speichern
+- Beim Speichern eines XPUBs/Descriptors wird nicht mehr synchron im HTTP-Request auf den vollständigen Fulcrum-Gap-Scan und den ersten Poll gewartet.
+- Die verschlüsselte Watch-Konfiguration wird zuerst dauerhaft gespeichert und der Request kehrt zügig zurück; HD-Gap-Erkennung und erste Wallet-Synchronisierung laufen anschließend als Home-Assistant-Hintergrundtask weiter.
+- Ein neuerer Speichervorgang ersetzt/bricht einen älteren noch laufenden Scan ab, damit veraltete Ergebnisse keinen neueren Watch-Stand überschreiben können.
+- Die Oberfläche meldet den laufenden Adressscan im Hintergrund, statt mit „Home Assistant nicht erreichbar“ in einen Timeout zu laufen.
+
+#### Release-Struktur und Prüfung
+- Die mit v0.21.0.11 eingeführte stabile Frontend-Struktur bleibt dauerhaft bestehen: `index.html`, `panel.js`, `static/app.js`, `static/style.css` und `static/performance-math.js` werden nur überschrieben und mit `?v=0.21.0.12` cache-gebustet.
+- **Für v0.21.0.12 müssen bei GitHub keine alten Frontend-Dateien gelöscht werden.**
+- Home-Assistant-Custom-Integration: **v0.21.0.12**.
+- Tor Gateway bleibt **v0.21.0.3**.
+- Finale Repository-Suite: **502 Tests + 8 Subtests**, zusätzlich Python-Compile, JavaScript-Syntax, JSON/SBOM und Release-Integritätsprüfungen.
+
 ## v0.21.0.11 — 2026-08-16: causal bottom confirmations, multi-cycle markers & collapsible Sats Sentinel
 
 ### English
@@ -60,7 +140,7 @@ Dieses Release baut auf **v0.21.0.10** auf und korrigiert die Zuordnung der hist
 - Tor Gateway bleibt **v0.21.0.3**.
 - Die endgültige Testanzahl steht in `RELEASE-QC-v0.21.0.11.md`.
 
-## v0.21.0.10 — 2026-08-15: Sats Sentinel, adaptive market assessment & chart overlays
+## v0.21.0.10 — 2026-08-16: Sats Sentinel, adaptive market assessment & chart overlays
 
 ### English
 
@@ -164,50 +244,114 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Home-Assistant-Custom-Integration: **v0.21.0.10**.
 - Tor Gateway bleibt **v0.21.0.3**.
 
-## v0.21.0.9 — Initial published build (2026-08-14): Revolut X, manuelle Buchungen & Netzwerkgebühren
+## v0.21.0.9 — 2026-08-14: Revolut X, manual bookings & network fees
 
-### Revolut X CSV
+### English
+
+#### Revolut X CSV
+- Added a dedicated parser for `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees`, `Date`.
+- `BTC`/`XBT` rows are imported; other assets are skipped.
+- `Buy` becomes a purchase and `Sell` a sale; `Quantity` is BTC and `Fees` is a separate fiat fee.
+- `Value` remains the gross trade value before fees: purchase total = `Value + Fees`, sale net proceeds = `Value - Fees`.
+- Supports dates such as `21 Jan 2026, 21:21:21` and month-first AM/PM formats; if `Price` is missing it is reconstructed from `Value / Quantity`.
+
+#### Manual bookings & FIFO
+- Added **Income** as a valued BTC inflow that creates FIFO cost basis like a purchase while remaining a separate booking type.
+- **Expense** can now be entered manually and realizes profit/loss through the same per-portfolio FIFO logic as a sale while remaining semantically separate.
+- Booking type can be changed during editing. The full FIFO chain is atomically revalidated afterwards and new/larger oversells remain blocked.
+- Added separate overview totals for sales, expenses, income and transaction fees plus total realized profit/loss.
+- Renamed **“Fiat secured”** to **“Purchasing power secured”**; income intentionally does not count as fiat-funded purchasing.
+
+#### On-chain and Lightning transaction fees
+- Added standalone **Transaction fee** bookings with network `On-Chain` or `Lightning` and amount in BTC/sats.
+- The fee reduces the actual stack and consumes the corresponding FIFO lots without inventing sale proceeds.
+- Historical BTC price at booking time is used to display the fiat value of the network fee.
+- Existing imported `fee_btc` values reduce the stack additionally only when explicitly marked stack-effective, avoiding double deduction for legacy/net imports.
+- Total-fee analytics include explicit fiat fees plus fiat values of recorded BTC/sats fees; pure network fees do not distort trading-volume fee ratios.
+
+#### Historical plausibility check
+- Manual purchases, income, sales and expenses are compared non-blockingly with the historical BTC price at the booking timestamp.
+- From **10%** deviation a warning shows entered price, reference price and percentage difference.
+- Old bookings never fall back to today's live price. If no historical reference is available, the check is skipped.
+
+#### Performance & ranges
+- New order: **1 day · week-to-date · 1 week · month-to-date · 30 days · 90 days · YTD · 1 year · 3 years · 5 years · 10 years · since first purchase · Max**.
+- `week-to-date` starts Monday 00:00; `1 week` is rolling seven days; `month-to-date` starts at the first day of the month 00:00.
+- XIRR remains the money-weighted personal return of the **selected range**, annualized.
+- TWR remains cash-flow neutral: additional purchases/income do not artificially increase return; transaction fees remain real performance costs.
+- CAGR is described more clearly as the average annualized Bitcoin market-price development and separated from personal XIRR/TWR.
+
+#### Compatibility & tests
+- Home Assistant integration: **v0.21.0.9**.
+- Tor Gateway remains **v0.21.0.3**.
+- Added targeted regressions for Revolut X, historical reference prices, income, expense/FIFO and network fees.
+- Final local suite: **373 tests + 8 subtests passed**, plus JavaScript syntax, Python compile, JSON/YAML and version-consistency checks.
+
+### Deutsch
+
+#### Revolut X CSV
 - Neuer eigener Parser für `Symbol`, `Type`, `Quantity`, `Price`, `Value`, `Fees`, `Date`.
 - `BTC`/`XBT` wird übernommen; andere Assets werden übersprungen.
 - `Buy` wird Kauf, `Sell` wird Verkauf; `Quantity` ist BTC und `Fees` eine separate Fiatgebühr.
 - `Value` bleibt der Brutto-Handelswert vor Gebühren: Kauf-Gesamtbetrag = `Value + Fees`, Verkaufs-Nettoerlös = `Value - Fees`.
 - Unterstützt u. a. `21 Jan 2026, 21:21:21` sowie Monat-zuerst mit AM/PM; fehlt `Price`, wird er aus `Value / Quantity` rekonstruiert.
 
-### Manuelle Buchungen & FIFO
+#### Manuelle Buchungen & FIFO
 - Neue Buchungsart **Einnahme**: bewerteter BTC-Zugang mit FIFO-Einstand wie bei einem Kauf, aber separat ausgewiesen.
 - **Ausgabe** ist nun auch manuell auswählbar und realisiert Gewinn/Verlust über dieselbe depotweise FIFO-Logik wie ein Verkauf, bleibt aber semantisch getrennt.
 - Die Buchungsart kann beim Bearbeiten geändert werden. Danach wird die vollständige FIFO-Kette atomar neu validiert; ein neu erzeugter/größerer Oversell wird weiterhin verhindert.
 - Übersicht ergänzt um getrennte Summen für Verkäufe, Ausgaben, Einnahmen und Transaktionsgebühren sowie den gesamten realisierten Gewinn/Verlust.
 - **„Fiat in Sicherheit gebracht“** wurde in **„Kaufkraft in Sicherheit gebracht“** umbenannt; Einnahmen zählen dort bewusst nicht als Fiat-Kauf.
 
-### On-Chain- und Lightning-Transaktionsgebühren
+#### On-Chain- und Lightning-Transaktionsgebühren
 - Neue eigenständige Buchungsart **Transaktionsgebühr** mit Netzwerk `On-Chain` oder `Lightning` und Betrag in BTC/Sats.
 - Die Gebühr mindert den tatsächlichen Stack und verbraucht die entsprechenden FIFO-Lots, ohne einen fiktiven Verkaufserlös zu erzeugen.
 - Der historische BTC-Kurs am Buchungszeitpunkt dient zur Anzeige des Fiat-Gegenwerts der Gebühr.
 - Bestehende importierte `fee_btc`-Werte reduzieren den Stack nur zusätzlich, wenn sie ausdrücklich als stack-wirksam markiert sind; dadurch werden Legacy-/Nettoimporte nicht doppelt belastet.
 - Gebührenanalyse: Gesamte Gebühren enthalten explizite Fiatgebühren plus Fiat-Gegenwerte erfasster BTC-/Sats-Gebühren; reine Netzwerkgebühren verzerren keine Handelsvolumenquote.
 
-### Historische Plausibilitätsprüfung
+#### Historische Plausibilitätsprüfung
 - Manuelle Käufe, Einnahmen, Verkäufe und Ausgaben werden nicht blockierend mit dem historischen BTC-Kurs des Buchungszeitpunkts verglichen.
 - Ab **10 %** Abweichung erscheint eine Warnung mit eingegebenem Kurs, Referenzkurs und prozentualer Abweichung.
 - Für alte Buchungen wird niemals der heutige Live-Kurs als Ersatz benutzt. Ist kein historischer Referenzkurs vorhanden, wird die Prüfung nur übersprungen.
 
-### Performance & Zeiträume
+#### Performance & Zeiträume
 - Neue Reihenfolge: **1 Tag · seit Wochenbeginn · 1 Woche · seit Monatsbeginn · 30 Tage · 90 Tage · YTD · 1 Jahr · 3 Jahre · 5 Jahre · 10 Jahre · seit erstem Kauf · Max**.
 - `seit Wochenbeginn` startet Montag 00:00; `1 Woche` ist rollierend sieben Tage; `seit Monatsbeginn` startet am Monatsersten 00:00.
 - XIRR bleibt die geldgewichtete persönliche Rendite des **gewählten Zeitraums**, auf ein Jahr hochgerechnet.
 - TWR bleibt cashflow-neutral: zusätzliche Käufe/Einnahmen erhöhen die Rendite nicht künstlich; Transaktionsgebühren bleiben echte Performancekosten.
 - CAGR wird klarer als durchschnittliche annualisierte Entwicklung des Bitcoin-Marktpreises beschrieben und von persönlicher XIRR/TWR abgegrenzt.
 
-### Kompatibilität & Tests
+#### Kompatibilität & Tests
 - Home-Assistant-Integration: **v0.21.0.9**.
 - Tor Gateway: weiterhin **v0.21.0.3**.
 - Neue gezielte Regressionstests für Revolut X, historische Referenzkurse, Einnahmen, Ausgaben/FIFO und Netzwerkgebühren.
 - Finale lokale Testsuite: **373 Tests + 8 Subtests bestanden**; zusätzlich JavaScript-Syntax, Python-Compile, JSON/YAML und Versionskonsistenz geprüft.
 
-## v0.21.0.8 — Peach Bitcoin CSV Import
+## v0.21.0.8 — 2026-08-12: Peach Bitcoin CSV Import
 
-### Peach Bitcoin
+### English
+
+#### Peach Bitcoin
+- Added a dedicated Peach Bitcoin CSV parser for `Date`, `Trade ID`, `Type`, `Amount`, `Price`, `Bitcoin Price`, `Currency` and `Premium`.
+- Peach `Amount` is interpreted exclusively as an integer satoshi amount; 100,000 sats becomes exactly 0.001 BTC.
+- `Price` remains the actual total fiat amount paid or received.
+- `Premium` is treated as a percentage. For purchases, the premium contained in `Bitcoin Price` is removed with `Bitcoin Price / (1 + Premium/100)`; the difference to paid `Price` is shown as a fiat fee without increasing FIFO cost basis twice.
+- `Trade ID` provides stable import identity while raw source IDs are still not stored in the ledger unless needed.
+- Sales are supported; actual fiat proceeds remain authoritative and a positive premium is not blindly booked as an extra sale fee.
+
+#### Documentation
+- README made fully bilingual in German and English.
+- Peach Bitcoin documented in the import overview and `CSV-IMPORT.md`.
+
+#### Tests and release split
+- Five targeted Peach regressions cover sats conversion, premium/fee calculation, Trade-ID duplicates, missing premium and sale handling.
+- **Home Assistant integration:** v0.21.0.8.
+- **Tor Gateway:** remains v0.21.0.3.
+
+### Deutsch
+
+#### Peach Bitcoin
 - Neuer eigener Peach-Bitcoin-CSV-Parser für die Spalten `Date`, `Trade ID`, `Type`, `Amount`, `Price`, `Bitcoin Price`, `Currency` und `Premium`.
 - `Amount` wird bei Peach ausschließlich als Satoshi-Ganzzahl interpretiert; 100.000 sats werden exakt zu 0,001 BTC.
 - `Price` bleibt der tatsächlich gezahlte bzw. erhaltene Fiat-Gesamtbetrag.
@@ -215,25 +359,60 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - `Trade ID` dient als stabile Import-Identität; Roh-IDs werden weiterhin nicht ungefragt im Ledger gespeichert.
 - Verkäufe werden unterstützt; bei Verkäufen bleibt der tatsächliche Fiat-Erlös maßgeblich und es wird kein positiver Premiumwert blind als zusätzliche Gebühr gebucht.
 
-### Dokumentation
+#### Dokumentation
 - README vollständig zweisprachig Deutsch/Englisch.
 - Peach Bitcoin in der Importübersicht und in `CSV-IMPORT.md` dokumentiert.
 
-### Tests und Release-Aufteilung
+#### Tests und Release-Aufteilung
 - Fünf gezielte Peach-Regressionstests: Sats-Umrechnung, Premium-/Gebührenrechnung, Trade-ID-Dubletten, fehlendes Premium und Verkauf.
 - **Home-Assistant-Integration:** v0.21.0.8.
 - **Tor Gateway:** bleibt v0.21.0.3.
 
-## v0.21.0.7 — Bitpanda CSV & Fee Hotfix
+## v0.21.0.7 — 2026-08-11: Bitpanda CSV & Fee Hotfix
 
-### Bitpanda-Import
+### English
+
+#### Bitpanda import
+- Added a dedicated Bitpanda Transaction Report parser detected through `Venue: Bitpanda`, `Reported by Bitpanda GmbH` and the characteristic header layout.
+- The existing BTC/XBT normalizer remains the Bitcoin-only boundary. Trades in other assets and fiat-only deposits are ignored.
+- `buy` is processed as purchase and `sell` as sale; `In/Out` is supplemental and does not determine booking type.
+- `Transaction ID` is the primary stable import identity. Raw IDs are not stored in the ledger and are only hashed locally.
+- Physical CSV line numbers remain intact even with Bitpanda metadata rows so import errors point to the actual file row.
+
+#### Withdrawal and fee logic
+- BTC `withdrawal` remains a transfer and does not create a FIFO sale.
+- An explicit Bitpanda withdrawal fee in BTC is assigned to the purchase batch accumulated since the previous BTC withdrawal.
+- Shared BTC fees are distributed proportionally by gross BTC to whole satoshis; the final purchase receives the exact remainder so the total equals the exported BTC fee exactly.
+- Network fees reduce the real stack and remain as `fee_btc`; they are not artificially converted into fiat fees.
+- Trading fees/premiums already contained in the Bitpanda execution price are stored separately as `included_fee`. They count in fee analytics but do not increase FIFO cost basis twice.
+- If the CSV provides an explicit fiat trading fee it is used as an included fee. If derivable only from `Amount Fiat`, gross BTC and market price, the difference is marked estimated. If it cannot be reconstructed, the 0.99% BTC premium is used only as an editable analytics estimate.
+
+#### Import preview and checks
+- Import preview and persistence support included trading fees and their estimate flag.
+- Bitpanda validation uses the original trade BTC before a later withdrawal fee, preventing large on-chain fees from creating false purchase deviations.
+- Missing Bitpanda `Fee` values (`-`) are allowed and no longer invalidate otherwise complete purchase/sale rows.
+- Export and dashboard fee metrics include `included_fee` without double-counting cost basis.
+
+#### HACS / Home Assistant
+- Added a shared `Validate` workflow using the HACS Action and Hassfest.
+- Updated to `actions/checkout@v5`.
+- Manifest uses `@21Koblenz` as `codeowners`, HACS/Hassfest-compliant key ordering and `CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)`.
+- **Tor Gateway remains v0.21.0.3**.
+
+#### Tests
+- Bitpanda regressions cover Buy/Sell, BTC/XBT filtering, altcoin exclusion, deposits, BTC withdrawals, multiple purchases per withdrawal batch, satoshi-exact fee allocation, physical line numbers, ID-based duplicates and included trading fees.
+- Final suite: **354 tests + 8 subtests passed**; JavaScript syntax, Python compile, JSON parsing and version consistency also passed.
+
+### Deutsch
+
+#### Bitpanda-Import
 - Neuer eigener Bitpanda-Parser für Transaction Reports mit Erkennung über `Venue: Bitpanda`, `Reported by Bitpanda GmbH` und die charakteristische Header-Struktur.
 - Der vorhandene BTC/XBT-Normalisierer bleibt die zentrale Bitcoin-only-Grenze. Käufe und Verkäufe anderer Assets sowie reine Fiat-Deposits werden ignoriert.
 - `buy` wird als Kauf und `sell` als Verkauf verarbeitet; `In/Out` ist nur Zusatzinformation und bestimmt nicht die Buchungsart.
 - `Transaction ID` wird als primäre stabile Import-Identität verwendet. Roh-IDs werden weiterhin nicht im Ledger gespeichert, sondern nur lokal gehasht.
 - Physische CSV-Zeilennummern bleiben auch bei Bitpanda-Metadatenzeilen erhalten, damit Importfehler auf die tatsächliche Datei verweisen.
 
-### Withdrawal- und Gebührenlogik
+#### Withdrawal- und Gebührenlogik
 - BTC-`withdrawal` bleibt ein Transfer und erzeugt keinen FIFO-Verkauf.
 - Eine explizite Bitpanda-Withdrawal-Fee in BTC wird dem seit dem vorherigen BTC-Withdrawal aufgebauten Kauf-Batch zugeordnet.
 - Gemeinsame BTC-Fees werden proportional nach Brutto-BTC auf ganze Satoshis verteilt; der letzte Kauf erhält den exakten Rest, sodass die Summe exakt der exportierten BTC-Fee entspricht.
@@ -241,25 +420,89 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Im Bitpanda-Ausführungspreis enthaltene Handelsgebühren/Prämien werden als separates `included_fee` gespeichert. Sie zählen in der Gebührenanalyse, verändern aber den FIFO-Einstand nicht ein zweites Mal.
 - Liefert die CSV eine explizite Fiat-Handelsgebühr, wird diese als enthaltene Gebühr übernommen. Ist sie nur aus `Amount Fiat`, Brutto-BTC und Marktpreis ableitbar, wird die Differenz als geschätzt markiert. Ist sie aus dem CSV nicht rekonstruierbar, wird die 0,99-%-BTC-Prämie ausschließlich als editierbare Analytics-Schätzung verwendet.
 
-### Importvorschau und Kontrolle
+#### Importvorschau und Kontrolle
 - Importvorschau und Speicherung unterstützen enthaltene Handelsgebühren einschließlich Schätzkennzeichen.
 - Die Rechenkontrolle verwendet für Bitpanda den ursprünglichen Trade-BTC-Betrag vor einer späteren Withdrawal-Fee; hohe On-Chain-Gebühren erzeugen dadurch keine falsche Kaufabweichung.
 - Fehlende Bitpanda-`Fee`-Werte (`-`) sind zulässig und machen eine ansonsten vollständige Kauf-/Verkaufszeile nicht ungültig.
 - Export und Dashboard-Gebührenmetriken berücksichtigen `included_fee`, ohne die Kostenbasis doppelt zu belasten.
 
-### HACS / Home Assistant
+#### HACS / Home Assistant
 - Gemeinsamer `Validate`-Workflow mit HACS Action und Hassfest.
 - `actions/checkout@v5`.
 - Manifest mit `@21Koblenz` als `codeowners`, HACS/Hassfest-konformer Schlüsselreihenfolge und `CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)`.
 - **Tor Gateway bleibt v0.21.0.3**.
 
-### Tests
+#### Tests
 - Bitpanda-Regressionen decken Buy/Sell, BTC/XBT-Filter, Altcoin-Ausschluss, Deposits, BTC-Withdrawals, mehrere Käufe pro Withdrawal-Batch, Satoshi-genaue Fee-Verteilung, physische Zeilennummern, ID-basierte Dubletten und enthaltene Handelsgebühren ab.
 - Finale Testsuite: **354 Tests + 8 Subtests bestanden**; JavaScript-Syntaxprüfung, Python-Compile-Check, JSON-Parsing und Versionskonsistenz ebenfalls erfolgreich.
 
-## v0.21.0.6 — Calculation, Privacy & Large-Ledger Performance Audit
+## v0.21.0.6 — 2026-08-11: Calculation, Privacy & Large-Ledger Performance Audit
 
-### Berechnung und FIFO
+### English
+
+#### Calculation and FIFO
+- Sales **and valued expenses** are fully processed as FIFO disposals; Wavespace/card payments appear correctly in the FIFO disposal overview.
+- FIFO disposals additionally show **average purchase price up to that point** and a separate average-price P/L comparison. Each disposal row exposes FIFO profit/return and average-price profit/return separately; the summary also shows historical comparison price, comparison cost basis and absolute/relative result. The comparison is BTC-weighted across all purchases in the same fiat currency up to the disposal timestamp including purchase fees; it is explicitly not a FIFO/tax value and never changes lot assignment.
+- Partially consumed purchase lots keep their exact remainder; the next sale/expense consumes the remainder of the oldest still-open lot first.
+- Cost basis including proportional purchase fees and proportional disposal fees was rechecked against independent randomized references.
+- Larger disposals spanning several purchase lots evaluate every lot at its own historical basis; total basis is the sum of the actually consumed lot portions.
+- Same-timestamp bookings consistently use the same UTC tie ordering: BTC inflow before BTC outflow.
+- Add/Edit/Delete/Bulk Import validate atomically and prevent new or larger oversells.
+- Drawdown edge cases fixed: a low at zero equals -100%; a repeated equal ATH resets `days since ATH`.
+- XIRR rejects mixed-fiat cash flows without FX data instead of assuming a nonexistent conversion.
+- Age buckets use 365.2425 days/year; the configurable holding-period rule remains a separate exact-day rule.
+- New or edited bookings more than five minutes in the future are rejected.
+
+#### Metrics and charts
+- Added BTC CAGR since the first valued booking with clear separation from TWR and XIRR.
+- Added stacking velocity for 30 days, 365 days and since inception.
+- Separated realized, unrealized and total profit/loss.
+- Added net fiat invested.
+- Added current/max drawdown, days since last high and longest completed recovery duration.
+- Added holding-period block with above/below holding rule, next 30/90 days, weighted stack age, oldest open lot and age distribution.
+- Added volume-weighted purchase and disposal fee ratios; disposals include sales and valued expenses.
+- BTC/on-chain fees are shown as sats only when an actual BTC fee is present or can be reconstructed exactly; unknown legacy values are not guessed.
+- Added cash-flow-neutral HODL benchmark using the same external inflows/outflows as the real strategy.
+- Left and right chart Y axes can independently use linear or logarithmic scaling.
+
+#### Large-ledger performance
+- Fixed Home Assistant Core timeout issues after large CSV imports and when subsequently opening/navigating the vault.
+- `bulk_import` reuses the FIFO cache already calculated for oversell validation instead of immediately repeating the full FIFO run.
+- FIFO uses a local lot cursor per calculation and does not rescan fully consumed lots for every later disposal. Every new calculation still starts from a fully chronological sort, so older trades inserted later correctly change FIFO allocation.
+- Historical daily states are built in one chronological pass instead of recalculating FIFO for every price day.
+- Historical price lookup uses prepared series and binary search; TWR, XIRR, chart series and performance values are reused per dashboard snapshot.
+- XIRR normalizes/sorts cash flows only once per calculation.
+- Intraday FIFO uses running sums and local lot pointers.
+- Heavy overview calculations run after the visible chart in a browser idle phase and are discarded on tab changes.
+- Dashboard sections are lazy-loaded; settings/security do not require a full ledger payload.
+- Ledger/FIFO indexes reduce repeated linear browser lookups.
+- Confirmed CSV import timeout was also raised to 300 seconds; the actual fix is the performance work above.
+
+#### Privacy and security
+- CSV duplicate checking runs completely in Home Assistant Core; existing `import_ref_hash` values are no longer loaded into the browser.
+- The Core duplicate endpoint returns only boolean duplicate flags and is batch/rate limited.
+- Dashboard, chart, FIFO and ledger use minimized payloads/allow-lists; notes, provider IDs and internal import/BTC-fee metadata are transferred only where required.
+- Authenticated panel responses use `Cache-Control: no-store, private`, `Pragma: no-cache`, same-origin/no-referrer hardening and `X-Content-Type-Options: nosniff`.
+- Restrictive CSP blocks direct network connections from the tracker frontend.
+- Stale lazy responses can no longer overwrite newer dashboard state.
+- Non-owners continue to receive redacted connection information.
+- The encryption model (Argon2id, AES-256-GCM, HKDF-SHA-512/envelope keying) was rechecked in a code/data-flow audit; this is not an external penetration test.
+
+#### CSV/FIFO UI and compatibility
+- `FIFO SALES / Verkaufsübersicht` renamed to **FIFO DISPOSALS / FIFO-Abgänge**.
+- Sale and expense are shown as disposal type; the headline count represents real disposal bookings instead of individual lot matches.
+- ID-based duplicate detection from v0.21.0.4/v0.21.0.5 remains active.
+- Frontend cache busting: `v021006-733b783d`.
+- **Tor Gateway remains v0.21.0.3**; v0.21.0.6 changes only the custom integration.
+
+#### Audit and tests
+- Added calculation/privacy/security code audit: `AUDIT-v0.21.0.6.md`.
+- Calculation details documented in `MATH-AUDIT.md`.
+- Final suite: **351 tests + 8 subtests**; JavaScript numeric and syntax checks passed.
+
+### Deutsch
+
+#### Berechnung und FIFO
 
 - Verkäufe **und bewertete Ausgaben** werden vollständig als FIFO-Abgänge verarbeitet; Wavespace-/Kartenzahlungen erscheinen korrekt in der FIFO-Abgangsübersicht.
 - FIFO-Abgänge zeigen zusätzlich **Ø Einkauf bis dahin** und einen separaten Ø-P/L-Vergleich. Pro Abgangszeile werden FIFO-Gewinn/FIFO-Rendite und Ø-Gewinn/Ø-Rendite als eigene Felder angezeigt; die Kopfübersicht enthält ebenfalls einen separaten historischen Durchschnittsblock mit Vergleichskaufkurs, Vergleichseinstand und absolutem/relativem Ergebnis. Grundlage ist der BTC-gewichtete effektive Einstand aller Käufe derselben Fiatwährung bis zum Abgangszeitpunkt inklusive Kaufgebühren; der Wert ist ausdrücklich kein FIFO-/Steuerwert und verändert die FIFO-Zuordnung nicht.
@@ -273,7 +516,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Altersbuckets verwenden 365,2425 Tage/Jahr; die konfigurierbare Haltezeit-Regel bleibt eine separate exakte Tagesregel.
 - Neue oder bearbeitete Buchungen mit mehr als fünf Minuten Zukunftsabweichung werden abgewiesen.
 
-### Kennzahlen und Charts
+#### Kennzahlen und Charts
 
 - BTC-CAGR seit erster bewerteter Buchung mit klarer Abgrenzung zu TWR und XIRR.
 - Stacking-Geschwindigkeit für 30 Tage, 365 Tage und seit Beginn.
@@ -286,7 +529,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Cashflow-neutraler HODL-Benchmark mit denselben externen Ein- und Auszahlungen wie die tatsächliche Strategie.
 - Linke und rechte Chart-Y-Achse können unabhängig Linear oder Logarithmisch dargestellt werden.
 
-### Large-Ledger-Performance
+#### Large-Ledger-Performance
 
 - Behebt die `Zeitüberschreitung bei Home Assistant Core`-Probleme nach großen CSV-Imports bzw. beim anschließenden Öffnen und Navigieren im Tresor.
 - `bulk_import` verwendet den bereits zur Oversell-Prüfung berechneten FIFO-Cache weiter, statt denselben kompletten FIFO-Lauf unmittelbar erneut auszuführen.
@@ -300,7 +543,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Ledger-/FIFO-Indizes reduzieren wiederholte lineare Browser-Suchen.
 - Das bestätigte CSV-Import-Timeout wurde zusätzlich auf 300 Sekunden erhöht; die eigentliche Lösung sind die Performance-Optimierungen.
 
-### Datenschutz, Privatsphäre und Sicherheit
+#### Datenschutz, Privatsphäre und Sicherheit
 
 - CSV-Dublettenprüfung findet vollständig in Home Assistant Core statt; bestehende `import_ref_hash`-Werte werden nicht mehr in den Browser geladen.
 - Der Core-Dubletten-Endpunkt liefert nur boolesche Dubletten-Flags und ist mengenbegrenzt/rate-limitiert.
@@ -311,7 +554,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Nicht-Owner erhalten weiterhin redigierte Verbindungsinformationen.
 - Verschlüsselungsmodell (Argon2id, AES-256-GCM, HKDF-SHA-512/Envelope-Keying) wurde im Code-/Datenfluss-Audit erneut geprüft; der Audit ist kein externer Penetrationstest.
 
-### CSV/FIFO-Oberfläche und Kompatibilität
+#### CSV/FIFO-Oberfläche und Kompatibilität
 
 - `FIFO SALES / Verkaufsübersicht` heißt jetzt **FIFO ABGÄNGE / FIFO-Abgänge**.
 - Verkauf und Ausgabe werden als Art angezeigt; die Kopfzahl zählt echte Abgangsbuchungen statt einzelne Lot-Matches.
@@ -319,13 +562,23 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Frontend Cache-Busting: `v021006-733b783d`.
 - **Tor Gateway bleibt v0.21.0.3**; v0.21.0.6 betrifft ausschließlich die Custom Integration.
 
-### Audit und Tests
+#### Audit und Tests
 
 - Neuer Berechnungs-, Datenschutz-, Privatsphäre- und Security-Code-Audit: [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md).
 - Berechnungsdetails: [`MATH-AUDIT.md`](MATH-AUDIT.md).
 - Finale Testsuite: **351 Tests + 8 Subtests**; JavaScript-Numerik- und Syntaxprüfungen bestanden.
 
-## v0.21.0.5 — Bulk-Import-Schema Hotfix
+## v0.21.0.5 — 2026-08-11: Bulk-Import Schema Hotfix
+
+### English
+
+- Fixed `extra keys not allowed @ data['transactions'][0]['import_ref_hash']` when confirming CSV imports.
+- `import_ref_hash` is now allowed by the actual `bulk_import` transaction schema.
+- The ID-based duplicate detection introduced in v0.21.0.4 for Kraken and other supported CSV sources can therefore be stored and evaluated server-side.
+- Added regression coverage so the frontend payload and Home Assistant service schema cannot silently diverge again.
+- Tor Gateway remains **v0.21.0.3**; no gateway change is required.
+
+### Deutsch
 
 - Behebt den Fehler `extra keys not allowed @ data['transactions'][0]['import_ref_hash']` beim Bestätigen von CSV-Imports.
 - `import_ref_hash` ist jetzt im tatsächlichen `bulk_import`-Transaktionsschema erlaubt.
@@ -333,9 +586,30 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Regressionstest ergänzt, damit Frontend-Payload und Home-Assistant-Service-Schema künftig nicht mehr auseinanderlaufen.
 - Tor Gateway bleibt auf **v0.21.0.3**; dort ist keine Änderung nötig.
 
-## v0.21.0.4 — CSV Duplicate Identity Hotfix
+## v0.21.0.4 — 2026-08-11: CSV Duplicate Identity Hotfix
 
-### Dublettenerkennung
+### English
+
+#### Duplicate detection
+- CSV bookings with identical timestamp, BTC amount, price and fee are no longer automatically merged when the source provides different order/trade/transaction IDs.
+- Kraken considers `txid` and `ordertxid` together. Multiple equal-size executions of the same order remain separate bookings as soon as at least one source ID differs.
+- ID-based detection applies across supported providers whenever a stable order, trade, transaction or reference ID is available.
+- Raw IDs are still not stored in the ledger by default; only a SHA-256 hash of source + source ID is persisted for duplicate detection.
+- Sources without a unique ID keep using the previous value fingerprint of type, timestamp, portfolio, BTC amount, currency, price and fee.
+- For legacy bookings imported before this hotfix without an ID hash, quantity-based backward compatibility counts existing identical old bookings once during the first re-import while additional equal-value rows with different IDs remain separate.
+
+#### Release split
+- **Home Assistant integration:** v0.21.0.4.
+- **Tor Gateway:** remains v0.21.0.3 because the hotfix contains no network/gateway change, preventing an unnecessary gateway update.
+
+#### Tests
+- Added regressions for Kraken executions with identical trade values but different `txid`/`ordertxid`.
+- Added regression for Coinfinity bookings with identical values and different order IDs.
+- Existing CSV parser regressions remain green.
+
+### Deutsch
+
+#### Dublettenerkennung
 
 - CSV-Buchungen mit identischem Zeitpunkt, BTC-Betrag, Kurs und Gebühr werden nicht mehr automatisch zusammengelegt, wenn die Quelle unterschiedliche Order-, Trade- oder Transaktions-IDs liefert.
 - Kraken berücksichtigt `txid` und `ordertxid` gemeinsam. Mehrere gleich große Ausführungen derselben Order bleiben dadurch getrennte Buchungen, sobald sich mindestens eine Quell-ID unterscheidet.
@@ -344,20 +618,49 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Quellen ohne eindeutige ID verwenden weiterhin den bisherigen Werte-Fingerprint aus Typ, Zeitpunkt, Depot, BTC-Menge, Währung, Kurs und Gebühr.
 - Für bereits vor diesem Hotfix importierte Buchungen ohne ID-Hash gibt es eine mengenbasierte Legacy-Abwärtskompatibilität: vorhandene identische Altbuchungen werden beim ersten erneuten Import einmalig angerechnet, weitere gleichwertige Zeilen mit unterschiedlichen IDs bleiben erhalten.
 
-### Release-Aufteilung
+#### Release-Aufteilung
 
 - **Home-Assistant-Integration:** v0.21.0.4.
 - **Tor Gateway:** bleibt v0.21.0.3, da dieser Hotfix keine Netzwerk-/Gateway-Änderung enthält. Dadurch erscheint für diesen Release kein unnötiges Tor-Gateway-Update.
 
-### Tests
+#### Tests
 
 - Regressionstests für Kraken-Ausführungen mit identischen Handelswerten und unterschiedlichen `txid`/`ordertxid`.
 - Regressionstest für Coinfinity-Buchungen mit identischen Werten und unterschiedlichen Order-IDs.
 - Bestehende CSV-Parser-Regressionstests bleiben grün.
 
-## v0.21.0.3 — CSV Import & Fee Accounting Hotfix
+## v0.21.0.3 — 2026-08-10: CSV Import & Fee Accounting Hotfix
 
-### Coinfinity
+### English
+
+#### Coinfinity
+- Current Coinfinity `Amount Crypto` is parsed as a BTC decimal. Values such as `0.00020000 BTC` become exactly 20,000 sats; trailing zeros of integer satoshi values are no longer stripped.
+- `Mining Fee Crypto` is interpreted as satoshis. Empty or zero means Lightning; a positive value marks an on-chain payout.
+- `Amount EUR` remains the actual total transferred amount. Service fee and mining fee are deducted from it and are not added to the payment a second time.
+- The actually received BTC amount from `Amount Crypto` stays unchanged. Effective price for cost basis is normalized so BTC value plus fees exactly reconciles to `Amount EUR`.
+- Order ID, address, transaction ID and Lightning invoice remain optional preview fields and are not silently copied into ledger notes.
+
+#### Sats and sale fees
+- Shared BTC/sats display no longer strips trailing zeros from integer satoshi values, preventing 20,000 sats from becoming 2 sats.
+- BTC→sats display is rounded to an integer satoshi value.
+- When a sale fee is unambiguously denominated in BTC/sats it is treated as an additional BTC outflow. Fiat fee value remains separate so stack, net proceeds and FIFO use the same actual BTC outflow.
+- This explicit BTC-fee handling applies to relevant sale paths for Kraken Ledger, Binance Trade, CoinTracking/Pocket and Wavespace; ambiguous generic fees are still not blindly treated as extra BTC outflow.
+
+#### Wavespace
+- BTC card/sale fees are deducted from the stack in addition to the main BTC amount. Example: 100,000 sats card payment + 371 sats fee = 100,371 sats BTC outflow.
+- `payWaveLowValuePurchase`, `POSPurchase`, `card purchase` and `card payment` import as **Expense**.
+- Valued Wavespace expenses continue to use sale-style reconciliation `BTC × price − fee = fiat expense` while remaining typed as **Expense** in the ledger.
+- `ATMWithdrawal ... Card Authorization` remains a sale/cash withdrawal; normal `CURRENCY_SWAP` BTC→fiat remains a **Sale**.
+- Card hints can still be taken from an associated `APPLICATION_FEE` row; merchant name, card fee and optional source details remain available.
+
+#### Export and tests
+- CSV export treats valued expenses like sales for fiat reconciliation and subtracts the stored fee from gross value.
+- Coinfinity regressions use the real current schema with BTC in `Amount Crypto` and sats in `Mining Fee Crypto`.
+- Added regressions for trailing-zero sats, Lightning/on-chain detection, BTC sale fees and Wavespace card payments as expenses.
+
+### Deutsch
+
+#### Coinfinity
 
 - `Amount Crypto` wird beim aktuellen Coinfinity-Report als BTC-Dezimalwert gelesen. Werte wie `0.00020000 BTC` ergeben exakt 20.000 sats; nachgestellte Nullen einer Sats-Ganzzahl werden nicht mehr abgeschnitten.
 - `Mining Fee Crypto` wird als Satoshi-Betrag interpretiert. Leer oder 0 bedeutet Lightning; ein positiver Wert kennzeichnet eine On-Chain-Auszahlung.
@@ -365,14 +668,14 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Der tatsächlich erhaltene BTC-Betrag aus `Amount Crypto` bleibt unverändert. Für die Kostenbasis wird der effektive Kurs so normalisiert, dass BTC-Wert plus Gebühren exakt wieder `Amount EUR` ergibt.
 - Order-ID, Adresse, Transaktions-ID und Lightning-Invoice bleiben optionale Vorschaufelder und landen nicht ungefragt in der Buchungsnotiz.
 
-### Sats und Gebühren bei Verkäufen
+#### Sats und Gebühren bei Verkäufen
 
 - Die gemeinsame BTC/Sats-Anzeige entfernt keine nachgestellten Nullen mehr aus ganzzahligen Satoshi-Werten. Aus 20.000 sats kann dadurch nicht mehr fälschlich 2 sats werden.
 - BTC→Sats wird für die Anzeige auf einen ganzzahligen Satoshi-Wert gerundet.
 - Wird eine Verkaufsgebühr eindeutig in BTC/Sats ausgewiesen, zählt sie als zusätzlicher BTC-Abgang. Der Fiat-Gegenwert der Fee bleibt separat erhalten, sodass Stack, Nettoerlös und FIFO dieselbe tatsächlich abgegangene BTC-Menge verwenden.
 - Diese eindeutige BTC-Fee-Behandlung gilt für die entsprechenden Verkaufspfade von Kraken Ledger, Binance Trade, CoinTracking/Pocket und Wavespace. Unklare generische Gebühren werden weiterhin nicht blind als zusätzlicher BTC-Abgang interpretiert.
 
-### Wavespace
+#### Wavespace
 
 - BTC-Karten- und Verkaufsgebühren werden zusätzlich zur eigentlichen BTC-Menge vom Stack abgezogen. Beispiel: 100.000 sats Kartenumsatz + 371 sats Fee = 100.371 sats BTC-Abgang.
 - `payWaveLowValuePurchase`, `POSPurchase`, `card purchase` und `card payment` werden als Buchungsart **Ausgabe** importiert.
@@ -380,15 +683,47 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - `ATMWithdrawal ... Card Authorization` bleibt eine Verkauf-/Bargeldabhebungsbuchung; ein normaler `CURRENCY_SWAP` BTC→Fiat bleibt ebenfalls **Verkauf**.
 - Kartenhinweise können weiterhin aus einer zugeordneten `APPLICATION_FEE`-Zeile übernommen werden; Händlername, Kartenfee und optional aktivierbare Quelldaten bleiben erhalten.
 
-### Export und Tests
+#### Export und Tests
 
 - CSV-Export behandelt bewertete Ausgaben beim Fiat-Kontrollbetrag wie Verkäufe und zieht die gespeicherte Fee vom Bruttowert ab.
 - Coinfinity-Regressionstests verwenden das reale aktuelle Schema mit BTC in `Amount Crypto` und Sats in `Mining Fee Crypto`.
 - Regressionstests decken Sats mit nachgestellten Nullen, Lightning/On-Chain-Erkennung, BTC-Verkaufsfees sowie Wavespace-Kartenzahlungen als Ausgaben ab.
 
-## v0.21.0.2 — Mathematical Audit Hotfix
+## v0.21.0.2 — 2026-08-10: Mathematical Audit Hotfix
 
-### Charts und Performance
+### English
+
+#### Charts and performance
+- TWR was fully recalculated: external inflows/outflows split periods at their real booking time and subperiod returns are linked geometrically.
+- Purchase and sale fees act as performance costs; a full withdrawal no longer incorrectly creates -100% TWR.
+- XIRR/XNPV switched to the standard 365-day convention with whole payment days; ambiguous IRR cases are detected instead of arbitrarily selecting one solution.
+- XIRR search range was widened for very short periods so strongly annualized one-/multi-day cases do not unnecessarily return unavailable.
+- Maximum drawdown is calculated from the complete analysis series instead of the downsampled long-range display series.
+- Long-range downsampling retains the real observation day of each price instead of moving values artificially to bucket end.
+- Daily prices and daily FIFO snapshots are consistently treated as end-of-day states.
+- Intraday cost basis, realized profit and known BTC are replayed after every individual booking instead of only using final daily state.
+
+#### FIFO, fees and timestamps
+- FIFO sorting uses actual UTC instants instead of lexicographic ISO strings.
+- New and edited bookings are stored canonically as UTC timestamps; legacy migrations also sort by real instant.
+- Historical daily snapshots use real UTC timestamps and a new chart-cache schema so old cached values are rebuilt.
+- For partially resolved/oversold sales, the sale fee is proportionally allocated to the unresolved portion of net proceeds as well.
+- FIFO sale overviews count BTC amount and match count only within the displayed fiat currency.
+
+#### DCA, P/L and sensors
+- “Best/Worst purchase” uses effective cost basis per BTC including purchase fees.
+- Personal stacking years start at the first matching purchase and evaluate calendar boundaries in UTC.
+- Removed the misleading percentage metric “profit / cumulative purchases”; cumulative purchase spend remains only as a clearly labeled reference amount.
+- Average open purchase price and unrealized-profit percentage return unavailable rather than mathematically incorrect zeros when there is no known open cost basis.
+- Historical average purchase prices no longer write artificial zero values when there is no known open balance.
+
+#### Tests
+- Added numerical golden tests for TWR, full withdrawal, fees, 365-day XIRR, same-day payments, multiple XIRR roots and drawdown.
+- Added regressions for UTC FIFO, identical timestamps, daily snapshots, DCA, multi-currency, intraday FIFO and display/analysis separation.
+
+### Deutsch
+
+#### Charts und Performance
 
 - TWR vollständig neu berechnet: externe Zu- und Abflüsse werden an ihrem tatsächlichen Buchungszeitpunkt getrennt und Teilperioden geometrisch verknüpft.
 - Kauf- und Verkaufsgebühren wirken als Performancekosten; eine vollständige Auszahlung erzeugt nicht mehr fälschlich −100 % TWR.
@@ -399,7 +734,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Tageskurse und tägliche FIFO-Snapshots werden einheitlich als Tagesendzustände behandelt.
 - Intraday-Einstand, realisierter Gewinn und bekannte BTC werden nach jeder einzelnen Buchung neu ausgespielt statt nur mit dem finalen Tageszustand.
 
-### FIFO, Gebühren und Zeitstempel
+#### FIFO, Gebühren und Zeitstempel
 
 - FIFO-Sortierung verwendet echte UTC-Zeitpunkte statt lexikographischer ISO-Strings.
 - Neue und bearbeitete Buchungen werden kanonisch als UTC-Zeitstempel gespeichert; Legacy-Migrationen sortieren ebenfalls nach dem realen Zeitpunkt.
@@ -407,7 +742,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Bei teilweise aufgelösten/überverkauften Verkäufen wird die Verkaufsgebühr proportional auch dem unaufgelösten Anteil des Nettoerlöses zugeordnet.
 - FIFO-Verkaufsübersichten zählen BTC-Menge und Match-Anzahl nur innerhalb der angezeigten Fiatwährung.
 
-### DCA, Gewinn/Verlust und Sensoren
+#### DCA, Gewinn/Verlust und Sensoren
 
 - „Bester/Schlechtester Kauf“ verwendet den effektiven Einstand je BTC inklusive Kaufgebühren.
 - Persönliche Sparjahre beginnen beim ersten passenden Kauf und rechnen Kalendergrenzen in UTC.
@@ -415,21 +750,70 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Durchschnittlicher offener Kaufpreis und Buchgewinn-Prozent liefern ohne offenen bekannten Einstand „nicht verfügbar“ statt mathematisch falscher 0-Werte.
 - Historische Durchschnittskaufpreise schreiben ohne bekannten offenen Bestand keinen künstlichen Nullwert mehr.
 
-### Tests
+#### Tests
 
 - Numerische Golden-Tests für TWR, vollständige Auszahlung, Gebühren, XIRR-365-Tage, gleiche Zahlungstage, mehrdeutige XIRR-Wurzeln und Drawdown ergänzt.
 - Regressionsprüfungen für UTC-FIFO, identische Zeitstempel, Tages-Snapshots, DCA, Multiwährung, Intraday-FIFO und Display-/Analyse-Trennung ergänzt.
 
-## v0.21.0.1 — History Hotfix
+## v0.21.0.1 — 2026-08-09: History Hotfix
+
+### English
+
+- Historical BTC daily data is no longer considered complete merely because it starts early enough.
+- Gaps are filled through downstream Tor fallback sources while already available local values are preserved.
+- Density, gap, start-range and end-range checks prevent incomplete `Max` histories from being accepted as complete.
+- Tor Gateway workflow became version-independent and is no longer hard-coded to v0.21.0.0.
+
+### Deutsch
 
 - Historische BTC-Tagesdaten werden nicht mehr allein anhand eines frühen Startdatums als vollständig behandelt.
 - Lücken werden über nachgelagerte Tor-Fallback-Quellen gefüllt; bereits vorhandene lokale Werte bleiben erhalten.
 - Dichte-, Gap-, Start- und Endbereichsprüfungen verhindern unvollständige „Max“-Historien.
 - Tor-Gateway-Workflow ist versionsunabhängig und nicht mehr auf v0.21.0.0 fest verdrahtet.
 
-## v0.21.0.0 — Initial Public Release
+## v0.21.0.0 — 2026-08-09: Initial Public Release
 
-### Portfolio, FIFO und Auswertungen
+### English
+
+#### Portfolio, FIFO and analytics
+- Bitcoin-only portfolio and stack tracking with multiple portfolios.
+- Purchases, sales, fees, notes and per-portfolio FIFO assignment.
+- Sale overview with FIFO cost basis, sale proceeds, profit/loss and return.
+- Bitcoin price, stack, portfolio value and profit/loss charts with multiple ranges and overlays.
+- TWR, XIRR, DCA and drawdown analytics.
+- Targets, milestones, halving and Bitcoin network markers.
+
+#### Import and data portability
+- CSV import with editable preview and plausibility checks for supported exchanges and brokers.
+- Encrypted portable `.bstbackup` backups for purchases/sales, portfolios, targets and history.
+- Network, Tor, access-control and encryption settings are not restored from portable backups.
+
+#### Home Assistant and mobile
+- Native Home Assistant sidebar panel **Bitcoin Stack**.
+- Access through the authenticated Home Assistant user identity.
+- Desktop and mobile layouts including the Home Assistant Companion App.
+- Paging in booking and sale lists jumps to the top of the respective list.
+
+#### Tor and fail closed
+- Dedicated Tor Gateway with nftables default-drop killswitch.
+- Public price and history sources exclusively through Tor.
+- Local private node targets may be accessed directly inside the private network.
+- Automatic Supervisor-internal discovery of the GitHub-installed Tor Gateway plus compatibility with local development installations.
+- No public DNS/clearnet fallback when gateway resolution fails.
+
+#### Security
+- Argon2id-based password derivation and AES-256-GCM for the protected vault.
+- Limited panel/iframe RPC channel and restrictive Content Security Policy.
+- Fail-closed network path for public data sources.
+- Size limits, access controls and hardened backup/restore boundaries.
+- Release metadata, SBOM and reproducible integrity checks in the repository.
+
+#### License
+- Public restart under **AGPL-3.0-only**.
+
+### Deutsch
+
+#### Portfolio, FIFO und Auswertungen
 
 - Bitcoin-only Portfolio- und Stack-Tracking mit mehreren Depots.
 - Käufe, Verkäufe, Gebühren, Notizen und depotweise FIFO-Zuordnung.
@@ -438,20 +822,20 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - TWR-, XIRR-, DCA- und Drawdown-Auswertungen.
 - Ziele, Milestones, Halving- und Bitcoin-Netzwerk-Markierungen.
 
-### Import und Datenportabilität
+#### Import und Datenportabilität
 
 - CSV-Import mit bearbeitbarer Vorschau und Plausibilitätsprüfung für unterstützte Börsen und Broker.
 - Verschlüsselte portable `.bstbackup`-Backups für Käufe/Verkäufe, Depots, Ziele und Historie.
 - Netzwerk-, Tor-, Zugriffs- und Verschlüsselungseinstellungen werden nicht aus portablen Backups wiederhergestellt.
 
-### Home Assistant und mobile Nutzung
+#### Home Assistant und mobile Nutzung
 
 - Natives Home-Assistant-Seitenleistenpanel **Bitcoin Stack**.
 - Zugriff über die authentifizierte Home-Assistant-Benutzeridentität.
 - Desktop- und mobile Darstellung einschließlich Home-Assistant-Companion-App.
 - Seitenwechsel in Buchungs- und Verkaufslisten springen an den Anfang der jeweiligen Liste.
 
-### Tor und Fail Closed
+#### Tor und Fail Closed
 
 - Eigenes Tor Gateway mit nftables-Default-Drop-Killswitch.
 - Öffentliche Kurs- und Historienquellen ausschließlich über Tor.
@@ -459,7 +843,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Automatische Supervisor-interne Erkennung des GitHub-installierten Tor Gateways und Kompatibilität mit lokalen Entwicklungsinstallationen.
 - Kein öffentlicher DNS-/Clearnet-Fallback bei Fehlern der Gateway-Auflösung.
 
-### Sicherheit
+#### Sicherheit
 
 - Argon2id-basierte Passwortableitung und AES-256-GCM für den geschützten Tresor.
 - Begrenzter Panel-/iframe-RPC-Kanal und restriktive Content Security Policy.
@@ -467,6 +851,6 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Größenlimits, Zugriffskontrollen und gehärtete Backup-/Restore-Grenzen.
 - Release-Metadaten, SBOM und reproduzierbare Integritätsprüfungen im Repository.
 
-### Lizenz
+#### Lizenz
 
 - Öffentlicher Neustart unter **AGPL-3.0-only**.

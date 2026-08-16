@@ -58,6 +58,6 @@ def test_frontend_release_uses_only_stable_entrypoint_filenames():
     panel_py = (COMP / "panel.py").read_text(encoding="utf-8")
     assert 'module_url=f"{STATIC_URL}/panel.js?v={VERSION}"' in panel_py
     assert '"frontend_url": f"{STATIC_URL}/index.html?native=1&v={VERSION}"' in panel_py
-    assert 'static/app.js?v=0.21.0.11' in INDEX
-    assert 'static/style.css?v=0.21.0.11' in INDEX
-    assert 'static/performance-math.js?v=0.21.0.11' in INDEX
+    assert 'static/app.js?v=0.21.0.12' in INDEX
+    assert 'static/style.css?v=0.21.0.12' in INDEX
+    assert 'static/performance-math.js?v=0.21.0.12' in INDEX

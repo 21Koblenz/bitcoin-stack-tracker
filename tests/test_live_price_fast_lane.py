@@ -50,9 +50,9 @@ class LivePriceFastLaneTests(unittest.TestCase):
 
     def test_frontend_assets_use_stable_names_with_query_cache_busting(self):
         index = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/index.html").read_text()
-        self.assertIn('static/style.css?v=0.21.0.11', index)
-        self.assertIn('static/performance-math.js?v=0.21.0.11', index)
-        self.assertIn('static/app.js?v=0.21.0.11', index)
+        self.assertIn('static/style.css?v=0.21.0.12', index)
+        self.assertIn('static/performance-math.js?v=0.21.0.12', index)
+        self.assertIn('static/app.js?v=0.21.0.12', index)
         self.assertNotIn('style-v021010-', index)
         panel = (ROOT / "custom_components/bitcoin_stack_tracker/panel.py").read_text()
         self.assertIn('panel.js?v={VERSION}', panel)

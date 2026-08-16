@@ -63,7 +63,7 @@ def test_current_version_and_native_assets_match():
     manifest = (COMP / "manifest.json").read_text(encoding="utf-8")
     index = INDEX_PATH.read_text(encoding="utf-8")
     panel = (COMP / "panel.py").read_text(encoding="utf-8")
-    assert '"version": "0.21.0.11"' in manifest
+    assert '"version": "0.21.0.12"' in manifest
     assert "app.js" in index
     assert "style.css" in index
     assert "panel.js" in panel

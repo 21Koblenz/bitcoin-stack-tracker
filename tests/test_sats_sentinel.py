@@ -15,7 +15,7 @@ def test_sats_sentinel_branding_and_internal_compatibility():
     assert "Sats Sentinel" in app
     assert "Wallet Watch" not in app
     assert "Sats Sentinel" in backend
-    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.11"' in backend
+    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.12"' in backend
 
     # Internal route/event/storage names intentionally stay stable.
     assert 'route == "api/wallet-watch"' in init_py
@@ -438,7 +438,12 @@ def test_sats_sentinel_save_has_immediate_feedback_and_source_probe():
 
 def test_sats_sentinel_save_api_does_not_wait_for_full_wallet_poll():
     init_py = (ROOT / "custom_components/bitcoin_stack_tracker/__init__.py").read_text()
-    assert 'async_apply_full_config(config, poll=False)' in init_py
+    marker = 'if route == "api/wallet-watch" and method == "POST":'
+    start = init_py.index(marker)
+    end = init_py.index('if route == "api/wallet-watch/source-test"', start)
+    block = init_py[start:end]
+    assert 'runtime["wallet_watch"].schedule_background_refresh(config, poll=True)' in block
+    assert 'await runtime["wallet_watch"].async_apply_full_config' not in block
     assert 'route == "api/wallet-watch/source-test"' in init_py
 
 

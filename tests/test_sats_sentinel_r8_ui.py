@@ -42,7 +42,7 @@ def test_sentinel_checkbox_groups_are_aligned():
 def test_stable_frontend_cache_bust_is_active():
     assert 'panel.js?v={VERSION}' in PANEL
     assert 'index.html?native=1&v={VERSION}' in PANEL
-    assert '?v=0.21.0.11' in INDEX
+    assert '?v=0.21.0.12' in INDEX
     assert 'app-v021010-' not in INDEX
 
 

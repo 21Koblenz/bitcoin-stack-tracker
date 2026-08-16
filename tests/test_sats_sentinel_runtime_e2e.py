@@ -16,6 +16,8 @@ def test_sats_sentinel_runtime_selftest():
     assert result.returncode == 0, result.stdout + "\n" + result.stderr
     for marker in (
         "PASS: ZPUB save/derive",
+        "PASS: restart cache persists Fulcrum + derived addresses",
+        "PASS: Receive/Change gap-limit discovery through full config activation",
         "PASS: Fulcrum server.version before delete",
         "PASS: Fulcrum self-signed TLS certificate pin",
         "PASS: saved-monitor TX overview",
@@ -25,5 +27,6 @@ def test_sats_sentinel_runtime_selftest():
         "PASS: watch target upsert is immediately backend-visible",
         "PASS: unchanged Fulcrum poll uses subscribe-only fast path",
         "PASS: stale balance reconciliation avoids history reload",
+        "PASS: lightweight status keeps per-monitor balance/count aggregates without addresses",
     ):
         assert marker in result.stdout
