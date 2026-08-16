@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import ssl
+import unicodedata
 from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
 
@@ -76,12 +77,71 @@ MAX_LOG_DISPLAY_COUNT = 500
 MAX_LOG_DISPLAY_DAYS = 36500
 LOG_PAGE_SIZE = 25
 DEFAULT_LOG_PAGE_SIZE = 10
+ALLOWED_TX_OVERVIEW_LIMITS = {0, 5, 10, 25, 50, 100}
+DEFAULT_TX_OVERVIEW_LIMIT = 10
+TX_OVERVIEW_PAGE_SIZE = 25
 SUMMARY_REQUEST_TIMEOUT_SECONDS = 20
 TX_REQUEST_TIMEOUT_SECONDS = 45
 ELECTRUM_REQUEST_TIMEOUT_SECONDS = 30
 ELECTRUM_MAX_LINE_BYTES = 16 * 1024 * 1024
+ELECTRUM_BALANCE_RECONCILE_SECONDS = 15 * 60
 _ALLOWED_QUERY_SOURCES = {"auto", "fulcrum", "electrs", "mempool_own", "mempool_public"}
 _ALLOWED_ELECTRUM_KINDS = {"fulcrum", "electrs"}
+_EXTENDED_PUBLIC_KEY_RE = re.compile(r"^(?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+$")
+_EXTENDED_PUBLIC_KEY_WITH_ORIGIN_RE = re.compile(
+    r"^(?:\[[0-9A-Fa-f]{8}(?:/[0-9]+(?:[hH\']?)?)*\])?((?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+)$",
+    re.IGNORECASE,
+)
+_DESCRIPTOR_PREFIX_RE = re.compile(r"^(?:pkh\(|wpkh\(|sh\(wpkh\()", re.IGNORECASE)
+
+
+def _compact_watch_source(source: Any) -> str:
+    """Normalize copy/paste artifacts in watch-only public material.
+
+    XPUB/YPUB/ZPUB values and the supported descriptors are ASCII tokens and never
+    need whitespace or Unicode format characters. Wallet/password-manager copy
+    operations can inject line wraps, NBSPs, zero-width characters or a BOM. Those
+    must be removed *before* type classification so a long extended public key can
+    never fall through to the ordinary Bitcoin-address validator.
+    """
+    text = unicodedata.normalize("NFKC", str(source or "")).strip().strip("`\"'")
+    return "".join(
+        ch for ch in text
+        if not ch.isspace() and unicodedata.category(ch) != "Cf"
+    )
+
+
+def _extract_extended_public_key(source: Any) -> str | None:
+    """Extract a raw mainnet XPUB/YPUB/ZPUB from supported wallet exports.
+
+    Besides a plain extended public key, many wallets copy account keys with an
+    origin prefix such as ``[d34db33f/84h/0h/0h]zpub...``. The origin is metadata
+    describing how the account key was reached; the account zpub itself already
+    contains the child depth/parent fingerprint. For Sentinel account monitoring
+    we therefore store the public key token, never route the long export through
+    the ordinary Bitcoin-address validator.
+    """
+    compact = _compact_watch_source(source)
+    match = _EXTENDED_PUBLIC_KEY_WITH_ORIGIN_RE.fullmatch(compact)
+    return match.group(1) if match else None
+
+
+def _normalize_monitor_kind(raw_kind: Any, source: str) -> str:
+    """Return the effective watch kind, with the payload taking precedence.
+
+    The content is authoritative. A recognizable XPUB/YPUB/ZPUB or supported
+    descriptor is routed to its dedicated validator even if an old frontend, a
+    stale browser cache or a migrated config labels it as ``address`` (or any other
+    kind). Full checksum/descriptor validation still happens afterwards.
+    """
+    requested = str(raw_kind or "address").strip().lower()
+    compact = _compact_watch_source(source)
+    lowered = compact.lower()
+    if _extract_extended_public_key(compact) is not None or lowered.startswith(("xpub", "ypub", "zpub")):
+        return "xpub"
+    if _DESCRIPTOR_PREFIX_RE.match(compact):
+        return "descriptor"
+    return requested
 
 # ---- Bitcoin address / public BIP32 helpers ---------------------------------
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -295,6 +355,11 @@ class ExtPub:
 
 
 def _parse_extpub(value: str) -> ExtPub:
+    value = _compact_watch_source(value)
+    if not value.lower().startswith(("xpub", "ypub", "zpub")):
+        raise ValueError("Extended public key must start with xpub, ypub or zpub")
+    if not _EXTENDED_PUBLIC_KEY_RE.fullmatch(value):
+        raise ValueError("Invalid extended public key characters")
     raw = _b58check_decode(value)
     if len(raw) != 78:
         raise ValueError("Invalid extended public key length")
@@ -512,20 +577,33 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", monitor_id) or monitor_id in seen_ids:
             raise ValueError("Sats Sentinel monitor IDs must be unique letters/numbers/_/-")
         seen_ids.add(monitor_id)
-        kind = str(item.get("kind") or "address").lower()
         label = str(item.get("label") or f"Wallet {index + 1}").strip()[:120]
         source = str(item.get("value") or "").strip()
+        kind = _normalize_monitor_kind(item.get("kind"), source)
+        if kind == "xpub":
+            source = _extract_extended_public_key(source) or _compact_watch_source(source)
+        elif kind == "descriptor":
+            source = _compact_watch_source(source)
         receive_count = max(0, min(MAX_DERIVED_PER_BRANCH, int(item.get("receive_count") or 0)))
         change_count = max(0, min(MAX_DERIVED_PER_BRANCH, int(item.get("change_count") or 0)))
-        if kind == "address":
-            source = validate_mainnet_address(source)
-            receive_count = change_count = 0
-        elif kind == "xpub":
-            _parse_extpub(source)
-        elif kind == "descriptor":
-            _descriptor_payload(source)
-        else:
-            raise ValueError("Sats Sentinel type must be address, xpub or descriptor")
+        try:
+            history_limit_raw = int(item.get("history_limit", DEFAULT_TX_OVERVIEW_LIMIT))
+        except (TypeError, ValueError):
+            history_limit_raw = DEFAULT_TX_OVERVIEW_LIMIT
+        history_limit = history_limit_raw if history_limit_raw in ALLOWED_TX_OVERVIEW_LIMITS else DEFAULT_TX_OVERVIEW_LIMIT
+        created_at = str(item.get("created_at") or "").strip()[:40]
+        try:
+            if kind == "address":
+                source = validate_mainnet_address(source)
+                receive_count = change_count = 0
+            elif kind == "xpub":
+                _parse_extpub(source)
+            elif kind == "descriptor":
+                _descriptor_payload(source)
+            else:
+                raise ValueError("Sats Sentinel type must be address, xpub or descriptor")
+        except ValueError as err:
+            raise ValueError(f"Sats Sentinel monitor '{label}' ({kind}): {err}") from err
         category = str(item.get("category") or "other").strip().lower()
         if category not in _ALLOWED_WATCH_CATEGORIES:
             category = "other"
@@ -539,6 +617,8 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
             "enabled": bool(item.get("enabled", True)),
             "receive_count": receive_count,
             "change_count": change_count,
+            "history_limit": history_limit,
+            "created_at": created_at,
             "category": category,
             "note": note,
             "min_notify_sats": min_notify_sats,
@@ -644,6 +724,7 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
                 "utxo_count": 0,
                 "balance_sats": 0,
                 "last_activity_at": None,
+                "last_balance_refresh_unix": 0,
             })
     if len(addresses) > MAX_RUNTIME_ADDRESSES:
         raise ValueError(f"Sats Sentinel runtime address limit is {MAX_RUNTIME_ADDRESSES}")
@@ -756,7 +837,7 @@ class WalletWatchRuntimeStore:
             old = old_by_key.get((row["monitor_id"], row["address"]))
             if not old:
                 continue
-            for key in ("baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats", "last_activity_at"):
+            for key in ("baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats", "last_activity_at", "last_balance_refresh_unix"):
                 row[key] = deepcopy(old.get(key, row.get(key)))
             # Migrate older Sentinel caches that stored the full UTXO list.
             if "utxo_count" not in old and isinstance(old.get("utxos"), list):
@@ -1330,6 +1411,173 @@ def _tx_activity(tx: dict[str, Any], address: str) -> dict[str, Any]:
     }
 
 
+def _aggregate_counterparties(candidates: list[dict[str, Any]], watched_addresses: set[str]) -> list[dict[str, Any]]:
+    combined: dict[str, int] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        address = str(candidate.get("address") or "")
+        if not address or address in watched_addresses:
+            continue
+        combined[address] = combined.get(address, 0) + int(candidate.get("value_sats") or 0)
+    return [
+        {"address": address, "value_sats": value}
+        for address, value in sorted(combined.items(), key=lambda item: item[1], reverse=True)[:12]
+    ]
+
+
+def _monitor_event_from_esplora(tx: dict[str, Any], watched_addresses: set[str]) -> dict[str, Any]:
+    """Build one transaction-level view for all addresses of a monitor.
+
+    This is intentionally separate from the alert baseline. Historical overview
+    requests may inspect old transactions, but they never append to the Sentinel
+    journal or send notifications.
+    """
+    received = 0
+    spent = 0
+    total_inputs = 0
+    total_outputs = 0
+    input_candidates: list[dict[str, Any]] = []
+    output_candidates: list[dict[str, Any]] = []
+    participating: list[str] = []
+    for vin in tx.get("vin", []):
+        if not isinstance(vin, dict):
+            continue
+        prevout = vin.get("prevout") if isinstance(vin.get("prevout"), dict) else {}
+        address = str(prevout.get("scriptpubkey_address") or "")
+        value = int(prevout.get("value") or 0)
+        total_inputs += value
+        if address:
+            input_candidates.append({"address": address, "value_sats": value})
+        if address in watched_addresses:
+            spent += value
+            if address not in participating:
+                participating.append(address)
+    for vout in tx.get("vout", []):
+        if not isinstance(vout, dict):
+            continue
+        address = str(vout.get("scriptpubkey_address") or "")
+        value = int(vout.get("value") or 0)
+        total_outputs += value
+        if address:
+            output_candidates.append({"address": address, "value_sats": value})
+        if address in watched_addresses:
+            received += value
+            if address not in participating:
+                participating.append(address)
+    direction = "outgoing" if spent > 0 else "incoming"
+    counterparties = _aggregate_counterparties(output_candidates if direction == "outgoing" else input_candidates, watched_addresses)
+    external_amount = sum(int(item.get("value_sats") or 0) for item in counterparties)
+    amount_sats = external_amount if direction == "outgoing" else received
+    if direction == "outgoing" and amount_sats <= 0:
+        amount_sats = max(0, spent - received)
+    status = tx.get("status") if isinstance(tx.get("status"), dict) else {}
+    sequences = [int(v.get("sequence") or 0xFFFFFFFF) for v in tx.get("vin", []) if isinstance(v, dict)]
+    fee = max(0, total_inputs - total_outputs) if total_inputs >= total_outputs and total_inputs > 0 else None
+    return {
+        "txid": str(tx.get("txid") or "").lower(),
+        "direction": direction,
+        "amount_sats": amount_sats,
+        "spent_sats": spent,
+        "received_sats": received,
+        "net_sats": received - spent,
+        "tx_total_input_sats": total_inputs,
+        "tx_total_output_sats": total_outputs,
+        "fee_sats": fee,
+        "confirmed": bool(status.get("confirmed")),
+        "block_height": status.get("block_height"),
+        "block_time": status.get("block_time"),
+        "rbf": any(seq < 0xFFFFFFFE for seq in sequences),
+        "counterparties": counterparties,
+        "watched_addresses": participating[:12],
+    }
+
+
+def _monitor_event_from_parsed(
+    txid: str,
+    tx: dict[str, Any],
+    prev_transactions: dict[str, dict[str, Any]],
+    watched_addresses: set[str],
+    height: int,
+    block_time: int | None = None,
+) -> dict[str, Any]:
+    watched_scripts = {_address_scriptpubkey(address): address for address in watched_addresses}
+    received = 0
+    spent = 0
+    total_inputs = 0
+    total_outputs = 0
+    missing_prevouts = 0
+    input_candidates: list[dict[str, Any]] = []
+    output_candidates: list[dict[str, Any]] = []
+    participating: list[str] = []
+    for output in tx.get("outputs", []):
+        value = int(output.get("value_sats") or 0)
+        total_outputs += value
+        script = output.get("script")
+        watched_address = watched_scripts.get(script)
+        candidate = str(output.get("address") or "")
+        if candidate:
+            output_candidates.append({"address": candidate, "value_sats": value})
+        if watched_address:
+            received += value
+            if watched_address not in participating:
+                participating.append(watched_address)
+    for txin in tx.get("inputs", []):
+        prev = prev_transactions.get(str(txin.get("txid") or ""))
+        vout = int(txin.get("vout") or 0)
+        if not prev or vout < 0 or vout >= len(prev.get("outputs", [])):
+            missing_prevouts += 1
+            continue
+        prevout = prev["outputs"][vout]
+        value = int(prevout.get("value_sats") or 0)
+        total_inputs += value
+        script = prevout.get("script")
+        watched_address = watched_scripts.get(script)
+        candidate = str(prevout.get("address") or "")
+        if candidate:
+            input_candidates.append({"address": candidate, "value_sats": value})
+        if watched_address:
+            spent += value
+            if watched_address not in participating:
+                participating.append(watched_address)
+    direction = "outgoing" if spent > 0 else "incoming"
+    counterparties = _aggregate_counterparties(output_candidates if direction == "outgoing" else input_candidates, watched_addresses)
+    external_amount = sum(int(item.get("value_sats") or 0) for item in counterparties)
+    amount_sats = external_amount if direction == "outgoing" else received
+    if direction == "outgoing" and amount_sats <= 0:
+        amount_sats = max(0, spent - received)
+    inputs_complete = missing_prevouts == 0
+    fee = max(0, total_inputs - total_outputs) if inputs_complete and total_inputs >= total_outputs and total_inputs > 0 else None
+    return {
+        "txid": txid.lower(),
+        "direction": direction,
+        "amount_sats": amount_sats,
+        "spent_sats": spent,
+        "received_sats": received,
+        "net_sats": received - spent,
+        "tx_total_input_sats": total_inputs if inputs_complete else None,
+        "tx_total_output_sats": total_outputs,
+        "fee_sats": fee,
+        "confirmed": int(height or 0) > 0,
+        "block_height": int(height) if int(height or 0) > 0 else None,
+        "block_time": int(block_time) if block_time else None,
+        "rbf": bool(tx.get("rbf")),
+        "counterparties": counterparties,
+        "watched_addresses": participating[:12],
+        "inputs_complete": inputs_complete,
+    }
+
+
+def _electrum_header_time(header_hex: Any) -> int | None:
+    try:
+        raw = bytes.fromhex(str(header_hex or ""))
+    except ValueError:
+        return None
+    if len(raw) < 72:
+        return None
+    return int.from_bytes(raw[68:72], "little")
+
+
 class WalletWatchManager:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, ledger_store) -> None:
         self.hass = hass
@@ -1381,6 +1629,94 @@ class WalletWatchManager:
         status["purged_activity_count"] = purged_activity_count
         return status
 
+    async def async_upsert_monitor(self, monitor: dict[str, Any]) -> dict[str, Any]:
+        """Add or update one watch target without rewriting source settings.
+
+        The encrypted backend configuration remains authoritative for Fulcrum,
+        TLS, Tor and notification settings. Only the requested monitor row is
+        replaced/added, so saving a watch target cannot wipe an unsaved node
+        form draft in the browser or change the selected source.
+        """
+        if not isinstance(monitor, dict):
+            raise ValueError("Sats Sentinel watch entry is missing")
+        monitor_id = str(monitor.get("id") or "").strip()
+        if not monitor_id:
+            raise ValueError("Sats Sentinel monitor ID is missing")
+        old_config = normalize_watch_config(self.ledger_store.wallet_watch_config)
+        new_config = deepcopy(old_config)
+        rows = list(new_config.get("monitors", []))
+        replaced = False
+        for index, item in enumerate(rows):
+            if str(item.get("id") or "") == monitor_id:
+                rows[index] = deepcopy(monitor)
+                replaced = True
+                break
+        if not replaced:
+            rows.append(deepcopy(monitor))
+        new_config["monitors"] = rows
+        new_config = normalize_watch_config(new_config)
+        runtime_backup = deepcopy(self.runtime_store.data)
+        try:
+            await self.ledger_store.async_set_wallet_watch_config(new_config)
+            await self.runtime_store.async_replace_from_full_config(new_config)
+        except Exception:
+            self.runtime_store.data = runtime_backup
+            try:
+                await self.runtime_store.async_save()
+            except Exception:
+                pass
+            try:
+                await self.ledger_store.async_set_wallet_watch_config(old_config)
+            except Exception:
+                pass
+            raise
+        return {
+            "saved": True,
+            "monitor_id": monitor_id,
+            "config": new_config,
+            "status": self.public_status(include_addresses=True),
+        }
+
+    async def async_remove_monitor(self, monitor_id: str) -> dict[str, Any]:
+        """Remove one saved watch target without rewriting source settings from a browser draft.
+
+        The full stored Sentinel config is authoritative. This avoids a delete action
+        accidentally changing Fulcrum/Tor/TLS settings because a stale form happened
+        to contain different values. Journal rows for the monitor are purged from the
+        encrypted runtime cache as part of the same operation.
+        """
+        monitor_id = str(monitor_id or "").strip()
+        if not monitor_id:
+            raise ValueError("Sats Sentinel monitor ID is missing")
+        old_config = normalize_watch_config(self.ledger_store.wallet_watch_config)
+        if not any(str(item.get("id") or "") == monitor_id for item in old_config.get("monitors", [])):
+            raise ValueError("Sats Sentinel watch entry was not found")
+        new_config = deepcopy(old_config)
+        new_config["monitors"] = [
+            item for item in new_config.get("monitors", [])
+            if str(item.get("id") or "") != monitor_id
+        ]
+        runtime_backup = deepcopy(self.runtime_store.data)
+        try:
+            await self.ledger_store.async_set_wallet_watch_config(new_config)
+            purged_activity_count = await self.runtime_store.async_replace_from_full_config(new_config)
+        except Exception:
+            # Best-effort rollback. Most importantly, never leave the in-memory
+            # source selection changed by a failed delete operation.
+            self.runtime_store.data = runtime_backup
+            try:
+                await self.runtime_store.async_save()
+            except Exception:
+                pass
+            try:
+                await self.ledger_store.async_set_wallet_watch_config(old_config)
+            except Exception:
+                pass
+            raise
+        status = self.public_status(include_addresses=True)
+        status["purged_activity_count"] = purged_activity_count
+        return {"removed": True, "monitor_id": monitor_id, "config": new_config, "status": status}
+
     async def async_test_source(self, config: dict[str, Any]) -> dict[str, Any]:
         """Probe exactly the source selected in the supplied Sentinel config.
 
@@ -1430,6 +1766,21 @@ class WalletWatchManager:
     def public_status(self, *, include_addresses: bool = False) -> dict[str, Any]:
         data = self.runtime_store.data
         addresses = [row for row in data.get("addresses", []) if isinstance(row, dict)]
+        activity_rows = [item for item in data.get("activity_log", []) if isinstance(item, dict)]
+        last_activity_by_monitor: dict[str, dict[str, Any]] = {}
+        for item in activity_rows:
+            monitor_id = str(item.get("monitor_id") or "")
+            detected_at = str(item.get("detected_at") or "")
+            if not monitor_id or not detected_at:
+                continue
+            current = last_activity_by_monitor.get(monitor_id)
+            if current is None or detected_at > str(current.get("detected_at") or ""):
+                last_activity_by_monitor[monitor_id] = {
+                    "detected_at": detected_at,
+                    "direction": str(item.get("direction") or ""),
+                    "amount_sats": int(item.get("amount_sats") or 0),
+                    "confirmed": bool(item.get("confirmed")),
+                }
         own_mempool = _own_mempool_source(self.entry)
         public_mempool = _public_mempool_source(self.entry)
         selected = _select_watch_source(self.entry, data)
@@ -1464,8 +1815,9 @@ class WalletWatchManager:
             "utxo_count": sum(int(row.get("utxo_count") or 0) for row in addresses),
             "last_poll_at": data.get("last_poll_at"),
             "last_success_at": data.get("last_success_at"),
-            "activity_log_count": len(data.get("activity_log", []) or []),
-            "last_activity_at": max((str(item.get("detected_at") or "") for item in data.get("activity_log", []) if isinstance(item, dict)), default="") or None,
+            "activity_log_count": len(activity_rows),
+            "last_activity_at": max((str(item.get("detected_at") or "") for item in activity_rows), default="") or None,
+            "last_activity_by_monitor": last_activity_by_monitor,
             "last_error": data.get("last_error"),
             "last_warning": data.get("last_warning"),
             "partial_failures": int(data.get("partial_failures") or 0),
@@ -1476,6 +1828,8 @@ class WalletWatchManager:
             "xpup_in_runtime": False,
             "descriptor_in_runtime": False,
             "runtime_cache_encrypted": True,
+            "watch_material_password_vault": True,
+            "historical_tx_overview_persisted": False,
             "external_notification_targets": sum(1 for item in data.get("notification_targets", []) if isinstance(item, dict) and item.get("enabled", True)),
             "last_notification_success_at": data.get("last_notification_success_at"),
             "last_notification_error": data.get("last_notification_error"),
@@ -1595,53 +1949,82 @@ class WalletWatchManager:
     async def _poll_electrum_source(
         self, source: dict[str, Any], addresses: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """Poll one explicit Fulcrum/electrs endpoint over Electrum RPC.
+        """Poll one explicit Fulcrum/electrs endpoint efficiently.
 
-        One TCP/Tor stream is shared for the whole cycle and RPC calls are
-        batched. The server is selected before any network I/O, so failures do
-        not trigger a source cascade.
+        The short poll uses only ``blockchain.scripthash.subscribe`` as the
+        change detector. Balance/UTXO/history RPCs are requested only when a
+        scripthash status changes or during a low-frequency reconciliation.
+        This keeps alerts responsive without hammering Fulcrum for unchanged
+        addresses every 30/60 seconds.
         """
         activities: list[dict[str, Any]] = []
         partial_errors: list[str] = []
+        now_unix = int(datetime.now(timezone.utc).timestamp())
         async with _ElectrumRPCClient(self, source) as client:
-            # Lightweight status/balance/UTXO probes for every concrete address.
-            probe_calls: list[tuple[str, list[Any]]] = []
             meta: list[tuple[dict[str, Any], str]] = []
             for row in addresses:
                 address = str(row.get("address") or "")
-                scripthash = _electrum_scripthash(address)
-                meta.append((row, scripthash))
-                probe_calls.extend([
-                    ("blockchain.scripthash.subscribe", [scripthash]),
-                    ("blockchain.scripthash.get_balance", [scripthash]),
-                    ("blockchain.scripthash.listunspent", [scripthash]),
-                ])
-            probe_results = await client.call_many(probe_calls)
-            changed_rows: list[tuple[dict[str, Any], str, str, dict[str, Any], list[Any]]] = []
-            for index, (row, scripthash) in enumerate(meta):
-                status = probe_results[index * 3]
-                balance = probe_results[index * 3 + 1]
-                unspent = probe_results[index * 3 + 2]
-                if not isinstance(balance, dict) or not isinstance(unspent, list):
-                    partial_errors.append(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum status response")
-                    continue
-                confirmed = int(balance.get("confirmed") or 0)
-                unconfirmed = int(balance.get("unconfirmed") or 0)
-                row["balance_sats"] = confirmed + unconfirmed
-                row["utxo_count"] = len(unspent)
+                meta.append((row, _electrum_scripthash(address)))
+
+            # Fast path: one lightweight status RPC per concrete address.
+            status_results = await client.call_many([
+                ("blockchain.scripthash.subscribe", [scripthash])
+                for _row, scripthash in meta
+            ])
+
+            changed_rows: list[tuple[dict[str, Any], str, str]] = []
+            reconcile_rows: list[tuple[dict[str, Any], str, str]] = []
+            for (row, scripthash), status in zip(meta, status_results):
                 signature = f"electrum:{status or ''}"
-                if not row.get("baseline_complete") or signature != str(row.get("summary_signature") or ""):
-                    changed_rows.append((row, scripthash, signature, balance, unspent))
+                changed = (
+                    not row.get("baseline_complete")
+                    or signature != str(row.get("summary_signature") or "")
+                )
+                last_balance = int(row.get("last_balance_refresh_unix") or 0)
+                stale_balance = now_unix - last_balance >= ELECTRUM_BALANCE_RECONCILE_SECONDS
+                if changed:
+                    changed_rows.append((row, scripthash, signature))
+                elif stale_balance:
+                    reconcile_rows.append((row, scripthash, signature))
+
+            refresh_rows = changed_rows + reconcile_rows
+            if refresh_rows:
+                balance_results = await client.call_many([
+                    ("blockchain.scripthash.get_balance", [scripthash])
+                    for _row, scripthash, _signature in refresh_rows
+                ])
+                unspent_results = await client.call_many([
+                    ("blockchain.scripthash.listunspent", [scripthash])
+                    for _row, scripthash, _signature in refresh_rows
+                ])
+                valid_refresh: set[tuple[str, str]] = set()
+                for (row, scripthash, _signature), balance, unspent in zip(
+                    refresh_rows, balance_results, unspent_results
+                ):
+                    if not isinstance(balance, dict) or not isinstance(unspent, list):
+                        partial_errors.append(
+                            f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum balance/UTXO response"
+                        )
+                        continue
+                    row["balance_sats"] = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
+                    row["utxo_count"] = len(unspent)
+                    row["last_balance_refresh_unix"] = now_unix
+                    valid_refresh.add((str(row.get("monitor_id") or ""), scripthash))
+
+                changed_rows = [
+                    item for item in changed_rows
+                    if (str(item[0].get("monitor_id") or ""), item[1]) in valid_refresh
+                ]
 
             if not changed_rows:
                 return activities, partial_errors
 
             history_results = await client.call_many([
                 ("blockchain.scripthash.get_history", [scripthash])
-                for _row, scripthash, _sig, _balance, _unspent in changed_rows
+                for _row, scripthash, _sig in changed_rows
             ])
             new_entries: list[tuple[dict[str, Any], str, int]] = []
-            for (row, _scripthash, signature, _balance, _unspent), history in zip(changed_rows, history_results):
+            for (row, _scripthash, signature), history in zip(changed_rows, history_results):
                 if not isinstance(history, list):
                     partial_errors.append(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum history response")
                     continue
@@ -1664,9 +2047,6 @@ class WalletWatchManager:
             if not new_entries:
                 return activities, partial_errors
 
-            # Load each new transaction once, then load all referenced previous
-            # transactions in one second batch. This keeps exact amounts and
-            # sender/recipient information without calling any Mempool provider.
             unique_txids = list(dict.fromkeys(txid for _row, txid, _height in new_entries))
             raw_results = await client.call_many([
                 ("blockchain.transaction.get", [txid, False]) for txid in unique_txids
@@ -1695,11 +2075,360 @@ class WalletWatchManager:
                 if not parsed:
                     partial_errors.append(f"Wallet {row.get('monitor_slot', '?')}: Electrum transaction {txid[:12]} unavailable")
                     continue
-                event = _electrum_event_from_parsed(txid, parsed, prev_by_txid, str(row.get("address") or ""), height)
+                event = _electrum_event_from_parsed(
+                    txid, parsed, prev_by_txid, str(row.get("address") or ""), height
+                )
                 if event["spent_sats"] or event["received_sats"]:
                     activities.append({"row": row, "event": event})
                     row["last_activity_at"] = datetime.now(timezone.utc).isoformat()
         return activities, partial_errors
+
+    async def _electrum_calls_chunked(
+        self, client: _ElectrumRPCClient, calls: list[tuple[str, list[Any]]], *, chunk_size: int = 40
+    ) -> list[Any]:
+        results: list[Any] = []
+        for offset in range(0, len(calls), chunk_size):
+            results.extend(await client.call_many(calls[offset:offset + chunk_size]))
+        return results
+
+    def _sentinel_detected_txids(self, monitor_id: str) -> dict[str, str]:
+        detected: dict[str, str] = {}
+        for item in self.runtime_store.data.get("activity_log", []) or []:
+            if not isinstance(item, dict) or str(item.get("monitor_id") or "") != monitor_id:
+                continue
+            txid = str(item.get("txid") or "").lower()
+            if re.fullmatch(r"[0-9a-f]{64}", txid):
+                detected[txid] = str(item.get("detected_at") or "")
+        return detected
+
+    def _finalize_monitor_overview(
+        self,
+        *,
+        config: dict[str, Any],
+        monitor: dict[str, Any],
+        source: dict[str, Any],
+        rows: list[dict[str, Any]],
+        transactions: list[dict[str, Any]],
+        balance_sats: int,
+        known_transaction_count: int,
+        warnings: list[str] | None = None,
+        page: int = 1,
+        unlimited: bool = False,
+        has_more: bool = False,
+    ) -> dict[str, Any]:
+        monitor_id = str(monitor.get("id") or "")
+        detected = self._sentinel_detected_txids(monitor_id)
+        loaded_in = 0
+        loaded_out = 0
+        loaded_tx_inputs = 0
+        loaded_tx_outputs = 0
+        loaded_fees = 0
+        complete_input_totals = True
+        for item in transactions:
+            txid = str(item.get("txid") or "").lower()
+            item["sentinel_detected"] = txid in detected
+            item["sentinel_detected_at"] = detected.get(txid) or None
+            if item.get("direction") == "outgoing":
+                loaded_out += int(item.get("amount_sats") or 0)
+            else:
+                loaded_in += int(item.get("amount_sats") or 0)
+            if item.get("tx_total_input_sats") is None:
+                complete_input_totals = False
+            else:
+                loaded_tx_inputs += int(item.get("tx_total_input_sats") or 0)
+            loaded_tx_outputs += int(item.get("tx_total_output_sats") or 0)
+            if item.get("fee_sats") is not None:
+                loaded_fees += int(item.get("fee_sats") or 0)
+        explorer = _explorer_mempool_source(self.entry, bool(config.get("allow_public_tor")))
+        source_type = str(source.get("watch_source_type") or "mempool")
+        source_route = "tor" if (str(source.get("route")) == "tor" or (source_type == "mempool" and mempool_source_uses_tor(source))) else "direct"
+        return {
+            "monitor_id": monitor_id,
+            "monitor_label": str(monitor.get("label") or monitor_id),
+            "monitor_kind": str(monitor.get("kind") or "address"),
+            "history_limit": int(monitor.get("history_limit") or DEFAULT_TX_OVERVIEW_LIMIT),
+            "derived_address_count": len(rows),
+            "balance_sats": int(balance_sats),
+            "utxo_count": sum(int(row.get("utxo_count") or 0) for row in rows),
+            "known_transaction_count": int(known_transaction_count),
+            "loaded_transaction_count": len(transactions),
+            "history_unlimited": bool(unlimited),
+            "page": max(1, int(page)),
+            "page_size": TX_OVERVIEW_PAGE_SIZE if unlimited else len(transactions),
+            "pages": ((int(known_transaction_count) + TX_OVERVIEW_PAGE_SIZE - 1) // TX_OVERVIEW_PAGE_SIZE) if unlimited and int(known_transaction_count) >= 0 else 1,
+            "has_more": bool(has_more),
+            "loaded_in_sats": loaded_in,
+            "loaded_out_sats": loaded_out,
+            "loaded_tx_total_input_sats": loaded_tx_inputs if complete_input_totals else None,
+            "loaded_tx_total_output_sats": loaded_tx_outputs,
+            "loaded_fee_sats": loaded_fees,
+            "address_balances": [
+                {
+                    "address": str(row.get("address") or ""),
+                    "branch": str(row.get("branch") or ""),
+                    "index": row.get("index"),
+                    "balance_sats": int(row.get("balance_sats") or 0),
+                    "utxo_count": int(row.get("utxo_count") or 0),
+                }
+                for row in rows
+            ],
+            "transactions": transactions,
+            "source_label": str(source.get("label") or ""),
+            "source_type": source_type,
+            "source_route": source_route,
+            "explorer_base_url": _canonical_mempool_base_url(explorer.get(CONF_BASE_URL)) if explorer else "",
+            "warnings": list(warnings or []),
+            "overview_only": True,
+            "alerts_generated": False,
+            # Historical overview rows are intentionally ephemeral: unlike the
+            # Sentinel journal they are not written to HA Store at all.
+            "transaction_overview_persisted": False,
+            "runtime_addresses_encrypted": True,
+            "journal_encrypted": True,
+            "watch_material_password_vault": True,
+        }
+
+    async def _monitor_overview_electrum(
+        self,
+        *,
+        config: dict[str, Any],
+        monitor: dict[str, Any],
+        source: dict[str, Any],
+        rows: list[dict[str, Any]],
+        limit: int,
+        page: int = 1,
+    ) -> dict[str, Any]:
+        watched_addresses = {str(row.get("address") or "") for row in rows if str(row.get("address") or "")}
+        async with _ElectrumRPCClient(self, source) as client:
+            meta = [(row, _electrum_scripthash(str(row.get("address") or ""))) for row in rows]
+            balance_results = await self._electrum_calls_chunked(client, [
+                ("blockchain.scripthash.get_balance", [scripthash]) for _row, scripthash in meta
+            ])
+            history_results = await self._electrum_calls_chunked(client, [
+                ("blockchain.scripthash.get_history", [scripthash]) for _row, scripthash in meta
+            ])
+            unspent_results = await self._electrum_calls_chunked(client, [
+                ("blockchain.scripthash.listunspent", [scripthash]) for _row, scripthash in meta
+            ])
+            balance_sats = 0
+            history_by_txid: dict[str, int] = {}
+            for (row, _scripthash), balance, history, unspent in zip(meta, balance_results, history_results, unspent_results):
+                if not isinstance(balance, dict):
+                    raise ValueError(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum balance response")
+                current_balance = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
+                row["balance_sats"] = current_balance
+                row["utxo_count"] = len(unspent) if isinstance(unspent, list) else int(row.get("utxo_count") or 0)
+                balance_sats += current_balance
+                if not isinstance(history, list):
+                    raise ValueError(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum history response")
+                for item in history:
+                    if not isinstance(item, dict):
+                        continue
+                    txid = str(item.get("tx_hash") or "").lower()
+                    if not re.fullmatch(r"[0-9a-f]{64}", txid):
+                        continue
+                    height = int(item.get("height") or 0)
+                    previous = history_by_txid.get(txid)
+                    if previous is None or (height > 0 and (previous <= 0 or height > previous)):
+                        history_by_txid[txid] = height
+
+            ordered_all = sorted(
+                history_by_txid.items(),
+                key=lambda item: (1 if int(item[1]) <= 0 else 0, int(item[1]) if int(item[1]) > 0 else 2**31),
+                reverse=True,
+            )
+            unlimited = int(limit) == 0
+            page = max(1, int(page or 1))
+            if unlimited:
+                start = (page - 1) * TX_OVERVIEW_PAGE_SIZE
+                ordered = ordered_all[start:start + TX_OVERVIEW_PAGE_SIZE]
+            else:
+                ordered = ordered_all[:limit]
+            txids = [txid for txid, _height in ordered]
+            raw_results = await self._electrum_calls_chunked(client, [
+                ("blockchain.transaction.get", [txid, False]) for txid in txids
+            ], chunk_size=20)
+            parsed_by_txid: dict[str, dict[str, Any]] = {}
+            for txid, raw in zip(txids, raw_results):
+                if isinstance(raw, str):
+                    parsed_by_txid[txid] = _parse_raw_transaction(raw)
+
+            prev_txids = list(dict.fromkeys(
+                str(txin.get("txid") or "")
+                for tx in parsed_by_txid.values()
+                for txin in tx.get("inputs", [])
+                if str(txin.get("txid") or "") and str(txin.get("txid") or "") != "0" * 64
+            ))
+            prev_by_txid: dict[str, dict[str, Any]] = {}
+            if prev_txids:
+                prev_raw = await self._electrum_calls_chunked(client, [
+                    ("blockchain.transaction.get", [txid, False]) for txid in prev_txids
+                ], chunk_size=20)
+                for txid, raw in zip(prev_txids, prev_raw):
+                    if isinstance(raw, str):
+                        prev_by_txid[txid] = _parse_raw_transaction(raw)
+
+            heights = sorted({int(height) for _txid, height in ordered if int(height) > 0})
+            block_times: dict[int, int] = {}
+            if heights:
+                headers = await self._electrum_calls_chunked(client, [
+                    ("blockchain.block.header", [height]) for height in heights
+                ])
+                for height, header in zip(heights, headers):
+                    stamp = _electrum_header_time(header)
+                    if stamp:
+                        block_times[height] = stamp
+
+            transactions: list[dict[str, Any]] = []
+            for txid, height in ordered:
+                parsed = parsed_by_txid.get(txid)
+                if not parsed:
+                    continue
+                event = _monitor_event_from_parsed(
+                    txid, parsed, prev_by_txid, watched_addresses, int(height), block_times.get(int(height))
+                )
+                if event.get("spent_sats") or event.get("received_sats"):
+                    transactions.append(event)
+
+        return self._finalize_monitor_overview(
+            config=config, monitor=monitor, source=source, rows=rows, transactions=transactions,
+            balance_sats=balance_sats, known_transaction_count=len(history_by_txid),
+            page=page, unlimited=unlimited,
+            has_more=(page * TX_OVERVIEW_PAGE_SIZE < len(history_by_txid)) if unlimited else False,
+        )
+
+    async def _monitor_overview_mempool(
+        self,
+        *,
+        config: dict[str, Any],
+        monitor: dict[str, Any],
+        source: dict[str, Any],
+        rows: list[dict[str, Any]],
+        limit: int,
+        page: int = 1,
+    ) -> dict[str, Any]:
+        watched_addresses = {str(row.get("address") or "") for row in rows if str(row.get("address") or "")}
+        tx_by_id: dict[str, dict[str, Any]] = {}
+        balance_sats = 0
+        warnings: list[str] = []
+        first_pages: dict[str, list[dict[str, Any]]] = {}
+        semaphore = asyncio.Semaphore(4)
+
+        async def first_page(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | Exception]:
+            async with semaphore:
+                try:
+                    return row, await self._address_snapshot(source, str(row.get("address") or ""), True)
+                except Exception as err:  # keep other derived addresses usable
+                    return row, err
+
+        results = await asyncio.gather(*(first_page(row) for row in rows))
+        for row, result in results:
+            if isinstance(result, Exception):
+                warnings.append(f"Wallet {row.get('monitor_slot', '?')}: {type(result).__name__}: {result}")
+                continue
+            summary = result.get("summary") if isinstance(result, dict) else None
+            txs = result.get("txs") if isinstance(result, dict) else None
+            if not isinstance(summary, dict) or not isinstance(txs, list):
+                warnings.append(f"Wallet {row.get('monitor_slot', '?')}: invalid mempool overview response")
+                continue
+            current_balance = _balance_sats(summary)
+            row["balance_sats"] = current_balance
+            row["utxo_count"] = int(result.get("utxo_count") or 0)
+            balance_sats += current_balance
+            address = str(row.get("address") or "")
+            normalized = [tx for tx in txs if isinstance(tx, dict) and re.fullmatch(r"[0-9a-fA-F]{64}", str(tx.get("txid") or ""))]
+            first_pages[address] = normalized
+            for tx in normalized:
+                tx_by_id[str(tx.get("txid") or "").lower()] = tx
+
+        unlimited = int(limit) == 0
+        page = max(1, int(page or 1))
+        target_count = page * TX_OVERVIEW_PAGE_SIZE if unlimited else int(limit)
+        cursors: dict[str, str] = {}
+        # A single heavily reused address can need Esplora chain pagination.
+        # In unlimited mode we only walk far enough to fill the requested page;
+        # the browser never asks Core to materialize the entire history at once.
+        if len(tx_by_id) < target_count:
+            for address, first_page_rows in first_pages.items():
+                confirmed = [tx for tx in first_page_rows if bool((tx.get("status") or {}).get("confirmed"))]
+                if len(confirmed) >= 25:
+                    cursors[address] = str(confirmed[-1].get("txid") or "")
+            rounds = 0
+            while cursors and len(tx_by_id) < target_count:
+                rounds += 1
+                next_cursors: dict[str, str] = {}
+                for address, cursor in list(cursors.items()):
+                    try:
+                        page = await self._address_api_json(source, address, f"/txs/chain/{quote(cursor, safe='')}")
+                    except Exception as err:
+                        warnings.append(f"{address[:12]}… history: {type(err).__name__}: {err}")
+                        continue
+                    if not isinstance(page, list):
+                        continue
+                    normalized = [tx for tx in page if isinstance(tx, dict) and re.fullmatch(r"[0-9a-fA-F]{64}", str(tx.get("txid") or ""))]
+                    for tx in normalized:
+                        tx_by_id[str(tx.get("txid") or "").lower()] = tx
+                    if len(normalized) >= 25:
+                        next_cursors[address] = str(normalized[-1].get("txid") or "")
+                    if len(tx_by_id) >= target_count:
+                        break
+                cursors = next_cursors
+
+        def tx_sort_key(tx: dict[str, Any]) -> tuple[int, int, int]:
+            status = tx.get("status") if isinstance(tx.get("status"), dict) else {}
+            confirmed = bool(status.get("confirmed"))
+            return (1 if not confirmed else 0, int(status.get("block_time") or 0), int(status.get("block_height") or 0))
+
+        ordered_txs = sorted(tx_by_id.values(), key=tx_sort_key, reverse=True)
+        if unlimited:
+            start = (page - 1) * TX_OVERVIEW_PAGE_SIZE
+            selected = ordered_txs[start:start + TX_OVERVIEW_PAGE_SIZE]
+        else:
+            selected = ordered_txs[:limit]
+        transactions = [
+            _monitor_event_from_esplora(tx, watched_addresses) for tx in selected
+        ]
+        transactions = [tx for tx in transactions if tx.get("spent_sats") or tx.get("received_sats")]
+        return self._finalize_monitor_overview(
+            config=config, monitor=monitor, source=source, rows=rows, transactions=transactions,
+            balance_sats=balance_sats, known_transaction_count=len(tx_by_id), warnings=warnings,
+            page=page, unlimited=unlimited,
+            has_more=(bool(cursors) or len(ordered_txs) > page * TX_OVERVIEW_PAGE_SIZE) if unlimited else False,
+        )
+
+    async def async_monitor_transactions(
+        self, config: dict[str, Any], *, monitor_id: str, limit: int | None = None, page: int = 1
+    ) -> dict[str, Any]:
+        """Load a non-alerting historical transaction overview for one monitor.
+
+        The selected Sentinel source is used exactly as configured. There is no
+        provider fallback, and inspecting historical transactions never mutates
+        the alert baseline, journal or notification state.
+        """
+        monitor = next((item for item in config.get("monitors", []) if str(item.get("id") or "") == str(monitor_id or "")), None)
+        if not isinstance(monitor, dict):
+            raise ValueError("Sats Sentinel watch entry was not found")
+        configured_limit = int(monitor.get("history_limit", DEFAULT_TX_OVERVIEW_LIMIT))
+        requested_limit = configured_limit if limit is None else int(limit)
+        safe_limit = requested_limit if requested_limit in ALLOWED_TX_OVERVIEW_LIMITS else configured_limit
+        if safe_limit not in ALLOWED_TX_OVERVIEW_LIMITS:
+            safe_limit = DEFAULT_TX_OVERVIEW_LIMIT
+        rows = [
+            row for row in self.runtime_store.data.get("addresses", [])
+            if isinstance(row, dict) and str(row.get("monitor_id") or "") == str(monitor_id or "")
+        ]
+        if not rows:
+            raise ValueError("Sats Sentinel watch entry has no derived runtime addresses; save the watch configuration first")
+        source = _select_watch_source(self.entry, config)
+        if source is None:
+            raise ValueError("No Sats Sentinel data source is available for this watch entry")
+        if str(source.get("watch_source_type") or "mempool") == "electrum":
+            return await self._monitor_overview_electrum(
+                config=config, monitor=monitor, source=source, rows=rows, limit=safe_limit, page=page
+            )
+        return await self._monitor_overview_mempool(
+            config=config, monitor=monitor, source=source, rows=rows, limit=safe_limit, page=page
+        )
 
     def _notification_amount_sats(self, event: dict[str, Any]) -> int:
         if event.get("amount_sats") is not None:
@@ -1911,7 +2640,7 @@ class WalletWatchManager:
         settings = effective_settings(self.entry)
         proxy = None if local_direct else tor_proxy_from_settings(settings)
         headers: dict[str, str] = {
-            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.10",
+            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.11",
         }
         token = str(target.get("token") or "")
         if token:

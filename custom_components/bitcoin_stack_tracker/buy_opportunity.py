@@ -1552,7 +1552,7 @@ def _main_score_series(dated: list[tuple[date, float]], normalized: Mapping[str,
 def calculate_buy_opportunity_history(
     history: Mapping[str, Any], current_price: Any, *, currency: str = "EUR",
     settings: Mapping[str, Any] | None = None, as_of_day: str | date | None = None,
-    start_day: str | date | None = None, max_points: int = 360,
+    start_day: str | date | None = None, max_points: int = 360, marker_interval_years: int = 0,
 ) -> dict[str, Any]:
     """Reconstruct the causal historical main score efficiently in one pass."""
     normalized = normalize_buy_opportunity_settings(settings, [currency])
@@ -1571,13 +1571,126 @@ def calculate_buy_opportunity_history(
     if current is not None:
         if dated and dated[-1][0] == today: dated[-1] = (today,current)
         else: dated.append((today,current))
-    if not dated: return {"currency":str(currency).upper(),"points":[],"settings":normalized}
+    if not dated: return {"currency":str(currency).upper(),"points":[],"marker_points":[],"settings":normalized}
     scores = _main_score_series(dated, normalized)
     eligible = [i for i,score in enumerate(scores) if score is not None and (start is None or dated[i][0] >= start)]
+    thresholds=normalized["thresholds"]
+    marker_detail_cache: dict[int, dict[str, Any]] = {}
+
+    turning_detail_cache: dict[int, dict[str, Any]] = {}
+
+    def _turning_detail(index: int) -> dict[str, Any]:
+        cached=turning_detail_cache.get(index)
+        if cached is not None:
+            return cached
+        marker_day,marker_price=dated[index]
+        detail=calculate_buy_opportunity(
+            history,marker_price,currency=currency,settings=normalized,as_of_day=marker_day
+        )
+        turning=detail.get("turning_points", {}) if isinstance(detail, Mapping) else {}
+        turning_thresholds=turning.get("thresholds", {}) if isinstance(turning, Mapping) else {}
+        result={
+            "market_phase":turning.get("market_phase") if isinstance(turning, Mapping) else None,
+            "bottom_zone":_finite(turning.get("bottom_zone_memory")) if isinstance(turning, Mapping) else None,
+            "bottom_confirmation":_finite(turning.get("bottom_confirmation")) if isinstance(turning, Mapping) else None,
+            "bottom_zone_threshold":_finite(turning_thresholds.get("zone")) if isinstance(turning_thresholds, Mapping) else None,
+            "bottom_confirmation_threshold":_finite(turning_thresholds.get("confirmation")) if isinstance(turning_thresholds, Mapping) else None,
+        }
+        turning_detail_cache[index]=result
+        return result
+
+    def _marker_detail(index: int) -> dict[str, Any]:
+        cached=marker_detail_cache.get(index)
+        if cached is not None:
+            return cached
+        marker_day,marker_price=dated[index]
+        marker_turning=_turning_detail(index)
+        bottom_zone=_finite(marker_turning.get("bottom_zone"))
+        bottom_confirmation=_finite(marker_turning.get("bottom_confirmation"))
+        zone_threshold=_finite(marker_turning.get("bottom_zone_threshold"))
+        confirmation_threshold=_finite(marker_turning.get("bottom_confirmation_threshold"))
+
+        # A bottom is usually confirmed after the cheapest/stress day. Scan only
+        # the configured causal zone-memory window and calculate every candidate
+        # strictly as-of that day. The historical score itself therefore remains
+        # free of look-ahead while the marker can show when the earlier extreme
+        # was actually confirmed by rebound/divergence/cooling evidence.
+        confirmation_index: int | None = None
+        confirmation_turning: dict[str, Any] | None = None
+        zone_memory_days=max(0,int(normalized["model"].get("turning_zone_memory_days",0) or 0))
+        scan_end=min(len(dated)-1,index+zone_memory_days)
+        for candidate_index in range(index,scan_end+1):
+            candidate_day=dated[candidate_index][0]
+            if candidate_day > today:
+                break
+            candidate=_turning_detail(candidate_index)
+            candidate_zone=_finite(candidate.get("bottom_zone"))
+            candidate_confirmation=_finite(candidate.get("bottom_confirmation"))
+            candidate_zone_threshold=_finite(candidate.get("bottom_zone_threshold"))
+            candidate_confirmation_threshold=_finite(candidate.get("bottom_confirmation_threshold"))
+            if (
+                candidate_zone is not None and candidate_confirmation is not None
+                and candidate_zone_threshold is not None and candidate_confirmation_threshold is not None
+                and candidate_zone >= candidate_zone_threshold
+                and candidate_confirmation >= candidate_confirmation_threshold
+            ):
+                confirmation_index=candidate_index
+                confirmation_turning=candidate
+                break
+
+        bottom_confirmation_met=confirmation_index is not None
+        confirmed_day=dated[confirmation_index][0] if confirmation_index is not None else None
+        confirmed_zone=_finite(confirmation_turning.get("bottom_zone")) if confirmation_turning else None
+        confirmed_confirmation=_finite(confirmation_turning.get("bottom_confirmation")) if confirmation_turning else None
+        result={
+            "date":marker_day.isoformat(),"score":round(float(scores[index]),2),"rating":_rating(float(scores[index]),thresholds),"price":float(marker_price),
+            "market_phase":marker_turning.get("market_phase"),
+            "bottom_zone":_round(bottom_zone, 2),"bottom_confirmation":_round(bottom_confirmation, 2),
+            "bottom_zone_threshold":_round(zone_threshold, 2),"bottom_confirmation_threshold":_round(confirmation_threshold, 2),
+            "bottom_confirmation_met":bottom_confirmation_met,
+            "bottom_confirmation_date":confirmed_day.isoformat() if confirmed_day is not None else None,
+            "bottom_confirmation_lag_days":(confirmed_day-marker_day).days if confirmed_day is not None else None,
+            "bottom_confirmation_confirmed_zone":_round(confirmed_zone, 2),
+            "bottom_confirmation_confirmed_score":_round(confirmed_confirmation, 2),
+        }
+        marker_detail_cache[index]=result
+        return result
+
+    best_index=max(eligible, key=lambda i: float(scores[i])) if eligible else None
+    best_point=_marker_detail(best_index) if best_index is not None else None
+
+    marker_indices: list[int] = []
+    interval_years=max(0,int(marker_interval_years or 0))
+    if eligible and interval_years > 0:
+        anchor=start if start is not None else dated[eligible[0]][0]
+        if anchor < dated[eligible[0]][0]: anchor=dated[eligible[0]][0]
+        def add_years(day: date, years: int) -> date:
+            try: return day.replace(year=day.year + years)
+            except ValueError: return day.replace(month=2, day=28, year=day.year + years)
+        bucket_start=anchor
+        while bucket_start <= today:
+            bucket_end=add_years(bucket_start, interval_years)
+            bucket=[i for i in eligible if dated[i][0] >= bucket_start and dated[i][0] < bucket_end]
+            if bucket: marker_indices.append(max(bucket, key=lambda i: float(scores[i])))
+            if bucket_end <= bucket_start: break
+            bucket_start=bucket_end
+    elif best_index is not None:
+        marker_indices=[best_index]
+    marker_indices=sorted(set(marker_indices), key=lambda i: dated[i][0])
+    marker_points=[_marker_detail(i) for i in marker_indices]
+
     limit=max(30,min(720,int(max_points or 360)))
     if len(eligible)>limit:
-        step=(len(eligible)-1)/float(limit-1); selected=sorted(set(eligible[round(i*step)] for i in range(limit)))
+        step=(len(eligible)-1)/float(limit-1)
+        selected=sorted(set(eligible[round(i*step)] for i in range(limit)))
+        mandatory=set(marker_indices)
+        if best_index is not None: mandatory.add(best_index)
+        for marker_index in sorted(mandatory):
+            if marker_index in selected: continue
+            selected.append(marker_index);selected.sort()
+            if len(selected)>limit:
+                removable=[i for i in selected if i not in mandatory]
+                if removable: selected.remove(min(removable, key=lambda i: abs(i-marker_index)))
     else: selected=eligible
-    thresholds=normalized["thresholds"]
     points=[{"date":dated[i][0].isoformat(),"score":round(float(scores[i]),2),"rating":_rating(float(scores[i]),thresholds),"price":float(dated[i][1])} for i in selected]
-    return {"currency":str(currency).upper(),"points":points,"sampled":len(selected)<len(eligible),"source_points":len(eligible),"returned_points":len(points),"settings":normalized,"score_version":SCORE_VERSION}
+    return {"currency":str(currency).upper(),"points":points,"best_point":best_point,"marker_points":marker_points,"marker_interval_years":interval_years,"sampled":len(selected)<len(eligible),"source_points":len(eligible),"returned_points":len(points),"settings":normalized,"score_version":SCORE_VERSION}

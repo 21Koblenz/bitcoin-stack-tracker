@@ -1011,13 +1011,13 @@ html.viewport-resizing .chart .series-primary{filter:none}
 .sats-sentinel-alert{display:flex;flex-direction:column;gap:7px;margin-top:16px;padding:15px 17px;border:1px solid color-mix(in srgb,var(--red) 46%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--red) 7%,var(--card));line-height:1.55}
 .sats-sentinel-alert strong{font-size:13px;color:var(--red)}
 .sats-sentinel-alert span{font-size:12px;overflow-wrap:anywhere}
-.sats-sentinel-hero>.panel-actions{margin-top:18px}
+.sats-sentinel-hero>.panel-actions,.sats-sentinel-hero .sats-sentinel-panel-body>.panel-actions{margin-top:18px}
 .sats-sentinel-test-panel{border-color:color-mix(in srgb,var(--gold) 28%,var(--line))}
 .sats-sentinel-sim-form{margin-top:16px}
 .sats-sentinel-test-actions{display:flex;align-items:flex-end;padding-top:6px}
 .sats-sentinel-test-actions button{min-width:210px}
 #tab-walletwatch .goal-list{margin-top:16px}
-#tab-walletwatch .panel>.analysis-head{margin-top:24px;margin-bottom:12px}
+#tab-walletwatch .panel>.analysis-head,#tab-walletwatch .sats-sentinel-panel-body>.analysis-head{margin-top:24px;margin-bottom:12px}
 #tab-walletwatch .panel-head{margin-bottom:10px}
 #tab-walletwatch .form-grid{gap:14px 16px}
 #tab-walletwatch .storage-note,#tab-walletwatch .danger-note{line-height:1.65}
@@ -1121,3 +1121,102 @@ html.viewport-resizing .chart .series-primary{filter:none}
 .market-assessment-history-controls #marketAssessmentHistoryPriceOpacityControl input:disabled{cursor:not-allowed}
 @media(max-width:760px){.market-assessment-history-chart{height:clamp(560px,74vh,740px);min-height:560px}.market-assessment-history-controls #marketAssessmentHistoryPriceOpacityControl{flex:1 1 100%;min-width:0}}
 @media(max-width:390px){.market-assessment-history-chart{height:clamp(530px,72vh,690px);min-height:530px}}
+
+/* Sats Sentinel transaction overview */
+.sats-sentinel-tx-details{margin-top:2px;border-top:1px solid var(--line);padding-top:11px}
+.sats-sentinel-tx-details>summary{cursor:pointer;font-weight:700;font-size:13px;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0}
+.sats-sentinel-tx-details>summary::-webkit-details-marker{display:none}
+.sats-sentinel-tx-details>summary::after{content:"＋";color:var(--muted);font-size:16px}
+.sats-sentinel-tx-details[open]>summary::after{content:"−"}
+.sats-sentinel-tx-host{display:grid;gap:12px;padding-top:12px;min-width:0}
+.sats-sentinel-tx-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.sats-sentinel-tx-summary>div{padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft);min-width:0}
+.sats-sentinel-tx-summary span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.045em;margin-bottom:5px}
+.sats-sentinel-tx-summary strong{font-size:12px;overflow-wrap:anywhere}
+.sats-sentinel-tx-overview-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sats-sentinel-tx-overview-head small{color:var(--muted);line-height:1.45}
+.sats-sentinel-tx-table{min-width:940px}
+.sats-sentinel-tx-table td{vertical-align:top}
+.sats-sentinel-tx-table td>span,.sats-sentinel-tx-table td>small{line-height:1.45}
+.sats-sentinel-tx-table .sats-sentinel-party{min-width:150px}
+.sats-sentinel-tx-detected{background:color-mix(in srgb,var(--green) 8%,transparent)}
+.sats-sentinel-tx-detected td:first-child{border-left:3px solid var(--green)}
+.sats-sentinel-detected-badge{display:inline-flex;align-items:center;width:max-content;margin:0 0 5px;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:800;letter-spacing:.055em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,var(--line));background:color-mix(in srgb,var(--green) 9%,var(--card))}
+.wallet-watch-monitor-meta small{display:block;color:var(--muted);font-size:10px;line-height:1.4;margin-top:4px}
+@media(max-width:800px){.sats-sentinel-tx-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.sats-sentinel-tx-overview-head{align-items:flex-start;flex-direction:column}}
+@media(max-width:520px){.sats-sentinel-tx-summary{grid-template-columns:1fr}}
+
+.sats-sentinel-address-detail{margin:12px 0;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft);overflow:hidden}.sats-sentinel-address-detail>summary{cursor:pointer;padding:11px 13px;font-weight:800}.sats-sentinel-address-list{display:grid;gap:7px;padding:0 12px 12px}.sats-sentinel-address-list>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:10px}.sats-sentinel-address-list>div>span{min-width:0;overflow:hidden;text-overflow:ellipsis}.sats-sentinel-address-list>div>small{grid-column:1;color:var(--muted)}.sats-sentinel-address-list>div>strong{grid-column:2;grid-row:1/3;text-align:right}.sats-sentinel-tx-privacy{margin:10px 0 12px}@media(max-width:760px){.sats-sentinel-address-list>div{grid-template-columns:1fr}.sats-sentinel-address-list>div>strong{grid-column:1;grid-row:auto;text-align:left}}
+
+/* Sats Sentinel r5 direction emphasis and last detected movement */
+.sats-sentinel-direction-badge{display:inline-flex;align-items:center;gap:6px;width:max-content;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:850;letter-spacing:.045em;text-transform:uppercase;border:1px solid var(--line);white-space:nowrap}
+.sats-sentinel-direction-badge.incoming{color:var(--green);border-color:color-mix(in srgb,var(--green) 48%,var(--line));background:color-mix(in srgb,var(--green) 12%,var(--card))}
+.sats-sentinel-direction-badge.outgoing{color:var(--red);border-color:color-mix(in srgb,var(--red) 52%,var(--line));background:color-mix(in srgb,var(--red) 11%,var(--card))}
+.sats-sentinel-direction-badge.compact{padding:3px 7px;font-size:9px}
+.sats-sentinel-movement-row.incoming{background:color-mix(in srgb,var(--green) 5%,transparent)}
+.sats-sentinel-movement-row.outgoing{background:color-mix(in srgb,var(--red) 5%,transparent)}
+.sats-sentinel-movement-row.incoming>td:first-child,.sats-sentinel-activity-card.incoming{border-left:4px solid color-mix(in srgb,var(--green) 75%,var(--line))}
+.sats-sentinel-movement-row.outgoing>td:first-child,.sats-sentinel-activity-card.outgoing{border-left:4px solid color-mix(in srgb,var(--red) 75%,var(--line))}
+.sats-sentinel-tx-detected{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--gold) 45%,transparent);background:color-mix(in srgb,var(--gold) 8%,transparent)!important}
+.sats-sentinel-tx-detected td:first-child{border-left-color:var(--gold)!important}
+.sats-sentinel-detected-badge{color:var(--gold);border-color:color-mix(in srgb,var(--gold) 52%,var(--line));background:color-mix(in srgb,var(--gold) 11%,var(--card));font-size:9px}
+.sats-sentinel-detected-time{display:block!important;color:var(--muted);font-size:9px!important;line-height:1.35;margin-top:4px}
+.sats-sentinel-last-movement{border-color:color-mix(in srgb,var(--gold) 38%,var(--line))!important}
+.sats-sentinel-last-movement .sats-sentinel-direction-badge{margin-bottom:6px}
+.sats-sentinel-last-movement strong{font-size:13px!important}
+.sats-sentinel-activity-card.incoming,.sats-sentinel-activity-card.outgoing{padding-left:12px}
+@media(max-width:760px){.sats-sentinel-direction-badge{font-size:9px}.sats-sentinel-tx-table{min-width:900px}}
+
+/* Sats Sentinel r6: pending save + bounded unlimited history paging */
+.sats-sentinel-pending-badge{display:inline-flex;align-items:center;border-radius:999px;padding:.2rem .5rem;font-size:.68rem;font-weight:800;letter-spacing:.04em;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.42)}
+.sats-sentinel-watch-card.pending-save{outline:1px dashed rgba(245,158,11,.55);outline-offset:-1px}
+.sats-sentinel-tx-pagination{display:flex;align-items:center;justify-content:center;gap:.75rem;flex-wrap:wrap;margin:.7rem 0}
+.sats-sentinel-tx-pagination span{font-size:.8rem;font-weight:700;opacity:.82}
+.sats-sentinel-last-movement{border-left:3px solid currentColor;padding-left:.75rem}
+.sats-sentinel-movement-row.incoming td:first-child{box-shadow:inset 4px 0 0 rgba(34,197,94,.65)}
+.sats-sentinel-movement-row.outgoing td:first-child{box-shadow:inset 4px 0 0 rgba(239,68,68,.65)}
+
+
+/* Sats Sentinel r8: spacing, aligned checkbox controls and persistent TX disclosure UX */
+#tab-walletwatch .form-grid>label:has(>input[type="checkbox"]){
+  display:grid;grid-template-columns:22px minmax(0,1fr);grid-template-rows:auto;column-gap:10px;align-items:center;
+  min-height:50px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg-soft)
+}
+#tab-walletwatch .form-grid>label:has(>input[type="checkbox"])>input[type="checkbox"]{
+  grid-column:1;grid-row:1;width:20px!important;height:20px!important;min-width:20px;margin:0;padding:0;accent-color:var(--orange);justify-self:start
+}
+#tab-walletwatch .form-grid>label:has(>input[type="checkbox"])>span{
+  grid-column:2;grid-row:1;margin:0;color:var(--text);font-weight:750;font-size:12px;line-height:1.35
+}
+#tab-walletwatch .form-grid>label:has(>input[type="checkbox"])>small{
+  grid-column:2;margin:5px 0 0;color:var(--muted);line-height:1.4
+}
+#walletWatchNotifyServices{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+#walletWatchNotifyServices label{
+  display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;align-items:center;min-height:48px;
+  padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg-soft);cursor:pointer
+}
+#walletWatchNotifyServices label input[type="checkbox"]{width:20px;height:20px;margin:0;accent-color:var(--orange)}
+#walletWatchNotifyServices label span{margin:0;color:var(--text);min-width:0}
+#walletWatchNotifyServices label strong{display:block;overflow-wrap:anywhere;word-break:break-word}
+.sats-sentinel-tx-summary strong{display:block;line-height:1.4}
+.sats-sentinel-tx-summary small{display:block;margin-top:6px;color:var(--muted);line-height:1.4}
+.sats-sentinel-tx-direction-cell .sats-sentinel-direction-badge{margin-bottom:7px}
+.sats-sentinel-tx-direction-cell>small{display:block;margin-top:2px;line-height:1.45;white-space:nowrap}
+.sats-sentinel-tx-table th,.sats-sentinel-tx-table td{padding-left:12px;padding-right:12px}
+@media(max-width:760px){#walletWatchNotifyServices{grid-template-columns:1fr}}
+
+
+/* Market-assessment best-value markers: star only, details on demand. */
+.market-best-marker-hit{cursor:pointer;outline:none}.market-best-marker-hit>circle{fill:transparent;stroke:none;pointer-events:all}.market-best-star{fill:var(--gold);font-size:19px;font-weight:900;paint-order:stroke;stroke:var(--card);stroke-width:2.5px;stroke-linejoin:round;filter:drop-shadow(0 1px 4px color-mix(in srgb,var(--gold) 45%,transparent));pointer-events:none}.market-best-star.is-bottom,.market-best-marker-hit.is-bottom .market-best-star{fill:var(--green);filter:drop-shadow(0 1px 4px color-mix(in srgb,var(--green) 45%,transparent))}.market-best-marker-hit:focus .market-best-star{stroke-width:4px}.market-best-popup{border-color:var(--gold);max-width:285px}.market-best-popup .market-best-popup-bottom{color:var(--green);font-weight:800}.market-best-legend{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin:12px 0 4px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg-soft)}.market-best-legend:empty{display:none}.market-best-legend-title{font-size:11px;line-height:1.55;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}.market-best-legend-items{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.market-best-legend-item{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:11px;line-height:1.2;color:var(--text)}.market-best-legend-item>b{color:var(--gold);font-size:14px;line-height:1}.market-best-legend-item>strong{font-variant-numeric:tabular-nums}.market-best-legend-item>small{color:var(--muted);font-size:10px}.market-best-legend-item.is-bottom>b{color:var(--green)}#marketAssessmentHistoryMarkerTooltip{position:absolute}
+/* Modular market model: field-level explanation + tuning direction for every control. */
+.buy-opportunity-settings-panel label>.buy-opportunity-field-help{display:block;margin:7px 1px 0;color:var(--muted);font-size:10.5px;line-height:1.42;font-weight:500}.buy-opportunity-settings-panel .buy-opportunity-weight-grid>label,.buy-opportunity-settings-panel .buy-opportunity-threshold-grid>label,.buy-opportunity-settings-panel .buy-opportunity-advanced-grid>label,.buy-opportunity-settings-panel .buy-opportunity-base-settings>label{align-self:start;padding:10px;border:1px solid color-mix(in srgb,var(--line) 82%,transparent);border-radius:11px;background:color-mix(in srgb,var(--bg-soft) 72%,transparent)}.buy-opportunity-settings-panel .buy-opportunity-weight-grid>label>span,.buy-opportunity-settings-panel .buy-opportunity-threshold-grid>label>span,.buy-opportunity-settings-panel .buy-opportunity-advanced-grid>label>span,.buy-opportunity-settings-panel .buy-opportunity-base-settings>label>span{min-height:30px;color:var(--text2);font-weight:720;line-height:1.35}
+@media(max-width:760px){.market-best-legend{display:block}.market-best-legend-title{display:block;margin-bottom:7px}.market-best-legend-items{gap:6px}.market-best-legend-item{font-size:10.5px}.market-best-popup{max-width:220px}}@media(max-width:520px){.buy-opportunity-settings-panel label>.buy-opportunity-field-help{font-size:10px;line-height:1.45}}
+
+
+/* Sats Sentinel section density: collapsible top-level cards, persisted per portfolio/browser. */
+.sats-sentinel-panel-body{min-width:0}
+.sats-sentinel-panel-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto}
+.sats-sentinel-panel-toggle>span:first-child{font-size:13px;line-height:1}
+#tab-walletwatch .panel.is-collapsed>.panel-head{margin-bottom:0}
+@media(max-width:760px){#tab-walletwatch .panel-head .sats-sentinel-panel-toggle{width:100%;justify-content:space-between}}

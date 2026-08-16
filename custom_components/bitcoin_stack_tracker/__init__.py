@@ -2556,6 +2556,81 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             category = str(q("category") or "all").lower()
             return respond(runtime["wallet_watch"].public_activity_log(config, page=page, category=category, page_size=page_size))
 
+        if route == "api/wallet-watch/transactions" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            config = normalize_watch_config(runtime["storage"].wallet_watch_config)
+            monitor_id = str(q("monitor_id") or "")
+            try:
+                raw_limit = q("limit")
+                requested_limit = None if raw_limit in {None, ""} else int(raw_limit)
+            except ValueError:
+                requested_limit = None
+            try:
+                page = max(1, int(q("page") or 1))
+            except ValueError:
+                page = 1
+            try:
+                result = await runtime["wallet_watch"].async_monitor_transactions(
+                    config, monitor_id=monitor_id, limit=requested_limit, page=page
+                )
+            except (ValueError, OSError, asyncio.TimeoutError, ConnectionError, RuntimeError) as err:
+                raise web.HTTPBadRequest(text=f"Sats Sentinel transaction overview failed: {type(err).__name__}: {err}") from err
+            return respond(result)
+
+        if route == "api/wallet-watch/upsert-monitor" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            monitor = incoming.get("monitor")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            if runtime["security"].encryption_mode != ENCRYPTION_PASSWORD:
+                raise web.HTTPBadRequest(text="Sats Sentinel requires the password-encrypted vault before watch-only data can be stored")
+            try:
+                result = await runtime["wallet_watch"].async_upsert_monitor(monitor)
+            except ValueError as err:
+                raise web.HTTPBadRequest(text=f"Sats Sentinel watch save failed: {err}") from err
+            except Exception as err:
+                _LOGGER.exception("Sats Sentinel monitor save failed")
+                raise web.HTTPInternalServerError(
+                    text=f"Sats Sentinel watch save failed: {type(err).__name__}: {err}"
+                ) from err
+            result["notify_services"] = sorted(self.hass.services.async_services().get("notify", {}).keys())
+            result["activity_log"] = runtime["wallet_watch"].public_activity_log(result["config"], page=1, category="all")
+            return respond(result)
+
+        if route == "api/wallet-watch/remove-monitor" and method == "POST":
+            incoming = _panel_json_body(body_text)
+            entry_id = str(incoming.get("entry_id") or "")
+            monitor_id = str(incoming.get("monitor_id") or "")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+                runtime["security"].require_unlocked(requester)
+            except (VaultAccessDenied, VaultLockedError) as err:
+                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            try:
+                result = await runtime["wallet_watch"].async_remove_monitor(monitor_id)
+            except ValueError as err:
+                raise web.HTTPBadRequest(text=f"Sats Sentinel remove failed: {err}") from err
+            except Exception as err:  # defensive: return an actionable message instead of an opaque 500
+                _LOGGER.exception("Sats Sentinel monitor removal failed")
+                raise web.HTTPInternalServerError(
+                    text=f"Sats Sentinel remove failed: {type(err).__name__}: {err}"
+                ) from err
+            result["notify_services"] = sorted(self.hass.services.async_services().get("notify", {}).keys())
+            result["activity_log"] = runtime["wallet_watch"].public_activity_log(result["config"], page=1, category="all")
+            return respond(result)
+
         if route == "api/wallet-watch" and method == "POST":
             incoming = _panel_json_body(body_text)
             entry_id = str(incoming.get("entry_id") or "")
@@ -2728,6 +2803,7 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 as_of_day=today,
                 start_day=start_day,
                 max_points=420,
+                marker_interval_years=4 if range_key in {"10y", "max"} else 0,
             ))
             return respond({**result, "range": range_key, "calculated_at": datetime.now(timezone.utc).isoformat()})
 
