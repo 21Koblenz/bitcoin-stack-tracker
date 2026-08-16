@@ -1911,7 +1911,7 @@ class WalletWatchManager:
         settings = effective_settings(self.entry)
         proxy = None if local_direct else tor_proxy_from_settings(settings)
         headers: dict[str, str] = {
-            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.9",
+            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.10",
         }
         token = str(target.get("token") or "")
         if token:

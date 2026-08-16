@@ -61,11 +61,11 @@ async def async_register_native_panel(hass: HomeAssistant) -> bool:
             frontend_url_path=PANEL_URL_PATH,
             sidebar_title="Bitcoin Stack",
             sidebar_icon="mdi:bitcoin",
-            module_url=f"{STATIC_URL}/panel-v021009-ae7b9cb3.js?v={VERSION}-release021009-r2",
+            module_url=f"{STATIC_URL}/panel-v021010-ae7b9cb3.js?v={VERSION}-release021010-r1",
             embed_iframe=False,
             require_admin=False,
             config={
-                "frontend_url": f"{STATIC_URL}/index-v021009-cacd75ff.html?native=1&v={VERSION}-release021009-r2",
+                "frontend_url": f"{STATIC_URL}/index-v021010-60203b9c.html?native=1&v={VERSION}-release021010-r1",
                 "version": VERSION,
                 "architecture": "native-core-panel",
             },
