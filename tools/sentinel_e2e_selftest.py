@@ -21,6 +21,7 @@ from cryptography.x509.oid import NameOID
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 RPC_METHODS = []
+USED_SCRIPTHASHES = set()
 
 
 def install_stubs():
@@ -36,12 +37,16 @@ def install_stubs():
     event = types.ModuleType("homeassistant.helpers.event"); event.async_track_time_interval=lambda *a,**k: (lambda: None); sys.modules[event.__name__]=event
     storage = types.ModuleType("homeassistant.helpers.storage")
     class Store:
-        def __init__(self,*a,**k): self.value=None
+        # Home Assistant Store persists by storage key across integration object
+        # recreation. Model that explicitly so the self-test can simulate a real
+        # Home Assistant restart instead of accidentally testing one Python object.
+        _values = {}
+        def __init__(self,*a,**k): self.key=str(a[-1]) if a else str(k.get("key") or "default")
         @classmethod
         def __class_getitem__(cls, item): return cls
-        async def async_load(self): return self.value
-        async def async_save(self, value): self.value=deepcopy(value)
-        async def async_remove(self): self.value=None
+        async def async_load(self): return deepcopy(self._values.get(self.key))
+        async def async_save(self, value): self._values[self.key]=deepcopy(value)
+        async def async_remove(self): self._values.pop(self.key,None)
     storage.Store=Store; sys.modules[storage.__name__]=storage
 
     const=types.ModuleType("custom_components.bitcoin_stack_tracker.const")
@@ -118,7 +123,9 @@ async def electrum_server(reader, writer):
                 method=call.get("method"); RPC_METHODS.append(method)
                 if method=="server.version": result=["Fulcrum 2.1.1","1.4"]
                 elif method=="blockchain.scripthash.get_balance": result={"confirmed":123456,"unconfirmed":0}
-                elif method=="blockchain.scripthash.get_history": result=[]
+                elif method=="blockchain.scripthash.get_history":
+                    sh=str((call.get("params") or [""])[0])
+                    result=[{"tx_hash":"a"*64,"height":1}] if sh in USED_SCRIPTHASHES else []
                 elif method=="blockchain.scripthash.listunspent": result=[]
                 else: result=None
                 out.append({"jsonrpc":"2.0","id":call.get("id"),"result":result})
@@ -163,6 +170,25 @@ async def main():
         cache=w.runtime_cache_from_config(config)
         assert len(cache["addresses"])==2
 
+        # Real restart persistence: save the device-bound encrypted runtime cache,
+        # construct a completely new store object, then load it again. Fulcrum
+        # source settings and concrete derived addresses must survive; the raw
+        # XPUB deliberately does not live in this cache.
+        restart_ledger=FakeLedger(config)
+        restart_store=w.WalletWatchRuntimeStore(FakeHass(),"restart-e2e",restart_ledger.async_device_binding_secret)
+        restart_store.data=deepcopy(cache)
+        restart_store.data["addresses"][0]["balance_sats"]=777
+        await restart_store.async_save()
+        restart_store_after=w.WalletWatchRuntimeStore(FakeHass(),"restart-e2e",restart_ledger.async_device_binding_secret)
+        await restart_store_after.async_load()
+        assert restart_store_after.data["enabled"] is True
+        assert restart_store_after.data["query_source"]=="fulcrum"
+        assert restart_store_after.data["electrum_host"]=="127.0.0.1"
+        assert restart_store_after.data["electrum_port"]==port
+        assert len(restart_store_after.data["addresses"])==2
+        assert restart_store_after.data["addresses"][0]["balance_sats"]==777
+        assert all("xpub" not in row and "descriptor" not in row for row in restart_store_after.data["addresses"])
+
         ledger=FakeLedger(config); mgr=w.WalletWatchManager(FakeHass(),FakeEntry(),ledger)
         class Runtime:
             def __init__(self,data): self.data=deepcopy(data); self.saves=0
@@ -171,6 +197,34 @@ async def main():
                 # call the real implementation against this fake runtime object
                 return await w.WalletWatchRuntimeStore.async_replace_from_full_config(self,cfg)
         mgr.runtime_store=Runtime(cache)
+
+        # Gap-limit semantics: counts are consecutive-unused reserves, not total
+        # derived addresses. Receive and change branches are scanned independently.
+        gap_config=deepcopy(config)
+        gap_config["monitors"][0]["receive_count"]=2
+        gap_config["monitors"][0]["change_count"]=2
+        for idx in range(5):
+            row=w.derive_extpub_branch_address(zpub,0,idx)
+            USED_SCRIPTHASHES.add(w._electrum_scripthash(row["address"]))
+        for idx in range(3):
+            row=w.derive_extpub_branch_address(zpub,1,idx)
+            USED_SCRIPTHASHES.add(w._electrum_scripthash(row["address"]))
+        mgr.runtime_store.data=w.runtime_cache_from_config(gap_config)
+        # Exercise the real full-settings activation path. Prior to v0.21.0.12
+        # this path silently collapsed HD monitoring back to Receive N + Change N
+        # total addresses instead of restoring used + gap coverage.
+        await mgr.async_apply_full_config(gap_config, poll=False)
+        active=[row for row in mgr.runtime_store.data["addresses"] if row.get("active",True)]
+        receive=[row for row in active if row.get("branch")=="receive"]
+        change=[row for row in active if row.get("branch")=="change"]
+        assert [row["index"] for row in receive]==list(range(7))
+        assert [row["index"] for row in change]==list(range(5))
+        assert sum(1 for row in receive if row.get("used") is False)==2
+        assert sum(1 for row in change if row.get("used") is False)==2
+        assert all(row.get("used") is True for row in receive[:5])
+        assert all(row.get("used") is True for row in change[:3])
+        USED_SCRIPTHASHES.clear()
+        mgr.runtime_store.data=w.runtime_cache_from_config(config)
 
         probe=await mgr.async_test_source(config)
         assert probe["ok"] and probe["server_version"][0]=="Fulcrum 2.1.1"
@@ -190,6 +244,12 @@ async def main():
         assert "blockchain.scripthash.get_balance" in RPC_METHODS
         assert "blockchain.scripthash.listunspent" in RPC_METHODS
         assert "blockchain.scripthash.get_history" in RPC_METHODS
+        status_after_poll=mgr.public_status(include_addresses=False)
+        watch_summary=status_after_poll["monitor_summaries"]["watch_z"]
+        assert watch_summary["address_count"]==2
+        assert watch_summary["receive_address_count"]==1 and watch_summary["change_address_count"]==1
+        assert watch_summary["balance_sats"]==246912
+        assert "addresses" not in status_after_poll
         RPC_METHODS.clear(); await mgr.async_poll(force=True)
         assert RPC_METHODS.count("blockchain.scripthash.subscribe")==2
         assert "blockchain.scripthash.get_balance" not in RPC_METHODS
@@ -226,6 +286,8 @@ async def main():
         probe2=await mgr.async_test_source(result["config"])
         assert probe2["ok"] and probe2["server_version"][0]=="Fulcrum 2.1.1"
         print("PASS: ZPUB save/derive")
+        print("PASS: restart cache persists Fulcrum + derived addresses")
+        print("PASS: Receive/Change gap-limit discovery through full config activation")
         print("PASS: Fulcrum server.version before delete")
         print("PASS: Fulcrum self-signed TLS certificate pin")
         print("PASS: saved-monitor TX overview")
@@ -235,6 +297,7 @@ async def main():
         print("PASS: watch target upsert is immediately backend-visible")
         print("PASS: unchanged Fulcrum poll uses subscribe-only fast path")
         print("PASS: stale balance reconciliation avoids history reload")
+        print("PASS: lightweight status keeps per-monitor balance/count aggregates without addresses")
     finally:
         server.close(); await server.wait_closed()
         tls_server.close(); await tls_server.wait_closed()

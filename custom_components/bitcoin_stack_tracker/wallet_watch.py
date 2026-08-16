@@ -63,8 +63,10 @@ WATCH_STORAGE_VERSION = 1
 WATCH_STORAGE_KEY = "bitcoin_stack_tracker.wallet_watch_runtime"
 WATCH_CACHE_SCHEMA = 1
 MAX_MONITORS = 32
-MAX_DERIVED_PER_BRANCH = 20
-MAX_RUNTIME_ADDRESSES = 160
+MAX_DERIVED_PER_BRANCH = 20  # maximum configurable gap limit per branch
+MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH = 500
+GAP_STANDBY_ADDRESSES_PER_BRANCH = 20
+MAX_RUNTIME_ADDRESSES = 4096
 MAX_NOTIFICATION_TARGETS = 16
 MAX_NOTIFICATION_TOKEN_LENGTH = 1024
 MAX_NOTIFICATION_URL_LENGTH = 2048
@@ -414,6 +416,20 @@ def derive_extpub_addresses(extpub: str, receive_count: int, change_count: int) 
     return result
 
 
+def derive_extpub_branch_address(extpub: str, branch: int, index: int) -> dict[str, Any]:
+    """Derive one concrete receive/change address without exposing private keys."""
+    if branch not in {0, 1} or index < 0:
+        raise ValueError("Invalid xpub branch/index")
+    root = _parse_extpub(extpub)
+    branch_key = _derive_pub(root, branch)
+    child = _derive_pub(branch_key, index)
+    return {
+        "address": _pubkey_address(child.pubkey, child.script_type),
+        "branch": "receive" if branch == 0 else "change",
+        "index": index,
+    }
+
+
 def _descriptor_payload(value: str) -> tuple[str, int | None, str | None]:
     # Strip checksum and origin metadata. This deliberately supports only the
     # simple single-key descriptors that can be derived without private keys.
@@ -470,6 +486,24 @@ def derive_descriptor_addresses(descriptor: str, receive_count: int, change_coun
                 "index": index,
             })
     return result
+
+
+def derive_descriptor_branch_address(descriptor: str, branch: int, index: int) -> dict[str, Any] | None:
+    """Derive one descriptor address, respecting an optional fixed /0/* or /1/* branch."""
+    if branch not in {0, 1} or index < 0:
+        raise ValueError("Invalid descriptor branch/index")
+    extpub, fixed_branch, script_type = _descriptor_payload(descriptor)
+    if fixed_branch in {0, 1} and fixed_branch != branch:
+        return None
+    root = _parse_extpub(extpub)
+    root = ExtPub(root.chain_code, root.pubkey, script_type or root.script_type)
+    branch_key = _derive_pub(root, branch)
+    child = _derive_pub(branch_key, index)
+    return {
+        "address": _pubkey_address(child.pubkey, child.script_type),
+        "branch": "receive" if branch == 0 else "change",
+        "index": index,
+    }
 
 
 
@@ -707,6 +741,13 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
                 "address": row["address"],
                 "branch": row["branch"],
                 "index": row["index"],
+                "gap_limit": (
+                    int(monitor.get("receive_count") or 0) if row["branch"] == "receive"
+                    else int(monitor.get("change_count") or 0) if row["branch"] == "change"
+                    else 0
+                ),
+                "active": True,
+                "used": None,
                 "notify_incoming": monitor["notify_incoming"],
                 "notify_outgoing": monitor["notify_outgoing"],
                 "category": monitor.get("category", "other"),
@@ -837,7 +878,7 @@ class WalletWatchRuntimeStore:
             old = old_by_key.get((row["monitor_id"], row["address"]))
             if not old:
                 continue
-            for key in ("baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats", "last_activity_at", "last_balance_refresh_unix"):
+            for key in ("baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats", "last_activity_at", "last_balance_refresh_unix", "active", "used", "gap_limit"):
                 row[key] = deepcopy(old.get(key, row.get(key)))
             # Migrate older Sentinel caches that stored the full UTXO list.
             if "utxo_count" not in old and isinstance(old.get("utxos"), list):
@@ -1343,6 +1384,17 @@ def _summary_signature(payload: dict[str, Any]) -> str:
     return ":".join(str(x) for x in parts)
 
 
+def _address_summary_used(payload: dict[str, Any]) -> bool:
+    """An HD address is used once it has any confirmed or mempool transaction history."""
+    chain = payload.get("chain_stats") if isinstance(payload.get("chain_stats"), dict) else {}
+    mem = payload.get("mempool_stats") if isinstance(payload.get("mempool_stats"), dict) else {}
+    return any(
+        int(stats.get(key) or 0) > 0
+        for stats in (chain, mem)
+        for key in ("tx_count", "funded_txo_count", "spent_txo_count")
+    )
+
+
 def _balance_sats(payload: dict[str, Any]) -> int:
     chain = payload.get("chain_stats") if isinstance(payload.get("chain_stats"), dict) else {}
     mem = payload.get("mempool_stats") if isinstance(payload.get("mempool_stats"), dict) else {}
@@ -1586,6 +1638,7 @@ class WalletWatchManager:
         self.runtime_store = WalletWatchRuntimeStore(hass, entry.entry_id, ledger_store.async_device_binding_secret)
         self._cancel = None
         self._lock = asyncio.Lock()
+        self._refresh_task: asyncio.Task | None = None
         self._last_poll_monotonic = 0.0
         # Some self-hosted mempool deployments expose Esplora-compatible
         # address routes under /api/, others proxy/reimplement the same routes
@@ -1603,6 +1656,72 @@ class WalletWatchManager:
         if self._cancel:
             self._cancel()
             self._cancel = None
+        task = self._refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._refresh_task = None
+
+    def cancel_background_refresh(self) -> None:
+        """Cancel stale discovery before a newer encrypted config is persisted."""
+        task = self._refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._refresh_task = None
+
+    def schedule_background_refresh(
+        self,
+        config: dict[str, Any],
+        *,
+        monitor_ids: set[str] | None = None,
+        poll: bool = True,
+    ) -> None:
+        """Queue HD gap discovery without holding the panel HTTP request open.
+
+        XPUB/descriptor discovery can require hundreds of explicit Fulcrum calls
+        before the configured consecutive-unused gap is reached. Persisting the
+        encrypted watch configuration is intentionally separated from that network
+        work so the UI never reports Home Assistant as unavailable merely because
+        a legitimate wallet has a long address history.
+        """
+        normalized = normalize_watch_config(config)
+        targets = None if monitor_ids is None else {str(value) for value in monitor_ids}
+        self.cancel_background_refresh()
+
+        async def _runner() -> None:
+            try:
+                if not normalized.get("enabled"):
+                    return
+                source = _select_watch_source(self.entry, normalized)
+                if source is None:
+                    return
+                # Serialize discovery against the normal poller. The network work
+                # is background-only, so taking this lock can never delay saving.
+                async with self._lock:
+                    await self._discover_gap_addresses(
+                        normalized, source, monitor_ids=targets
+                    )
+                if poll:
+                    await self.async_poll(force=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                self.runtime_store.data["last_warning"] = (
+                    f"Sats Sentinel background gap discovery pending: "
+                    f"{type(err).__name__}: {err}"
+                )[:500]
+                await self.runtime_store.async_save()
+            finally:
+                current = asyncio.current_task()
+                if self._refresh_task is current:
+                    self._refresh_task = None
+
+        self._refresh_task = self.hass.async_create_task(
+            _runner(), "Bitcoin Stack Tracker Sats Sentinel gap discovery"
+        )
 
     async def _timer(self, _now: Any = None) -> None:
         if not self.runtime_store.data.get("enabled"):
@@ -1612,19 +1731,263 @@ class WalletWatchManager:
         if now - self._last_poll_monotonic >= interval:
             await self.async_poll()
 
+    @staticmethod
+    def _runtime_row_from_monitor(
+        monitor: dict[str, Any], monitor_slot: int, derived: dict[str, Any], *, active: bool, used: bool | None
+    ) -> dict[str, Any]:
+        branch = str(derived.get("branch") or "fixed")
+        gap_limit = (
+            int(monitor.get("receive_count") or 0) if branch == "receive"
+            else int(monitor.get("change_count") or 0) if branch == "change"
+            else 0
+        )
+        return {
+            "monitor_id": monitor["id"],
+            "monitor_slot": monitor_slot,
+            "address": derived["address"],
+            "branch": branch,
+            "index": derived.get("index"),
+            "gap_limit": gap_limit,
+            "active": bool(active),
+            "used": used,
+            "notify_incoming": monitor["notify_incoming"],
+            "notify_outgoing": monitor["notify_outgoing"],
+            "category": monitor.get("category", "other"),
+            "min_notify_sats": int(monitor.get("min_notify_sats") or 0),
+            "notify_ha_event": bool(monitor.get("notify_ha_event", True)),
+            "notify_persistent": bool(monitor.get("notify_persistent", True)),
+            "notify_services": bool(monitor.get("notify_services", True)),
+            "notify_external": bool(monitor.get("notify_external", True)),
+            "baseline_complete": False,
+            "summary_signature": None,
+            "known_txids": [],
+            "utxo_count": 0,
+            "balance_sats": 0,
+            "last_activity_at": None,
+            "last_balance_refresh_unix": 0,
+        }
+
+    @staticmethod
+    def _merge_runtime_row_state(row: dict[str, Any], old: dict[str, Any] | None) -> dict[str, Any]:
+        if not old:
+            return row
+        for key in (
+            "baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats",
+            "last_activity_at", "last_balance_refresh_unix",
+        ):
+            row[key] = deepcopy(old.get(key, row.get(key)))
+        if "utxo_count" not in old and isinstance(old.get("utxos"), list):
+            row["utxo_count"] = len(old.get("utxos") or [])
+        return row
+
+    @staticmethod
+    def _derive_monitor_address(monitor: dict[str, Any], branch: int, index: int) -> dict[str, Any] | None:
+        if monitor.get("kind") == "xpub":
+            return derive_extpub_branch_address(str(monitor.get("value") or ""), branch, index)
+        if monitor.get("kind") == "descriptor":
+            return derive_descriptor_branch_address(str(monitor.get("value") or ""), branch, index)
+        return None
+
+    async def _probe_gap_address_used(
+        self, source: dict[str, Any], address: str, *, electrum_client: _ElectrumRPCClient | None = None
+    ) -> bool:
+        if electrum_client is not None:
+            history = await electrum_client.call(
+                "blockchain.scripthash.get_history", [_electrum_scripthash(address)]
+            )
+            if not isinstance(history, list):
+                raise ValueError("Electrum returned invalid address history during gap discovery")
+            return bool(history)
+        snapshot = await self._address_snapshot(source, address, False)
+        return _address_summary_used(snapshot["summary"])
+
+    async def _discover_gap_addresses(
+        self, config: dict[str, Any], source: dict[str, Any], *, monitor_ids: set[str] | None = None
+    ) -> None:
+        """Resolve each HD branch as used addresses + N consecutive unused gap addresses.
+
+        ``receive_count`` and ``change_count`` are gap limits, not total address
+        counts.  Discovery is independent for receive (/0) and change (/1).
+        A small concrete-address standby pool is kept device-bound/encrypted so
+        the watcher can extend the gap while the password vault is locked without
+        storing the XPUB/descriptor itself in the runtime cache.
+        """
+        old_rows = [row for row in self.runtime_store.data.get("addresses", []) if isinstance(row, dict)]
+        old_by_key = {
+            (str(row.get("monitor_id") or ""), str(row.get("address") or "")): row
+            for row in old_rows
+        }
+        target_ids = None if monitor_ids is None else {str(value) for value in monitor_ids}
+        rebuilt: list[dict[str, Any]] = []
+        # Keep monitors that are not part of this focused refresh unchanged.
+        if target_ids is not None:
+            rebuilt.extend(deepcopy(row) for row in old_rows if str(row.get("monitor_id") or "") not in target_ids)
+
+        source_type = str(source.get("watch_source_type") or "mempool")
+        client_cm = _ElectrumRPCClient(self, source) if source_type == "electrum" else None
+        client = await client_cm.__aenter__() if client_cm is not None else None
+        try:
+            for monitor_slot, monitor in enumerate(config.get("monitors", []), start=1):
+                monitor_id = str(monitor.get("id") or "")
+                if target_ids is not None and monitor_id not in target_ids:
+                    continue
+                if not monitor.get("enabled", True):
+                    continue
+                if monitor.get("kind") == "address":
+                    derived = {"address": monitor["value"], "branch": "fixed", "index": None}
+                    row = self._runtime_row_from_monitor(monitor, monitor_slot, derived, active=True, used=None)
+                    rebuilt.append(self._merge_runtime_row_state(row, old_by_key.get((monitor_id, row["address"]))))
+                    continue
+
+                for branch, branch_name, gap_limit in (
+                    (0, "receive", int(monitor.get("receive_count") or 0)),
+                    (1, "change", int(monitor.get("change_count") or 0)),
+                ):
+                    if gap_limit <= 0:
+                        continue
+                    consecutive_unused = 0
+                    stop_index: int | None = None
+                    branch_rows: list[dict[str, Any]] = []
+                    for index in range(MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH):
+                        derived = self._derive_monitor_address(monitor, branch, index)
+                        if derived is None:
+                            break
+                        used = await self._probe_gap_address_used(
+                            source, str(derived["address"]), electrum_client=client
+                        )
+                        row = self._runtime_row_from_monitor(
+                            monitor, monitor_slot, derived, active=True, used=used
+                        )
+                        row = self._merge_runtime_row_state(
+                            row, old_by_key.get((monitor_id, row["address"]))
+                        )
+                        row["active"] = True
+                        row["used"] = used
+                        branch_rows.append(row)
+                        consecutive_unused = 0 if used else consecutive_unused + 1
+                        if consecutive_unused >= gap_limit:
+                            stop_index = index
+                            break
+                    if stop_index is None and branch_rows:
+                        raise ValueError(
+                            f"Sats Sentinel {branch_name} gap discovery reached the safety limit of "
+                            f"{MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH} addresses without finding "
+                            f"{gap_limit} consecutive unused addresses"
+                        )
+                    rebuilt.extend(branch_rows)
+                    if stop_index is None:
+                        continue
+                    # Concrete-address-only standby: allows automatic gap extension
+                    # while the password vault is locked, without caching the XPUB.
+                    for offset in range(1, GAP_STANDBY_ADDRESSES_PER_BRANCH + 1):
+                        derived = self._derive_monitor_address(monitor, branch, stop_index + offset)
+                        if derived is None:
+                            break
+                        row = self._runtime_row_from_monitor(
+                            monitor, monitor_slot, derived, active=False, used=None
+                        )
+                        row = self._merge_runtime_row_state(
+                            row, old_by_key.get((monitor_id, row["address"]))
+                        )
+                        row["active"] = False
+                        row["used"] = None
+                        rebuilt.append(row)
+        finally:
+            if client_cm is not None:
+                await client_cm.__aexit__(None, None, None)
+
+        if len(rebuilt) > MAX_RUNTIME_ADDRESSES:
+            raise ValueError(f"Sats Sentinel runtime address limit is {MAX_RUNTIME_ADDRESSES}")
+        self.runtime_store.data["addresses"] = rebuilt
+        await self.runtime_store.async_save()
+
+    async def _maintain_gap_from_standby(self, source: dict[str, Any]) -> bool:
+        """Activate pre-derived concrete addresses until each branch regains its gap limit."""
+        rows = [row for row in self.runtime_store.data.get("addresses", []) if isinstance(row, dict)]
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            branch = str(row.get("branch") or "")
+            if branch not in {"receive", "change"}:
+                continue
+            groups.setdefault((str(row.get("monitor_id") or ""), branch), []).append(row)
+        source_type = str(source.get("watch_source_type") or "mempool")
+        client_cm = _ElectrumRPCClient(self, source) if source_type == "electrum" else None
+        client = await client_cm.__aenter__() if client_cm is not None else None
+        changed = False
+        exhausted: list[str] = []
+        try:
+            for (monitor_id, branch), branch_rows in groups.items():
+                branch_rows.sort(key=lambda item: int(item.get("index") or 0))
+                active = [row for row in branch_rows if bool(row.get("active", True))]
+                if not active:
+                    continue
+                gap_limit = max(0, int(active[-1].get("gap_limit") or 0))
+                if gap_limit <= 0:
+                    continue
+                consecutive_unused = 0
+                for row in reversed(active):
+                    if row.get("used") is False:
+                        consecutive_unused += 1
+                    else:
+                        break
+                while consecutive_unused < gap_limit:
+                    candidate = next((row for row in branch_rows if not bool(row.get("active", True))), None)
+                    if candidate is None:
+                        exhausted.append(f"{monitor_id}:{branch}")
+                        break
+                    used = await self._probe_gap_address_used(
+                        source, str(candidate.get("address") or ""), electrum_client=client
+                    )
+                    candidate["active"] = True
+                    candidate["used"] = used
+                    # A newly activated historical address starts as a baseline so
+                    # its old transactions never generate false fresh alerts.
+                    candidate["baseline_complete"] = False
+                    changed = True
+                    consecutive_unused = 0 if used else consecutive_unused + 1
+        finally:
+            if client_cm is not None:
+                await client_cm.__aexit__(None, None, None)
+        if exhausted:
+            self.runtime_store.data["last_warning"] = (
+                "Sats Sentinel gap standby exhausted for " + ", ".join(exhausted[:8]) +
+                ". Unlock the vault once to replenish pre-derived addresses."
+            )[:500]
+        if changed or exhausted:
+            await self.runtime_store.async_save()
+        return changed
+
     async def async_apply_full_config(
         self, config: dict[str, Any], *, poll: bool = True
     ) -> dict[str, Any]:
-        """Apply the encrypted Sentinel configuration.
+        """Apply the encrypted Sentinel configuration and restore HD gap coverage.
 
-        UI saves use ``poll=False`` so persisting settings is immediate and is
-        never held hostage by a slow wallet/history request. Startup keeps the
-        historical behavior and performs an initial poll.
+        A full settings save historically rebuilt the runtime cache from the raw
+        ``receive_count``/``change_count`` values. Since those values are gap
+        limits (not total address counts), that silently collapsed an already
+        discovered XPUB/descriptor back to e.g. Receive 2 + Change 2. Re-run the
+        causal gap discovery whenever the full encrypted configuration is
+        activated so balance, UTXOs and transaction history cover all used
+        addresses plus the configured unused reserve on both branches.
         """
         normalized = normalize_watch_config(config)
+        self.cancel_background_refresh()
         purged_activity_count = await self.runtime_store.async_replace_from_full_config(normalized)
-        if poll and normalized["enabled"]:
-            await self.async_poll(force=True)
+        if normalized["enabled"]:
+            source = _select_watch_source(self.entry, normalized)
+            if source is not None:
+                try:
+                    await self._discover_gap_addresses(normalized, source)
+                except Exception as err:
+                    # Keep the encrypted configuration saved even if the node is
+                    # temporarily unavailable. The next explicit save/startup can
+                    # retry discovery; never invent a clearnet/provider fallback.
+                    self.runtime_store.data["last_warning"] = (
+                        f"Sats Sentinel gap discovery pending: {type(err).__name__}: {err}"
+                    )[:500]
+                    await self.runtime_store.async_save()
+            if poll:
+                await self.async_poll(force=True)
         status = self.public_status(include_addresses=True)
         status["purged_activity_count"] = purged_activity_count
         return status
@@ -1642,6 +2005,10 @@ class WalletWatchManager:
         monitor_id = str(monitor.get("id") or "").strip()
         if not monitor_id:
             raise ValueError("Sats Sentinel monitor ID is missing")
+        # Cancel a stale scan before the first persistence await. Otherwise an
+        # older discovery task could finish while this newer monitor is being
+        # saved and overwrite the just-updated runtime address set.
+        self.cancel_background_refresh()
         old_config = normalize_watch_config(self.ledger_store.wallet_watch_config)
         new_config = deepcopy(old_config)
         rows = list(new_config.get("monitors", []))
@@ -1670,6 +2037,12 @@ class WalletWatchManager:
             except Exception:
                 pass
             raise
+        # Persist first, then discover the complete used+gap address range in a
+        # Home Assistant background task. A long XPUB history must never keep the
+        # panel HTTP request open until Fulcrum scanning finishes.
+        self.schedule_background_refresh(
+            new_config, monitor_ids={monitor_id}, poll=True
+        )
         return {
             "saved": True,
             "monitor_id": monitor_id,
@@ -1765,7 +2138,44 @@ class WalletWatchManager:
 
     def public_status(self, *, include_addresses: bool = False) -> dict[str, Any]:
         data = self.runtime_store.data
-        addresses = [row for row in data.get("addresses", []) if isinstance(row, dict)]
+        addresses = [
+            row for row in data.get("addresses", [])
+            if isinstance(row, dict) and bool(row.get("active", True))
+        ]
+        monitor_summaries: dict[str, dict[str, Any]] = {}
+        for row in addresses:
+            monitor_id = str(row.get("monitor_id") or "")
+            if not monitor_id:
+                continue
+            summary = monitor_summaries.setdefault(
+                monitor_id,
+                {
+                    "address_count": 0,
+                    "receive_address_count": 0,
+                    "change_address_count": 0,
+                    "receive_used_count": 0,
+                    "change_used_count": 0,
+                    "balance_sats": 0,
+                    "utxo_count": 0,
+                    "baseline_complete": True,
+                },
+            )
+            summary["address_count"] += 1
+            branch = str(row.get("branch") or "")
+            if branch == "receive":
+                summary["receive_address_count"] += 1
+                if row.get("used") is True:
+                    summary["receive_used_count"] += 1
+            elif branch == "change":
+                summary["change_address_count"] += 1
+                if row.get("used") is True:
+                    summary["change_used_count"] += 1
+            summary["balance_sats"] += int(row.get("balance_sats") or 0)
+            summary["utxo_count"] += int(row.get("utxo_count") or 0)
+            summary["baseline_complete"] = bool(summary["baseline_complete"]) and bool(
+                row.get("baseline_complete")
+            )
+
         activity_rows = [item for item in data.get("activity_log", []) if isinstance(item, dict)]
         last_activity_by_monitor: dict[str, dict[str, Any]] = {}
         for item in activity_rows:
@@ -1817,9 +2227,18 @@ class WalletWatchManager:
             "last_success_at": data.get("last_success_at"),
             "activity_log_count": len(activity_rows),
             "last_activity_at": max((str(item.get("detected_at") or "") for item in activity_rows), default="") or None,
+            # Privacy-safe per-monitor aggregates are always returned, even when
+            # concrete addresses are intentionally omitted from the lightweight
+            # status endpoint. This keeps each watch card's balance/address/UTXO
+            # counts correct without exposing address material while the vault is
+            # locked or forcing the historical transaction view to be opened.
+            "monitor_summaries": monitor_summaries,
             "last_activity_by_monitor": last_activity_by_monitor,
             "last_error": data.get("last_error"),
             "last_warning": data.get("last_warning"),
+            "scan_in_progress": bool(
+                self._refresh_task is not None and not self._refresh_task.done()
+            ),
             "partial_failures": int(data.get("partial_failures") or 0),
             "last_partial_at": data.get("last_partial_at"),
             "error_streak": int(data.get("error_streak") or 0),
@@ -1840,6 +2259,8 @@ class WalletWatchManager:
                 {
                     "monitor_id": row.get("monitor_id"), "monitor_slot": row.get("monitor_slot"), "address": row.get("address"),
                     "branch": row.get("branch"), "index": row.get("index"),
+                    "gap_limit": int(row.get("gap_limit") or 0),
+                    "used": row.get("used"),
                     "baseline_complete": bool(row.get("baseline_complete")),
                     "balance_sats": int(row.get("balance_sats") or 0),
                     "utxo_count": int(row.get("utxo_count") or 0),
@@ -1975,6 +2396,7 @@ class WalletWatchManager:
             changed_rows: list[tuple[dict[str, Any], str, str]] = []
             reconcile_rows: list[tuple[dict[str, Any], str, str]] = []
             for (row, scripthash), status in zip(meta, status_results):
+                row["used"] = status not in {None, ""}
                 signature = f"electrum:{status or ''}"
                 changed = (
                     not row.get("baseline_complete")
@@ -2415,7 +2837,9 @@ class WalletWatchManager:
             safe_limit = DEFAULT_TX_OVERVIEW_LIMIT
         rows = [
             row for row in self.runtime_store.data.get("addresses", [])
-            if isinstance(row, dict) and str(row.get("monitor_id") or "") == str(monitor_id or "")
+            if isinstance(row, dict)
+            and str(row.get("monitor_id") or "") == str(monitor_id or "")
+            and bool(row.get("active", True))
         ]
         if not rows:
             raise ValueError("Sats Sentinel watch entry has no derived runtime addresses; save the watch configuration first")
@@ -2640,7 +3064,7 @@ class WalletWatchManager:
         settings = effective_settings(self.entry)
         proxy = None if local_direct else tor_proxy_from_settings(settings)
         headers: dict[str, str] = {
-            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.11",
+            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.12",
         }
         token = str(target.get("token") or "")
         if token:
@@ -2976,7 +3400,10 @@ class WalletWatchManager:
             data = self.runtime_store.data
             if not data.get("enabled"):
                 return self.public_status()
-            addresses = [row for row in data.get("addresses", []) if isinstance(row, dict)]
+            addresses = [
+                row for row in data.get("addresses", [])
+                if isinstance(row, dict) and bool(row.get("active", True))
+            ]
             if not addresses:
                 data["last_error"] = "Sats Sentinel is enabled but no addresses are configured"
                 data["last_warning"] = None
@@ -3053,6 +3480,7 @@ class WalletWatchManager:
                         partial_errors.append(f"Wallet {monitor_slot}: summary {type(err).__name__}: {err}")
                         continue
 
+                    row["used"] = _address_summary_used(first["summary"])
                     sig = _summary_signature(first["summary"])
                     changed = sig != row.get("summary_signature")
                     if changed or not row.get("baseline_complete"):
@@ -3081,6 +3509,17 @@ class WalletWatchManager:
                     else:
                         row["balance_sats"] = _balance_sats(first["summary"])
                         row["utxo_count"] = int(first.get("utxo_count") or 0)
+
+            try:
+                gap_extended = await self._maintain_gap_from_standby(source_used)
+            except Exception as err:
+                partial_errors.append(f"Gap reserve: {type(err).__name__}: {err}")
+                gap_extended = False
+            if gap_extended:
+                addresses = [
+                    row for row in data.get("addresses", [])
+                    if isinstance(row, dict) and bool(row.get("active", True))
+                ]
 
             aggregated: dict[tuple[str, str], dict[str, Any]] = {}
             for activity in activities:

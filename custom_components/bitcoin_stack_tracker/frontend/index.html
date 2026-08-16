@@ -7,7 +7,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <meta name="referrer" content="no-referrer">
   <title>Bitcoin Stack Tracker · Einundzwanzig Koblenz</title>
-  <link rel="stylesheet" href="static/style.css?v=0.21.0.11">
+  <link rel="stylesheet" href="static/style.css?v=0.21.0.12">
 </head>
 <body>
   <div class="topography" aria-hidden="true"></div>
@@ -501,8 +501,8 @@
             <label><span>Kategorie</span><select name="category"><option value="own">Eigene Adresse / Wallet</option><option value="exchange">Exchange</option><option value="interesting">Interessant</option><option value="incident">Hacker / Incident</option><option value="other" selected>Sonstige</option></select></label>
             <label><span>Typ</span><select name="kind"><option value="address">Einzelne Adresse</option><option value="xpub">XPUB / YPUB / ZPUB</option><option value="descriptor">Output Descriptor</option></select></label>
             <label class="span-2"><span>Adresse / XPUB / Descriptor</span><textarea name="value" rows="3" required spellcheck="false"></textarea><small id="walletWatchDetectedKind" class="storage-note" aria-live="polite"></small></label>
-            <label class="wallet-watch-derived"><span>Zukünftige Empfangsadressen</span><input name="receive_count" type="number" min="0" max="20" value="2"></label>
-            <label class="wallet-watch-derived"><span>Zukünftige Change-Adressen</span><input name="change_count" type="number" min="0" max="20" value="2"></label>
+            <label class="wallet-watch-derived"><span>Receive Gap-Limit</span><input name="receive_count" type="number" min="0" max="20" value="2"><small>Alle benutzten Receive-Adressen bleiben überwacht. Gestoppt wird erst nach so vielen aufeinanderfolgenden unbenutzten Receive-Adressen.</small></label>
+            <label class="wallet-watch-derived"><span>Change Gap-Limit</span><input name="change_count" type="number" min="0" max="20" value="2"><small>Alle benutzten Change-Adressen bleiben überwacht. Gestoppt wird erst nach so vielen aufeinanderfolgenden unbenutzten Change-Adressen.</small></label>
             <label><span>Letzte Transaktionen laden</span><select name="history_limit"><option value="5">5 TX</option><option value="10" selected>10 TX</option><option value="25">25 TX</option><option value="50">50 TX</option><option value="100">100 TX</option><option value="0">Unbegrenzt · 25 pro Seite</option></select><small>Nur Übersicht. Alte TX lösen keinen Alarm aus. „Unbegrenzt“ lädt seitenweise, nicht alles gleichzeitig in den RAM.</small></label>
             <label><span>Mindestbetrag für Alarm</span><input name="min_notify_amount" type="number" min="0" step="any" value="0"></label>
             <label><span>Einheit Mindestbetrag</span><select name="min_notify_unit"><option value="sats">sats</option><option value="btc">BTC</option></select></label>
@@ -680,7 +680,7 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="static/performance-math.js?v=0.21.0.11"></script>
-  <script src="static/app.js?v=0.21.0.11"></script>
+  <script src="static/performance-math.js?v=0.21.0.12"></script>
+  <script src="static/app.js?v=0.21.0.12"></script>
 </body>
 </html>

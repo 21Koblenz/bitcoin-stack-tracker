@@ -1,4 +1,4 @@
-const FRONTEND_BUILD = "0.21.0.11-stable";
+const FRONTEND_BUILD = "0.21.0.12-stable";
 const RPC_SOURCE = "bitcoin-stack-tracker-native";
 
 function panelErrorText(error) {

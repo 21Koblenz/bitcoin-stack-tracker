@@ -1121,6 +1121,32 @@ async def _async_unlock_for_requester(
         raise vol.Invalid(str(err)) from err
     security.mark_user_unlocked(requester)
     _rate_limiter(hass).clear_user(entry_id, requester, SERVICE_UNLOCK_VAULT)
+
+    # Rehydrate Sats Sentinel from the authoritative encrypted user vault after
+    # every successful unlock. The device-bound runtime cache normally survives
+    # Home Assistant restarts and keeps monitoring while the vault is locked, but
+    # this gives us a deterministic recovery path if that cache was missing,
+    # damaged, or came from an older schema. Never block the vault unlock on
+    # Fulcrum/mempool reachability: gap discovery runs as an integration task and
+    # async_apply_full_config keeps the saved configuration even when the node is
+    # temporarily unavailable.
+    try:
+        watch_config = normalize_watch_config(storage.wallet_watch_config)
+        watch_manager = runtime.get("wallet_watch")
+        if isinstance(watch_manager, WalletWatchManager):
+            async def _restore_wallet_watch_after_unlock() -> None:
+                try:
+                    await watch_manager.async_apply_full_config(watch_config, poll=False)
+                except Exception as err:  # recovery must never break vault unlock
+                    _LOGGER.warning("Sats Sentinel restart recovery after vault unlock failed: %s", err)
+
+            hass.async_create_task(
+                _restore_wallet_watch_after_unlock(),
+                f"Bitcoin Stack Tracker Sats Sentinel recovery {entry_id}",
+            )
+    except Exception as err:  # malformed legacy config must not block vault access
+        _LOGGER.warning("Sats Sentinel configuration could not be queued after vault unlock: %s", err)
+
     entry = hass.config_entries.async_get_entry(entry_id)
     currencies = configured_currencies(effective_settings(entry)) if entry else []
     await storage.async_ensure_legacy_goal(
@@ -2644,10 +2670,14 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 config = normalize_watch_config(incoming.get("config"))
                 if (config.get("monitors") or config.get("notification_targets")) and runtime["security"].encryption_mode != ENCRYPTION_PASSWORD:
                     raise ValueError("Sats Sentinel requires the password-encrypted vault before watch-only data or notification credentials can be stored")
+                runtime["wallet_watch"].cancel_background_refresh()
                 await runtime["storage"].async_set_wallet_watch_config(config)
-                # Saving must be immediate. A slow address history request must
-                # never make the UI look as if the Save button did nothing.
-                status = await runtime["wallet_watch"].async_apply_full_config(config, poll=False)
+                # Persist the device-bound runtime shell immediately, then perform
+                # potentially long XPUB/descriptor gap discovery asynchronously.
+                # Saving settings must never look like a Home Assistant outage.
+                await runtime["wallet_watch"].runtime_store.async_replace_from_full_config(config)
+                runtime["wallet_watch"].schedule_background_refresh(config, poll=True)
+                status = runtime["wallet_watch"].public_status(include_addresses=True)
             except ValueError as err:
                 raise web.HTTPBadRequest(text=str(err)) from err
             return respond({"saved": True, "config": config, "status": status, "notify_services": sorted(self.hass.services.async_services().get("notify", {}).keys()), "activity_log": runtime["wallet_watch"].public_activity_log(config, page=1, category="all")})
