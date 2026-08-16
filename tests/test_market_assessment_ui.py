@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
 INDEX = (FRONTEND / "index.html").read_text(encoding="utf-8")
-APP = (FRONTEND / "static" / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
+APP = (FRONTEND / "static" / "app-v021010-f51973f8.js").read_text(encoding="utf-8")
 SENSOR = (ROOT / "custom_components" / "bitcoin_stack_tracker" / "sensor.py").read_text(encoding="utf-8")
 
 
@@ -56,7 +56,7 @@ def test_turning_point_ui_keeps_clear_non_signal_language_and_tor_neutrality():
 
 
 def test_market_assessment_refreshes_automatically_without_external_refresh_call():
-    app = (FRONTEND / "static" / "app-v021009-bba91c83.js").read_text(encoding="utf-8")
+    app = (FRONTEND / "static" / "app-v021010-f51973f8.js").read_text(encoding="utf-8")
     init_py = (ROOT / "custom_components" / "bitcoin_stack_tracker" / "__init__.py").read_text(encoding="utf-8")
     assert "function startMarketAssessmentPolling()" in app
     assert "},60000);" in app

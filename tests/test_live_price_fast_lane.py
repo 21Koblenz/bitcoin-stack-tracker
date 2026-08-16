@@ -50,10 +50,10 @@ class LivePriceFastLaneTests(unittest.TestCase):
 
     def test_frontend_assets_are_cache_busted_for_sentinel_v5(self):
         index = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/index.html").read_text()
-        self.assertIn('style-v021009-', index)
+        self.assertIn('style-v021010-', index)
         self.assertNotIn('style-v021006-', index)
         panel = (ROOT / "custom_components/bitcoin_stack_tracker/panel.py").read_text()
-        self.assertIn('release021009-r2', panel)
+        self.assertIn('release021010-r1', panel)
 
     def test_sentinel_own_mempool_rule_remains_exclusive(self):
         text = (ROOT / "custom_components/bitcoin_stack_tracker/wallet_watch.py").read_text()

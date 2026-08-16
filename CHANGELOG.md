@@ -1,10 +1,10 @@
 # Changelog
 
-## v0.21.0.9 — Updated build (2026-08-15): Sats Sentinel, adaptive market assessment & chart overlays
+## v0.21.0.10 — 2026-08-15: Sats Sentinel, adaptive market assessment & chart overlays
 
 ### English
 
-This updated build intentionally keeps the semantic version **v0.21.0.9** and extends the artifacts that were initially published under the same version on 2026-08-14.
+This release builds on **v0.21.0.9** and adds Sats Sentinel, the adaptive/historical market assessment, improved live/chart refresh behavior, and the related privacy/UI hardening.
 
 #### Sats Sentinel
 - Added **Sats Sentinel**, a privacy-first watch-only Bitcoin monitor for single/multiple addresses, XPUB/YPUB/ZPUB and descriptors. It never accepts private keys or seed words and cannot sign or spend.
@@ -46,12 +46,12 @@ This updated build intentionally keeps the semantic version **v0.21.0.9** and ex
 #### Quality assurance
 - Final local release suite: **457 tests + 8 subtests passed**.
 - Python compile, JavaScript syntax, frontend asset integrity, source-policy regressions, TLS pinning, journal purge, causal-history/no-look-ahead and chart-overlay tests pass.
-- Home Assistant custom integration version: **v0.21.0.9**.
+- Home Assistant custom integration version: **v0.21.0.10**.
 - Tor Gateway remains **v0.21.0.3**.
 
 ### Deutsch
 
-Dieser aktualisierte Stand behält bewusst die semantische Version **v0.21.0.9** und erweitert die ursprünglich am 14.08.2026 unter derselben Version veröffentlichten Artefakte.
+Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adaptive/historische Markteinschätzung, verbesserte Live-/Chart-Aktualisierung sowie die dazugehörige Privacy- und UI-Härtung.
 
 #### Sats Sentinel
 - Neuer **Sats Sentinel** als Privacy-first Watch-only-Bitcoin-Wächter für einzelne/mehrere Adressen, XPUB/YPUB/ZPUB und Descriptoren. Private Keys oder Seed-Wörter werden nicht akzeptiert; Signieren oder Ausgeben ist nicht möglich.
@@ -93,7 +93,7 @@ Dieser aktualisierte Stand behält bewusst die semantische Version **v0.21.0.9**
 #### Qualitätssicherung
 - Finale lokale Release-Suite: **457 Tests + 8 Subtests bestanden**.
 - Python-Compile, JavaScript-Syntax, Frontend-Asset-Integrität, Quellenregeln, TLS-Pinning, Journal-Löschung, kausale Historie/No-Look-Ahead und Chart-Overlay-Regressionen sind grün.
-- Home-Assistant-Custom-Integration: **v0.21.0.9**.
+- Home-Assistant-Custom-Integration: **v0.21.0.10**.
 - Tor Gateway bleibt **v0.21.0.3**.
 
 ## v0.21.0.9 — Initial published build (2026-08-14): Revolut X, manuelle Buchungen & Netzwerkgebühren

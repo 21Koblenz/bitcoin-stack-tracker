@@ -15,7 +15,7 @@ def test_sats_sentinel_branding_and_internal_compatibility():
     assert "Sats Sentinel" in app
     assert "Wallet Watch" not in app
     assert "Sats Sentinel" in backend
-    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.9"' in backend
+    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.10"' in backend
 
     # Internal route/event/storage names intentionally stay stable.
     assert 'route == "api/wallet-watch"' in init_py

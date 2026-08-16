@@ -2,12 +2,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
-PANEL = (FRONTEND / "panel-v021009-ae7b9cb3.js").read_text(encoding="utf-8")
+PANEL = (FRONTEND / "panel-v021010-ae7b9cb3.js").read_text(encoding="utf-8")
 
 
 def test_header_uses_existing_full_color_brand_asset_without_resizing_rules():
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    css = (FRONTEND / "static" / "style-v021009-c577172d.css").read_text(encoding="utf-8")
+    css = (FRONTEND / "static" / "style-v021010-c577172d.css").read_text(encoding="utf-8")
     asset = FRONTEND / "static" / "assets" / "bitcoin-stack-tracker-logo.png"
     assert asset.exists()
     assert 'src="static/assets/bitcoin-stack-tracker-logo.png"' in html

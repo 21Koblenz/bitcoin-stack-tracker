@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021009-bba91c83.js").read_text(encoding="utf-8")
+APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021010-f51973f8.js").read_text(encoding="utf-8")
 
 
 def _block(start: str, end: str) -> str:

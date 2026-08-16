@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.9
+# Bitcoin Stack Tracker v0.21.0.10
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -167,28 +167,28 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.9**. This updated build intentionally keeps the same semantic version and extends the v0.21.0.9 artifacts originally published on 2026-08-14 with **Sats Sentinel**, the adaptive/historical **market assessment**, faster live/chart refresh behavior and related privacy/UI hardening.
+Current project version: **v0.21.0.10**. This release builds on v0.21.0.9 with **Sats Sentinel**, the adaptive/historical **market assessment**, improved live/chart refresh behavior and related privacy/UI hardening.
 
 #### Changes since v0.21.0.9
 
-- **Sats Sentinel:** 24/7 watch-only address/XPUB/descriptor monitoring with encrypted runtime state, movement journal, test modes and configurable Home Assistant/ntfy/webhook notifications.
-- **Configurable Sentinel source:** automatic, Fulcrum/Electrum, electrs/Electrum, own Mempool, or configured public Mempool over Tor. Explicit selections are fail-closed with no hidden provider fallback.
-- **Fulcrum/electrs:** direct Electrum scripthash queries, local-LAN or Tor/onion routing, TLS support and exact SHA-256 pinning for self-signed server certificates.
-- **Sentinel privacy lifecycle:** XPUB/descriptors stay out of runtime cache, discreet notification mode hides wallet/amount/TXID/address details, and deleting a watch entry permanently removes its journal history.
-- **Adaptive market assessment:** modular 0–100 score, adaptive volatility/reference windows, configurable group/signal/turning-point weights, bottom/top zones and confirmation diagnostics. It remains an additional market assessment, not a buy signal or forecast.
-- **Causal history:** historical score reconstruction uses only information available at each historical date. The chart includes crosshair axis badges, BTC-price overlay, configurable opacity and linear/log price scale.
-- **Causal chart smoothing:** optional EMA smoothing (Off / 3 / 5 / 7 / 14 / 30 points). It changes only the displayed line, never the raw score or Home Assistant sensor, and the same setting is used by the overview overlay.
-- **Overview chart:** new **Bitcoin price + market assessment** view with an independent linear score axis that auto-scales to the visible score range. Historical scores are no longer forward-filled into every intraday BTC candle; causal score samples are aligned directly to the price timeline, completed daily scores become effective at day end and the live score at its actual calculation time.
-- **Live price/chart refresh:** public price fast lane and source-specific cadence, current live quote appended/replaced in charts, and real source refresh when changing chart ranges while preserving Tor-only public routing.
-- **Sats Sentinel UI:** status-only refresh no longer overwrites unsaved form input; saving and source tests show explicit success/error feedback.
-- **Quality assurance:** final release suite passes **457 tests + 8 subtests**, plus Python compile, JavaScript syntax and release-integrity checks.
+- **Sats Sentinel:** 24/7 watch-only monitoring for single/multiple Bitcoin addresses, XPUB/YPUB/ZPUB and descriptors, with encrypted runtime state, movement journal, test modes and configurable Home Assistant/ntfy/webhook notifications.
+- **Configurable Sentinel source:** Automatic, Fulcrum/Electrum, electrs/Electrum, own Mempool instance, or configured public Mempool over Tor. Explicit selections are strictly fail-closed with no hidden provider fallback.
+- **Fulcrum/electrs:** direct Electrum scripthash balance/history/UTXO queries, LAN or Tor/onion routing, TLS support and exact SHA-256 certificate pinning for self-signed server certificates.
+- **Sentinel privacy lifecycle:** XPUB/descriptors stay out of the device-bound runtime cache; discreet alerts can hide wallet/amount/TXID/address details; deleting a watch entry permanently removes its journal history.
+- **Movement journal & UI:** sender → direction → recipient layout, configurable counterparty count, paging/page size, address/TXID links to the configured Mempool explorer, category/note/threshold/channel controls, and explicit source-test/save feedback. Status refresh no longer overwrites unsaved form fields.
+- **Adaptive market assessment:** modular public-data-only 0–100 model with adaptive volatility/reference windows, valuation, drawdown, price-position/deviation, RSI/momentum, cycle models, Mayer Multiple, ATH drawdown, 200-day distance, power-law ratio, configurable weights/thresholds and bottom/top confirmation diagnostics. It is an additional assessment, **not a buy signal or forecast**.
+- **Causal market history:** historical scores are reconstructed only from data available at each historical date, with no look-ahead bias. The dedicated chart includes crosshair axis badges and an optional BTC-price overlay with independent right axis, linear/log scaling and adjustable opacity.
+- **Optional causal EMA smoothing:** Off / 3 / 5 / 7 / 14 / 30 points, default EMA 5. Smoothing is display-only and never changes the raw score or Home Assistant sensor. **Restore defaults** resets the chart display settings.
+- **Overview chart:** new **Bitcoin price + market assessment** view using the same smoothing setting. The score samples are aligned causally to the BTC timeline rather than forward-filled through every intraday candle, fixing the previous flat-line appearance; the overview score axis auto-scales to visible values.
+- **Live price/history refresh:** source-specific refresh cadence, faster public-price lane, current live quote appended/replaced in charts and real source refresh on range changes while preserving Tor-only public routing.
+- **Same-source Sentinel compatibility:** Mempool address paths remain on the configured node, `/utxo` is no longer required, and Explorer UI remains separate from the blockchain query source.
+- **Quality assurance:** **457 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON/YAML and release-integrity checks.
 
-The **Tor Gateway remains at v0.21.0.3**. The updated v0.21.0.9 build changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
-
-The baseline calculation/privacy/security audit from [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) remains the historical audit baseline. New Sats Sentinel and market-assessment paths are covered by dedicated regression tests in this release.
+The **Tor Gateway remains at v0.21.0.3**. v0.21.0.10 changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
 
 Release changes: [`CHANGELOG.md`](CHANGELOG.md)  
 Release overview: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
+
 ### What this project explicitly is not
 
 - not a wallet
@@ -372,28 +372,28 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.9**. Dieser aktualisierte Stand behält bewusst dieselbe semantische Version und erweitert die ursprünglich am 14.08.2026 veröffentlichten v0.21.0.9-Artefakte um **Sats Sentinel**, die adaptive/historische **Markteinschätzung**, schnellere Live-/Chart-Aktualisierung sowie die dazugehörige Privacy- und UI-Härtung.
+Aktueller Projektstand: **v0.21.0.10**. Dieses Release baut auf v0.21.0.9 auf und ergänzt **Sats Sentinel**, die adaptive/historische **Markteinschätzung**, verbesserte Live-/Chart-Aktualisierung sowie die dazugehörige Privacy- und UI-Härtung.
 
 #### Änderungen seit v0.21.0.9
 
-- **Sats Sentinel:** 24/7-Watch-only-Überwachung für Adressen/XPUB/Descriptoren mit verschlüsseltem Runtime-Zustand, Bewegungsjournal, Testmodi und konfigurierbaren Home-Assistant-/ntfy-/Webhook-Benachrichtigungen.
-- **Einstellbare Sentinel-Quelle:** Automatisch, Fulcrum/Electrum, electrs/Electrum, eigene Mempool-Instanz oder konfigurierte öffentliche Mempool-Instanz über Tor. Explizite Auswahl bleibt Fail Closed ohne versteckten Provider-Fallback.
-- **Fulcrum/electrs:** direkte Electrum-Scripthash-Abfragen, lokales LAN bzw. Tor/Onion-Routing, TLS und exaktes SHA-256-Pinning für selbstsignierte Serverzertifikate.
-- **Sentinel-Privacy-Lebenszyklus:** XPUB/Descriptor bleiben aus dem Runtime-Cache, diskrete Benachrichtigungen verbergen Wallet/Betrag/TXID/Adresse und das Löschen eines Watch-Eintrags entfernt dauerhaft dessen Journal-Historie.
-- **Adaptive Markteinschätzung:** modularer 0–100-Score, adaptive Volatilitäts-/Referenzfenster, frei einstellbare Gruppen-/Signal-/Wendepunktgewichte sowie Boden-/Top-Zonen und Bestätigungsdiagnostik. Sie bleibt eine zusätzliche Markteinschätzung und kein Kaufsignal oder Forecast.
-- **Kausale Historie:** historische Scores werden ausschließlich mit Informationen rekonstruiert, die am jeweiligen Tag bereits vorhanden waren. Der Chart besitzt Fadenkreuz-Achsenwerte, BTC-Preis-Overlay, einstellbare Deckkraft und lineare/logarithmische Preisachse.
-- **Kausale Chart-Glättung:** optionale EMA-Glättung (Aus / 3 / 5 / 7 / 14 / 30 Punkte). Sie verändert ausschließlich die angezeigte Linie, niemals Rohscore oder HA-Sensor; dieselbe Einstellung wird auf der Startseite übernommen.
-- **Startseiten-Chart:** neue Ansicht **Bitcoin-Kurs + Markteinschätzung** mit eigener linearer Scoreachse, die automatisch auf den sichtbaren Scorebereich skaliert. Historische Scores werden nicht mehr in jedes Intraday-Kursintervall vorwärts aufgefüllt; kausale Score-Stützpunkte werden direkt auf die Kurszeitachse gelegt, abgeschlossene Tagesscores gelten am Tagesende und der Live-Score erst ab seinem tatsächlichen Berechnungszeitpunkt.
-- **Live-Kurs/Chart-Refresh:** Public-Price-Fast-Lane mit quellenabhängiger Frequenz, aktueller Live-Punkt in Charts und echte Quellenaktualisierung bei Zeitraumwechseln; öffentliche Verbindungen bleiben Tor-only.
-- **Sats-Sentinel-UI:** der Statusrefresh überschreibt keine ungespeicherten Formulareingaben mehr; Speichern und Quellen-Test liefern sichtbares Erfolgs-/Fehlerfeedback.
-- **Qualitätssicherung:** finale Release-Suite **457 Tests + 8 Subtests**, zusätzlich Python-Compile, JavaScript-Syntax und Release-Integritätsprüfung.
+- **Sats Sentinel:** 24/7-Watch-only-Überwachung für einzelne/mehrere Bitcoin-Adressen, XPUB/YPUB/ZPUB und Descriptoren mit verschlüsseltem Runtime-Zustand, Bewegungsjournal, Testmodi und konfigurierbaren Home-Assistant-/ntfy-/Webhook-Benachrichtigungen.
+- **Einstellbare Sentinel-Quelle:** Automatisch, Fulcrum/Electrum, electrs/Electrum, eigene Mempool-Instanz oder konfigurierte öffentliche Mempool-Instanz über Tor. Explizite Auswahl arbeitet strikt Fail Closed ohne versteckten Provider-Fallback.
+- **Fulcrum/electrs:** direkte Electrum-Scripthash-Abfragen für Balance/History/UTXOs, LAN- bzw. Tor/Onion-Routing, TLS sowie exaktes SHA-256-Zertifikat-Pinning für selbstsignierte Serverzertifikate.
+- **Sentinel-Privacy-Lebenszyklus:** XPUB/Descriptor bleiben aus dem gerätegebundenen Runtime-Cache; diskrete Meldungen können Wallet/Betrag/TXID/Adresse verbergen; das Löschen eines Watch-Eintrags entfernt dessen Journal-Historie dauerhaft.
+- **Bewegungsjournal & UI:** Sender → Richtung → Empfänger, einstellbare Anzahl Gegenadressen, Pagination/Seitengröße, Adress-/TXID-Links zum konfigurierten Mempool-Explorer sowie Kategorie-/Notiz-/Schwellen-/Kanalregeln. Quellentest und Speichern geben sichtbares Feedback; der Statusrefresh überschreibt keine ungespeicherten Eingaben mehr.
+- **Adaptive Markteinschätzung:** modulares öffentliches 0–100-Modell mit adaptiven Volatilitäts-/Referenzfenstern, Bewertung, Drawdown, Preisposition/Abweichung, RSI/Momentum, Zyklusmodellen, Mayer Multiple, ATH-Drawdown, 200-Tage-Abstand, Power-Law-Verhältnis, einstellbaren Gewichten/Schwellen und Boden-/Top-Bestätigungsdiagnostik. Sie ist eine zusätzliche Einschätzung und **kein Kaufsignal oder Forecast**.
+- **Kausale Markthistorie:** historische Scores werden ausschließlich aus den am jeweiligen Datum bereits verfügbaren Daten rekonstruiert – ohne Look-ahead-Bias. Der eigene Chart enthält Fadenkreuz-Achsenwerte und ein optionales BTC-Preis-Overlay mit eigener rechter Achse, linear/log und einstellbarer Deckkraft.
+- **Optionale kausale EMA-Glättung:** Aus / 3 / 5 / 7 / 14 / 30 Punkte, Standard EMA 5. Die Glättung ist nur Darstellung und verändert weder Rohscore noch Home-Assistant-Sensor. **Standard wiederherstellen** setzt die Chart-Darstellung zurück.
+- **Startseitenchart:** neue Ansicht **Bitcoin-Kurs + Markteinschätzung** mit derselben Glättung. Score-Stützpunkte werden kausal an die BTC-Zeitachse gelegt statt durch jedes Intraday-Intervall vorwärts aufgefüllt; damit ist der Seitwärtsstrich behoben. Die Scoreachse der Startseite skaliert auf den sichtbaren Bereich.
+- **Live-Kurs/Historie:** quellenabhängige Aktualisierungsfrequenz, schnellere Public-Price-Lane, aktueller Live-Punkt in Charts und echter Quellenrefresh bei Zeitraumwechseln; öffentliche Verbindungen bleiben Tor-only.
+- **Same-Source-Sentinel-Kompatibilität:** Mempool-Adresspfade bleiben auf derselben konfigurierten Node, `/utxo` wird nicht mehr benötigt und die Explorer-Oberfläche bleibt von der Blockchain-Abfragequelle getrennt.
+- **Qualitätssicherung:** **457 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON/YAML und Release-Integritätsprüfung.
 
-Das **Tor Gateway bleibt v0.21.0.3**. Der aktualisierte v0.21.0.9-Stand ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
-
-Der grundlegende Berechnungs-/Datenschutz-/Security-Audit aus [`AUDIT-v0.21.0.6.md`](AUDIT-v0.21.0.6.md) bleibt die historische Audit-Basis. Die neuen Sats-Sentinel- und Markteinschätzungs-Pfade besitzen eigene Regressionstests.
+Das **Tor Gateway bleibt v0.21.0.3**. v0.21.0.10 ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
+
 ### Was das Projekt ausdrücklich nicht ist
 
 - keine Wallet
