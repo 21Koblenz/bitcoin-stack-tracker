@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app-v021010-f51973f8.js").read_text(encoding="utf-8")
+APP = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/app.js").read_text(encoding="utf-8")
 
 
 def _block(start: str, end: str) -> str:
@@ -51,7 +51,7 @@ def test_background_halving_refresh_never_rebuilds_hidden_overview_chart():
     block = _block("async function loadHalvings", "async function loadData")
     assert 'if (state.activeTab === "overview") renderChart();' in block
 
-PERFORMANCE_MATH = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/performance-math-v021006-733b783d.js").read_text(encoding="utf-8")
+PERFORMANCE_MATH = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/performance-math.js").read_text(encoding="utf-8")
 
 
 def test_xirr_normalizes_and_sorts_flows_once_per_solve():

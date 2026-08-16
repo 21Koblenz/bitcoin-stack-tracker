@@ -1,30 +1,30 @@
-# Publishing v0.21.0.10 on GitHub
+# Publishing v0.21.0.11 on GitHub
+
+## One-time frontend cleanup
+
+The current v0.21.0.10 repository still contains five legacy version/hash-named frontend assets next to the stable files. Delete these files **once** when applying v0.21.0.11:
+
+- `custom_components/bitcoin_stack_tracker/frontend/index-v021010-60203b9c.html`
+- `custom_components/bitcoin_stack_tracker/frontend/panel-v021010-ae7b9cb3.js`
+- `custom_components/bitcoin_stack_tracker/frontend/static/app-v021010-f51973f8.js`
+- `custom_components/bitcoin_stack_tracker/frontend/static/performance-math-v021006-733b783d.js`
+- `custom_components/bitcoin_stack_tracker/frontend/static/style-v021010-c577172d.css`
+
+Keep the stable files `index.html`, `panel.js`, `static/app.js`, `static/style.css` and `static/performance-math.js`. From v0.21.0.11 onward, releases overwrite only these names and use `?v=<VERSION>` for cache busting. `.gitignore` blocks the legacy patterns.
 
 ## Repository update
 
-1. Replace the repository contents with the prepared v0.21.0.10 drop-in while preserving your Git metadata.
-2. Remove obsolete hashed frontend assets from the current v0.21.0.9 tree; see the external cleanup list shipped with the release package.
-3. Remove the old root release helper files:
-   - `GITHUB-RELEASE-v0.21.0.9.md`
-   - `RELEASE-QC-v0.21.0.9.md`
-4. Add the new files:
-   - `GITHUB-RELEASE-v0.21.0.10.md`
-   - `RELEASE-QC-v0.21.0.10.md`
-   - `custom_components/bitcoin_stack_tracker/wallet_watch.py`
-   - new v021010 hashed frontend assets
-5. Confirm versions:
-   - `VERSION.txt` = `0.21.0.10`
-   - `custom_components/bitcoin_stack_tracker/manifest.json` = `0.21.0.10`
-   - `custom_components/bitcoin_stack_tracker/const.py` = `0.21.0.10`
-   - frontend `BUILD_VERSION` = `0.21.0.10`
-6. Run the release tests/integrity checks and commit.
+1. Copy/overlay the prepared **v0.21.0.11 GITHUB-DROP-IN** into the existing repository and overwrite matching files. Do **not** mass-delete unrelated historical documents or Git metadata.
+2. Delete only the five legacy frontend files listed above.
+3. Add `GITHUB-RELEASE-v0.21.0.11.md` and `RELEASE-QC-v0.21.0.11.md`; existing older release/QC documents may remain as history.
+4. Confirm `VERSION.txt`, `manifest.json`, `const.py`, frontend `BUILD_VERSION`, SBOM metadata and Sentinel User-Agent all report **0.21.0.11**.
+5. Run validation, commit and push.
 
 ## GitHub release
 
-- Tag: **`v0.21.0.10`**
-- Suggested title: **Bitcoin Stack Tracker v0.21.0.10 — Sats Sentinel & Adaptive Market Assessment**
-- Release text: [`GITHUB-RELEASE-v0.21.0.10.md`](GITHUB-RELEASE-v0.21.0.10.md)
-- Release asset: `bitcoin-stack-tracker-home-assistant-v0.21.0.10.zip`
-- Checksum asset: `bitcoin-stack-tracker-home-assistant-v0.21.0.10.zip.sha256`
+- Tag: **`v0.21.0.11`**
+- Suggested title: **Bitcoin Stack Tracker v0.21.0.11 — Sats Sentinel & Causal Market Assessment**
+- Release text: [`GITHUB-RELEASE-v0.21.0.11.md`](GITHUB-RELEASE-v0.21.0.11.md)
+- The existing release workflow builds `bitcoin-stack-tracker-home-assistant-v0.21.0.11.zip` and its SHA-256 file automatically when the non-prerelease GitHub Release is published.
 
-This is a normal semantic version increment, so the existing `v0.21.0.9` release/tag remains untouched as release history.
+The Tor Gateway remains **v0.21.0.3**. Its workflow sees that the integration tag does not match the gateway version and therefore does not publish a new gateway image for v0.21.0.11.

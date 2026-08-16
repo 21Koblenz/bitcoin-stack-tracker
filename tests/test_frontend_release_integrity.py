@@ -2,10 +2,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
-APP = (COMP / "frontend/static/app-v021010-f51973f8.js").read_text(encoding="utf-8")
-PANEL = (COMP / "frontend/panel-v021010-ae7b9cb3.js").read_text(encoding="utf-8")
+APP = (COMP / "frontend/static/app.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel.js").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
-CSS = (COMP / "frontend/static/style-v021010-c577172d.css").read_text(encoding="utf-8")
+CSS = (COMP / "frontend/static/style.css").read_text(encoding="utf-8")
 
 
 def test_heavy_tabs_render_lazily():
@@ -40,3 +40,24 @@ def test_menu_uses_home_assistant_custom_panel_toggle_event():
     assert 'this.dispatchEvent(new CustomEvent("hass-toggle-menu"' in PANEL
     assert 'external.fireMessage' not in PANEL
     assert 'home-assistant-main' not in PANEL
+
+
+def test_frontend_release_uses_only_stable_entrypoint_filenames():
+    frontend = COMP / "frontend"
+    static = frontend / "static"
+    assert (frontend / "index.html").is_file()
+    assert (frontend / "panel.js").is_file()
+    assert (static / "app.js").is_file()
+    assert (static / "style.css").is_file()
+    assert (static / "performance-math.js").is_file()
+    assert not list(frontend.glob("index-v*.html"))
+    assert not list(frontend.glob("panel-v*.js"))
+    assert not list(static.glob("app-v*.js"))
+    assert not list(static.glob("style-v*.css"))
+    assert not list(static.glob("performance-math-v*.js"))
+    panel_py = (COMP / "panel.py").read_text(encoding="utf-8")
+    assert 'module_url=f"{STATIC_URL}/panel.js?v={VERSION}"' in panel_py
+    assert '"frontend_url": f"{STATIC_URL}/index.html?native=1&v={VERSION}"' in panel_py
+    assert 'static/app.js?v=0.21.0.11' in INDEX
+    assert 'static/style.css?v=0.21.0.11' in INDEX
+    assert 'static/performance-math.js?v=0.21.0.11' in INDEX

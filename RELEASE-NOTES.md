@@ -1,61 +1,63 @@
-# Bitcoin Stack Tracker v0.21.0.10 — Release Notes
+# Bitcoin Stack Tracker v0.21.0.11 — Release Notes
 
 [English](#english) · [Deutsch](#deutsch)
+
+---
 
 <a id="english"></a>
 ## English
 
-v0.21.0.10 is the feature release after v0.21.0.9. It introduces **Sats Sentinel** and the adaptive/historical **market assessment** while keeping public network traffic on the existing Tor fail-closed architecture.
+v0.21.0.11 builds on **v0.21.0.10**.
 
-### Highlights
+### Historical market assessment
 
-- Sats Sentinel watch-only monitoring for addresses, XPUB/YPUB/ZPUB and descriptors.
-- Explicit Sentinel source selection: Automatic, Fulcrum/Electrum, electrs/Electrum, own Mempool, or configured public Mempool over Tor.
-- Strict fail-closed behavior for explicitly selected sources; no silent provider fallback.
-- Fulcrum/electrs Electrum scripthash queries, TLS and SHA-256 pinning for self-signed certificates.
-- Encrypted movement journal, sender/direction/recipient view, thresholds/categories/notes, notifications and test modes.
-- Removing a watch entry permanently removes its associated journal rows.
-- Adaptive 0–100 market assessment with configurable weights, turning-point/bottom/top diagnostics and a decimal HA sensor.
-- Causal historical reconstruction without look-ahead bias.
-- Historical market chart with BTC-price overlay, crosshair, opacity, linear/log price axis and causal EMA smoothing.
-- Overview **Bitcoin price + market assessment** overlay uses the same smoothing and fixes the previous flat-line rendering by aligning causal score samples to the actual BTC timeline.
-- Source-specific live-price cadence and real chart-range refreshes while public traffic remains Tor-only.
+`10 years` and `Max` now select the true highest causal raw score independently in every 4-year window. The chart draws only a small star for each value, retains all marker dates even when the visible series is sampled, and lists date/score in a compact legend. The overview chart reuses the same markers. Hover/tap opens details.
 
-### Privacy boundary
+Bottom confirmation is no longer incorrectly tied to the exact maximum-score day. For every marker, the backend searches forward only within the configured `turning_zone_memory_days` period. Every candidate is calculated strictly as of that date, so later rebound/divergence/trend evidence can confirm the earlier stress point without changing the historical score or introducing future data. A 4-year marker is always evaluated independently, but it is only labelled **Bottom confirmed** when the configured gates are actually met.
 
-Sentinel never accepts seeds or private keys. XPUB/descriptors stay in encrypted vault configuration; the device-bound runtime cache contains only concrete derived monitoring material. Explicitly selected own sources never fall back to public providers. Market-assessment data is public market data and stays separated from portfolio privacy state.
+The modular model editor now gives every configurable field a purpose/effect explanation, including the effect of increasing and decreasing values.
 
-### Versions and QA
+### Sats Sentinel layout
 
-- Home Assistant custom integration: **v0.21.0.10**
+Status, journal, test lab, monitor settings, watch targets and privacy are now independently collapsible. The layout is saved per portfolio in browser storage and restored on the same browser/device.
+
+### Stable frontend files
+
+The frontend now permanently uses `index.html`, `panel.js`, `static/app.js`, `static/style.css` and `static/performance-math.js`. Cache invalidation uses the release version in the query string. Existing legacy version/hash files from v0.21.0.10 are a **one-time cleanup**; future releases do not require deleting frontend files.
+
+### Validation
+
+**485 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON parsing and the separate performance-math numeric test.
+
+- Custom Integration: **v0.21.0.11**
 - Tor Gateway: **v0.21.0.3** unchanged
-- **457 tests + 8 subtests passed**
+
+---
 
 <a id="deutsch"></a>
 ## Deutsch
 
-v0.21.0.10 ist das Feature-Release nach v0.21.0.9. Es ergänzt **Sats Sentinel** und die adaptive/historische **Markteinschätzung**, während öffentliche Netzwerkverbindungen weiter die bestehende Tor-Fail-Closed-Architektur verwenden.
+v0.21.0.11 baut auf **v0.21.0.10** auf.
 
-### Highlights
+### Historische Markteinschätzung
 
-- Sats-Sentinel-Watch-only-Überwachung für Adressen, XPUB/YPUB/ZPUB und Descriptoren.
-- Explizite Sentinel-Quellenwahl: Automatisch, Fulcrum/Electrum, electrs/Electrum, eigene Mempool-Instanz oder konfigurierte öffentliche Mempool-Instanz über Tor.
-- Striktes Fail Closed bei explizit gewählten Quellen; kein heimlicher Provider-Fallback.
-- Fulcrum/electrs per Electrum-Scripthash, TLS und SHA-256-Pinning für selbstsignierte Zertifikate.
-- Verschlüsseltes Bewegungsjournal, Sender/Richtung/Empfänger, Schwellen/Kategorien/Notizen, Benachrichtigungen und Testmodi.
-- Das Entfernen eines Watch-Eintrags löscht die zugehörigen Journal-Zeilen dauerhaft.
-- Adaptive 0–100-Markteinschätzung mit einstellbaren Gewichten, Wendepunkt-/Boden-/Top-Diagnostik und dezimalem HA-Sensor.
-- Kausale historische Rekonstruktion ohne Look-ahead-Bias.
-- Markt-Historienchart mit BTC-Preis-Overlay, Fadenkreuz, Deckkraft, linear/log Preisachse und kausaler EMA-Glättung.
-- Startseiten-Overlay **Bitcoin-Kurs + Markteinschätzung** übernimmt dieselbe Glättung und behebt die frühere Seitwärtslinie durch kausale Ausrichtung der Score-Stützpunkte an der tatsächlichen BTC-Zeitachse.
-- Quellenabhängige Live-Kurs-Frequenz und echte Chart-Zeitraum-Refreshes bei weiterhin Tor-only geroutetem öffentlichem Verkehr.
+`10 Jahre` und `Max` bestimmen jetzt in jedem 4-Jahres-Fenster unabhängig den tatsächlich höchsten kausalen Rohscore. Im Chart wird dafür nur ein kleiner Stern gezeichnet; die Marker-Tage bleiben auch beim Sampling der sichtbaren Daten erhalten und Datum/Score stehen zusätzlich in einer kompakten Legende. Der Startseitenchart verwendet dieselben Marker. Hover/Antippen öffnet Details.
 
-### Privacy-Grenze
+Die Bodenbestätigung ist nicht mehr fälschlich an den exakten Tag des maximalen Scores gebunden. Für jeden Marker sucht das Backend ausschließlich innerhalb des eingestellten `turning_zone_memory_days`-Zeitraums nach vorne. Jeder Kandidat wird strikt mit dem Wissensstand dieses Tages berechnet. So können spätere Rebound-/Divergenz-/Trend-Signale den früheren Stresspunkt bestätigen, ohne den historischen Score zu verändern oder zukünftige Daten einzubauen. Jeder 4-Jahres-Marker wird unabhängig geprüft; **Boden bestätigt** erscheint aber weiterhin nur, wenn die konfigurierten Bedingungen wirklich erfüllt wurden.
 
-Sentinel akzeptiert niemals Seeds oder Private Keys. XPUB/Descriptor bleiben in der verschlüsselten Tresorkonfiguration; der gerätegebundene Runtime-Cache enthält nur konkrete abgeleitete Monitoring-Daten. Explizit gewählte eigene Quellen fallen niemals auf öffentliche Provider zurück. Die Markteinschätzung verarbeitet öffentliche Marktdaten und bleibt von privaten Portfoliodaten getrennt.
+Der Editor des modularen Modells erklärt jetzt bei jedem einstellbaren Feld Zweck und Wirkung einschließlich der Auswirkung von Erhöhen und Verringern.
 
-### Versionen und QA
+### Sats-Sentinel-Layout
 
-- Home-Assistant-Custom-Integration: **v0.21.0.10**
+Status, Journal, Testlabor, Überwachungseinstellungen, Watch-Ziele und Datenschutz sind jetzt unabhängig einklappbar. Die Ansicht wird pro Portfolio im Browser gespeichert und auf demselben Browser/Gerät wiederhergestellt.
+
+### Stabile Frontend-Dateien
+
+Das Frontend verwendet dauerhaft `index.html`, `panel.js`, `static/app.js`, `static/style.css` und `static/performance-math.js`. Die Cache-Invalidierung läuft über die Release-Version im Query-String. Die alten Versions-/Hash-Dateien aus v0.21.0.10 werden **einmalig** entfernt; künftige Releases brauchen kein Löschen von Frontend-Dateien mehr.
+
+### Prüfung
+
+**485 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON-Parsing und der separate Performance-Math-Numeriktest.
+
+- Custom Integration: **v0.21.0.11**
 - Tor Gateway: **v0.21.0.3** unverändert
-- **457 Tests + 8 Subtests bestanden**

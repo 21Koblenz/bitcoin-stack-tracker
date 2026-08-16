@@ -10,7 +10,7 @@
         }
       ],
       "type": "application",
-      "version": "0.21.0.10"
+      "version": "0.21.0.11"
     },
     {
       "name": "bitcoin-stack-tracker-native-panel",
@@ -21,7 +21,7 @@
         }
       ],
       "type": "application",
-      "version": "0.21.0.10"
+      "version": "0.21.0.11"
     },
     {
       "name": "bitcoin-stack-tracker-tor-gateway",
@@ -105,7 +105,7 @@
     "component": {
       "name": "bitcoin-stack-tracker",
       "type": "application",
-      "version": "0.21.0.10"
+      "version": "0.21.0.11"
     },
     "properties": [
       {
@@ -121,7 +121,7 @@
         "value": "Tor gateway image generates exact Alpine runtime inventory at build time"
       }
     ],
-    "timestamp": "2026-08-10T23:15:30.989191+00:00"
+    "timestamp": "2026-08-16T14:55:00+00:00"
   },
   "serialNumber": "urn:uuid:ad6610b7-a5c1-414d-99ed-115df7e24457",
   "specVersion": "1.7",

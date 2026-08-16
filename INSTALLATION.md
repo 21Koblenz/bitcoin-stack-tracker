@@ -1,4 +1,4 @@
-# Installation · Bitcoin Stack Tracker v0.21.0.10
+# Installation · Bitcoin Stack Tracker v0.21.0.11
 
 ## Voraussetzungen
 
@@ -37,7 +37,7 @@ Das Repository als benutzerdefiniertes Integrations-Repository hinzufügen, inst
 
 ## Aktualisierung
 
-Bei einem späteren Update zuerst die Custom Integration aktualisieren, Home Assistant Core vollständig neu starten und anschließend das Tor Gateway auf denselben Release-Stand bringen. Die versionierten Frontend-Assets verhindern, dass Browser oder Companion-App veraltete JS-/CSS-Dateien weiterverwenden.
+Bei einem späteren Update zuerst die Custom Integration aktualisieren, Home Assistant Core vollständig neu starten und anschließend das Tor Gateway auf denselben Release-Stand bringen. Die Frontend-Dateinamen bleiben stabil (`index.html`, `panel.js`, `app.js`, `style.css`, `performance-math.js`); Cache-Busting erfolgt über die Release-Version im Query-Parameter. Dadurch müssen bei künftigen Releases keine alten Frontend-Dateien mehr manuell gelöscht werden.
 
 ## Fehlerdiagnose
 

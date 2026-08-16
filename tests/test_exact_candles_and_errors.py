@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 APP = (COMP / "frontend/static/app.js").read_text(encoding="utf-8")
-PANEL = next((COMP / "frontend").glob("panel-v*.js")).read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel.js").read_text(encoding="utf-8")
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 HISTORY = (COMP / "history.py").read_text(encoding="utf-8")
 STORAGE = (COMP / "storage.py").read_text(encoding="utf-8")

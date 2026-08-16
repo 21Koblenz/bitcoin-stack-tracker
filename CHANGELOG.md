@@ -1,6 +1,66 @@
 # Changelog
 
-## v0.21.0.10 — 2026-08-16: Sats Sentinel, adaptive market assessment & chart overlays
+## v0.21.0.11 — 2026-08-16: causal bottom confirmations, multi-cycle markers & collapsible Sats Sentinel
+
+### English
+
+This release builds on **v0.21.0.10** and fixes the historical bottom-confirmation association without loosening the backtested default thresholds. It also finalizes the multi-cycle marker UX, modular-model field help, collapsible Sats Sentinel layout and stable frontend release structure.
+
+#### Historical market assessment
+- `10 years` and `Max` now use the **best causal raw score per 4-year window** instead of a single global best value. The true bucket maximum is calculated before chart sampling and its date is always retained in the displayed series.
+- Best values are drawn as **small star markers only** so the chart is no longer covered by large marker areas. A compact legend below the historical chart lists date and raw score for every star.
+- The same marker set is used in the overview **Bitcoin price + market assessment** chart.
+- Desktop users can hover a star and touch devices can tap it to open the marker popup.
+- **Bottom confirmation is now associated causally after the stress/best-score day.** Each 4-year marker independently scans forward only inside the configured `turning_zone_memory_days` window and only with data available as of each candidate day. This fixes legitimate bottoms whose rebound/divergence/trend confirmation arrived days after the highest score.
+- Marker popup/legend data now includes the actual confirmation date and lag in days. Historical score reconstruction itself remains look-ahead-free.
+- The modular model editor now provides an explanation for every configurable field, including what the parameter controls and the practical effect of increasing or decreasing it. Weight help explicitly explains that a higher weight increases influence rather than automatically increasing the final score.
+
+#### Sats Sentinel UI
+- The six top-level Sats Sentinel cards/sections are now independently collapsible: status, journal, test lab, monitor settings, watch targets and privacy.
+- The open/collapsed state is persisted in browser storage **per portfolio**, so the chosen layout returns after reloads and portfolio switches on the same device/browser.
+- Sensible defaults keep the status, journal and watch-target sections open while test lab, settings and privacy start collapsed.
+
+#### Frontend release layout
+- Frontend delivery uses only stable canonical files: `index.html`, `panel.js`, `static/app.js`, `static/style.css` and `static/performance-math.js`.
+- Cache invalidation is handled with `?v=0.21.0.11`; no new release/hash-named frontend bundles are created.
+- `.gitignore` blocks the legacy `*-v*.js/css/html` patterns so future releases do not require manual frontend-file deletion.
+- When upgrading the GitHub repository from the old layout, the existing legacy hash/version files should be removed **once**; subsequent releases overwrite only the stable files.
+
+#### Versions and QA
+- Home Assistant custom integration: **v0.21.0.11**.
+- Tor Gateway remains **v0.21.0.3**.
+- Final regression count is recorded in `RELEASE-QC-v0.21.0.11.md`.
+
+### Deutsch
+
+Dieses Release baut auf **v0.21.0.10** auf und korrigiert die Zuordnung der historischen Bodenbestätigung, ohne die backgetesteten Standard-Schwellen künstlich zu lockern. Zusätzlich werden die Multi-Zyklus-Marker, die Feldhilfen des modularen Modells, das einklappbare Sats-Sentinel-Layout und die stabile Frontend-Release-Struktur fertiggestellt.
+
+#### Historische Markteinschätzung
+- `10 Jahre` und `Max` verwenden jetzt den **besten kausalen Rohscore je 4-Jahres-Fenster** statt nur eines globalen Bestwerts. Das echte Maximum jedes Fensters wird vor dem Chart-Sampling bestimmt und sein Datum bleibt im dargestellten Datensatz erhalten.
+- Die Bestwerte erscheinen im Chart nur noch als **kleine Sterne**, damit keine große Markierungsfläche den Verlauf verdeckt. Unter dem Historical-Chart listet eine kompakte Legende Datum und Rohscore aller Sterne.
+- Dieselben Marker werden im Startseitenchart **Bitcoin-Kurs + Markteinschätzung** verwendet.
+- Am PC öffnet sich das Popup beim Überfahren des Sterns mit der Maus, auf Touch-Geräten per Antippen.
+- **Die Bodenbestätigung wird jetzt kausal nach dem Stress-/Bestscore-Tag zugeordnet.** Jeder 4-Jahres-Marker prüft unabhängig nur innerhalb des eingestellten `turning_zone_memory_days`-Fensters die Folgetage und berechnet jeden Kandidaten ausschließlich mit den bis dahin verfügbaren Daten. Damit werden echte Wendepunkte erfasst, deren Rebound-/Divergenz-/Trendbestätigung erst einige Tage nach dem höchsten Score eintraf.
+- Popup und Legende können das tatsächliche Bestätigungsdatum sowie die Verzögerung in Tagen anzeigen. Die historische Score-Berechnung selbst bleibt vollständig frei von Look-ahead.
+- Im modularen Modell besitzt jetzt jedes einstellbare Feld eine Erklärung dazu, was der Parameter steuert und welche praktische Wirkung ein höherer oder niedrigerer Wert hat. Bei Gewichten wird ausdrücklich erklärt, dass ein höheres Gewicht den Einfluss erhöht und nicht automatisch den Endscore nach oben verschiebt.
+
+#### Sats-Sentinel-Oberfläche
+- Die sechs Hauptkarten/-bereiche von Sats Sentinel sind jetzt einzeln ein- und ausklappbar: Status, Journal, Testlabor, Überwachungseinstellungen, Watch-Ziele und Datenschutz.
+- Der offene/eingeklappte Zustand wird **pro Portfolio** im Browser gespeichert und nach Neuladen oder Portfolio-Wechsel auf demselben Gerät/Browser wiederhergestellt.
+- Sinnvolle Standardansicht: Status, Journal und Watch-Ziele offen; Testlabor, Einstellungen und Datenschutz eingeklappt.
+
+#### Frontend-Release-Struktur
+- Das Frontend verwendet nur noch die stabilen kanonischen Dateien `index.html`, `panel.js`, `static/app.js`, `static/style.css` und `static/performance-math.js`.
+- Cache-Busting erfolgt über `?v=0.21.0.11`; neue versions-/hashbasierte Frontend-Bundles werden nicht mehr erzeugt.
+- `.gitignore` blockiert die alten `*-v*.js/css/html`-Muster, damit bei künftigen Releases kein manuelles Löschen alter Frontend-Dateien mehr nötig ist.
+- Beim einmaligen Wechsel des GitHub-Repositories von der alten Struktur werden die bereits vorhandenen Legacy-Dateien **ein einziges Mal** gelöscht. Danach werden nur noch die stabilen Dateien überschrieben.
+
+#### Versionen und QA
+- Home-Assistant-Custom-Integration: **v0.21.0.11**.
+- Tor Gateway bleibt **v0.21.0.3**.
+- Die endgültige Testanzahl steht in `RELEASE-QC-v0.21.0.11.md`.
+
+## v0.21.0.10 — 2026-08-15: Sats Sentinel, adaptive market assessment & chart overlays
 
 ### English
 
@@ -17,6 +77,9 @@ This release builds on **v0.21.0.9** and adds Sats Sentinel, the adaptive/histor
 - Added Home Assistant events, persistent notifications, multiple `notify.*` services, self-hosted ntfy targets and webhooks with discreet/normal/detailed payload levels.
 - Added notification test, simulated inbound/outbound test and live arbitrary-TXID source test without mutating wallet balances or baselines.
 - Status refresh no longer redraws the configuration form and therefore no longer overwrites unsaved input. Save/source-test actions provide explicit visible success/failure feedback.
+- XPUB/YPUB/ZPUB monitor type is now recovered defensively in both frontend and backend before address validation. Copy/paste whitespace inside long extended public keys is stripped before validation, fixing the misleading `Bitcoin address is missing or too long` path even for line-wrapped keys. Validation errors now identify the affected monitor and effective type.
+- Added an on-demand per-watch **historical transaction overview** with configurable 5/10/25/50/100 TX depth. Historical rows never create retroactive alerts; transactions that were actually detected after Sentinel setup are highlighted with a dedicated Sentinel marker.
+- Watch cards now show the current balance across their concrete derived addresses. The transaction overview shows wallet-relative incoming/outgoing amount plus whole-transaction input sum, output sum and fee where all prevouts are available.
 - Removing a watch entry now also permanently deletes all journal rows for that monitor from the encrypted Sentinel cache, including derived-address activity for XPUB/descriptor monitors.
 
 #### Adaptive market assessment
@@ -25,7 +88,9 @@ This release builds on **v0.21.0.9** and adds Sats Sentinel, the adaptive/histor
 - Added independent bottom/top zone and confirmation diagnostics with configurable turning-point weights and memory/separation parameters.
 - Added a standard Home Assistant market-assessment sensor with raw decimal score precision.
 - Added causal historical score reconstruction: each historical point uses only information available at that date, preventing look-ahead bias.
+- The historical market chart now marks the **true highest causal raw score inside the selected range**. The best point is calculated before chart sampling and is retained even on `Max`; if the turning-point diagnostics on that day also satisfy the configured bottom-zone + confirmation gates, the marker carries the corresponding bottoming context.
 - Added a dedicated historical score chart with fixed 0–100 axis, crosshair, date/score axis badges, optional BTC-price overlay, independent right-side price axis, linear/log price scaling and adjustable BTC-overlay opacity.
+- Frontend delivery now uses stable canonical filenames (`index.html`, `panel.js`, `app.js`, `style.css`, `performance-math.js`) with release-version query cache busting. Future releases no longer require deleting old hash/version-named frontend files.
 - Added configurable **causal EMA display smoothing**: Off / 3 / 5 / 7 / 14 / 30 points. Smoothing changes only the drawn line, never the raw score or Home Assistant sensor. A display-default reset restores EMA 5, 3-year range, BTC overlay on, 55% opacity and logarithmic price axis.
 - Added **Bitcoin price + market assessment** to the overview chart. It uses the same smoothing setting as the dedicated market chart; its independent score axis stays linear but auto-scales to the visible score range so small changes remain readable.
 - Fixed the overview market overlay appearing as a horizontal line: historical scores are no longer forward-filled into every intraday BTC candle. Causal score samples are aligned to the price timeline and connected directly; completed historical daily scores become effective at day end and the current live score at its actual calculation time.
@@ -44,7 +109,7 @@ This release builds on **v0.21.0.9** and adds Sats Sentinel, the adaptive/histor
 - Explorer links are separated from the Sentinel blockchain source, allowing Fulcrum/electrs monitoring while still opening TXIDs/addresses in a local Mempool web UI.
 
 #### Quality assurance
-- Final local release suite: **457 tests + 8 subtests passed**.
+- Final local release suite: **479 tests + 8 subtests passed**.
 - Python compile, JavaScript syntax, frontend asset integrity, source-policy regressions, TLS pinning, journal purge, causal-history/no-look-ahead and chart-overlay tests pass.
 - Home Assistant custom integration version: **v0.21.0.10**.
 - Tor Gateway remains **v0.21.0.3**.
@@ -64,6 +129,9 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Home-Assistant-Events, Persistent Notifications, mehrere `notify.*`-Dienste, self-hosted ntfy-Ziele und Webhooks mit diskreter/normaler/detaillierter Darstellung.
 - Benachrichtigungstest, simulierte Ein-/Ausgangstests und Live-TXID-Quellentest ohne Veränderung von Wallet-Balance oder Baseline.
 - Der Statusrefresh rendert das Konfigurationsformular nicht mehr neu und überschreibt damit keine ungespeicherten Eingaben. Speichern und Quellen-Test zeigen sichtbares Erfolgs-/Fehlerfeedback.
+- Der XPUB/YPUB/ZPUB-Typ wird jetzt defensiv sowohl im Frontend als auch im Backend vor der Adressprüfung erkannt. Copy/Paste-Leerzeichen und Zeilenumbrüche in langen Extended Public Keys werden vor der Prüfung entfernt. Damit ist der irreführende Pfad `Bitcoin address is missing or too long` auch bei umgebrochenen Keys behoben. Validierungsfehler nennen den betroffenen Monitor und den erkannten Typ.
+- Neue bedarfsgeladene **historische Transaktionsübersicht pro Watch-Eintrag** mit einstellbaren 5/10/25/50/100 TX. Rückwirkend geladene Historie erzeugt niemals Alarme; Transaktionen, die Sentinel nach dem Einrichten tatsächlich erkannt hat, werden mit einem eigenen Sentinel-Marker hervorgehoben.
+- Watch-Karten zeigen den aktuellen Bestand über ihre konkreten abgeleiteten Adressen. In der TX-Übersicht werden Wallet-Ein-/Ausgang sowie die Summe aller Transaktions-Inputs, aller Outputs und – sofern alle Prevouts verfügbar sind – die Fee angezeigt.
 - Beim Entfernen eines Watch-Eintrags werden jetzt auch alle zugehörigen Journal-Zeilen dauerhaft aus dem verschlüsselten Sentinel-Cache gelöscht, einschließlich abgeleiteter XPUB-/Descriptor-Adressen.
 
 #### Adaptive Markteinschätzung
@@ -91,7 +159,7 @@ Dieses Release baut auf **v0.21.0.9** auf und ergänzt Sats Sentinel, die adapti
 - Explorer-Links sind von der Sentinel-Blockchainquelle getrennt: Überwachung kann über Fulcrum/electrs laufen, während TXIDs/Adressen weiterhin in einer lokalen Mempool-Weboberfläche geöffnet werden.
 
 #### Qualitätssicherung
-- Finale lokale Release-Suite: **457 Tests + 8 Subtests bestanden**.
+- Finale lokale Release-Suite: **479 Tests + 8 Subtests bestanden**.
 - Python-Compile, JavaScript-Syntax, Frontend-Asset-Integrität, Quellenregeln, TLS-Pinning, Journal-Löschung, kausale Historie/No-Look-Ahead und Chart-Overlay-Regressionen sind grün.
 - Home-Assistant-Custom-Integration: **v0.21.0.10**.
 - Tor Gateway bleibt **v0.21.0.3**.

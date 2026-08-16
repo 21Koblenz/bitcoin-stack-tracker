@@ -15,7 +15,7 @@ def test_sats_sentinel_branding_and_internal_compatibility():
     assert "Sats Sentinel" in app
     assert "Wallet Watch" not in app
     assert "Sats Sentinel" in backend
-    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.10"' in backend
+    assert '"User-Agent": "Bitcoin-Stack-Tracker/0.21.0.11"' in backend
 
     # Internal route/event/storage names intentionally stay stable.
     assert 'route == "api/wallet-watch"' in init_py
@@ -483,6 +483,189 @@ def test_sats_sentinel_removed_monitor_purges_encrypted_journal_and_ui_saves_imm
     assert "async function removeWalletWatchMonitor(id)" in app
     assert "Journal-Historie wird dauerhaft" in app
     delete_block = app[app.index("async function removeWalletWatchMonitor(id)"):app.index("function addWalletWatchMonitor", app.index("async function removeWalletWatchMonitor(id)"))]
-    assert 'api("api/wallet-watch"' in delete_block
+    assert 'api("api/wallet-watch/remove-monitor"' in delete_block
     assert "loadWalletWatchActivity(1)" in delete_block
     assert "purged_activity_count" in delete_block
+    assert "async_remove_monitor" in backend
+
+
+def test_sats_sentinel_xpub_kind_is_recovered_before_address_validation():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "def _normalize_monitor_kind" in backend
+    assert "lowered.startswith((\"xpub\", \"ypub\", \"zpub\"))" in backend
+    kind_block = backend[backend.index("def _normalize_monitor_kind"):backend.index("# ---- Bitcoin address", backend.index("def _normalize_monitor_kind"))]
+    assert '_extract_extended_public_key(compact) is not None' in kind_block
+    assert 'lowered.startswith(("xpub", "ypub", "zpub"))' in kind_block
+    assert 'kind == "address" and lowered.startswith' not in kind_block
+    assert "_compact_watch_source(source)" in backend
+    assert 'return "xpub"' in backend
+    normalize_start = backend.index("def normalize_watch_config")
+    normalize_end = backend.index("def runtime_cache_from_config", normalize_start)
+    normalize_block = backend[normalize_start:normalize_end]
+    assert 'kind = _normalize_monitor_kind(item.get("kind"), source)' in normalize_block
+    assert normalize_block.index('_normalize_monitor_kind') < normalize_block.index('validate_mainnet_address')
+
+    assert "function walletWatchDetectMonitorKind" in app
+    assert 'walletWatchCompactMonitorValue' in app
+    assert '["xpub","ypub","zpub"].some(prefix=>source.toLowerCase().startsWith(prefix))' in app
+    add_start = app.index("function addWalletWatchMonitor(event){")
+    add_end = app.index("function addWalletWatchNotificationTarget", add_start)
+    add_block = app[add_start:add_end]
+    assert "kind=walletWatchDetectMonitorKind" in add_block
+
+
+def test_sats_sentinel_xpub_errors_identify_monitor_and_type():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    assert "Sats Sentinel monitor \'{label}\' ({kind}): {err}" in backend
+
+
+def test_sats_sentinel_xpub_copy_whitespace_is_normalized_before_validation():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'unicodedata.normalize("NFKC"' in backend
+    assert 'unicodedata.category(ch) != "Cf"' in backend
+    assert 'if kind == "xpub":' in backend
+    assert 'elif kind == "descriptor":' in backend
+    assert 'source = _compact_watch_source(source)' in backend
+    assert 'replace(/[\\s\\u200B-\\u200D\\u2060\\uFEFF]/g,"")' in app
+    assert 'value=walletWatchCanonicalMonitorValue(kind,rawValue)' in app
+    assert 'cfg.monitors=(Array.isArray(cfg.monitors)?cfg.monitors:[]).map' in app
+
+
+def test_sats_sentinel_historical_tx_overview_is_non_alerting_and_per_monitor():
+    html = (COMPONENT / "frontend" / "index.html").read_text(encoding="utf-8")
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    init_py = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    assert 'name="history_limit"' in html
+    for value in ('value="5"', 'value="10"', 'value="25"', 'value="50"', 'value="100"'):
+        assert value in html
+    assert 'api/wallet-watch/transactions' in app
+    assert 'route == "api/wallet-watch/transactions"' in init_py
+    assert 'async def async_monitor_transactions' in backend
+    block = backend[backend.index('async def async_monitor_transactions'):backend.index('def _notification_amount_sats', backend.index('async def async_monitor_transactions'))]
+    assert 'The selected Sentinel source is used exactly as configured' in block
+    assert '_select_watch_source(self.entry, config)' in block
+    assert '_append_activity_log' not in block
+    assert '_notify_activity' not in block
+
+
+def test_sats_sentinel_tx_overview_shows_balance_whole_tx_and_detected_marker():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    assert 'Aktueller Wallet-Bestand' in app
+    assert 'Gesamte Transaktion' in app
+    assert 'SENTINEL ERKANNT' in app
+    assert 'tx_total_input_sats' in backend
+    assert 'tx_total_output_sats' in backend
+    assert 'sentinel_detected' in backend
+    assert 'loaded_in_sats' in backend
+    assert 'loaded_out_sats' in backend
+    assert 'alerts_generated": False' in backend
+
+
+def test_sats_sentinel_tx_overview_privacy_is_encrypted_or_ephemeral():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    storage = (COMPONENT / "storage.py").read_text(encoding="utf-8")
+    assert '"historical_tx_overview_persisted": False' in backend
+    assert '"transaction_overview_persisted": False' in backend
+    assert '"runtime_addresses_encrypted": True' in backend
+    assert '"journal_encrypted": True' in backend
+    overview = backend[backend.index("async def async_monitor_transactions"):backend.index("def _notification_amount_sats", backend.index("async def async_monitor_transactions"))]
+    assert "async_save" not in overview
+    assert "tx_overview" not in storage.lower()
+    assert "Nur RAM" in app
+    assert "nicht dauerhaft gespeichert" in app
+
+
+def test_sats_sentinel_tx_overview_reports_per_address_balances_and_full_tx_totals():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    assert '"address_balances": [' in backend
+    assert '"loaded_tx_total_input_sats"' in backend
+    assert '"loaded_tx_total_output_sats"' in backend
+    assert '"loaded_fee_sats"' in backend
+    assert 'blockchain.scripthash.listunspent' in backend
+    assert "Adressen & Einzelbestände" in app
+    assert "TX-Inputs · geladen" in app
+    assert "TX-Outputs · geladen" in app
+
+
+def test_sats_sentinel_frontend_auto_detects_extended_key_before_save():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    html = (COMPONENT / "frontend" / "index.html").read_text(encoding="utf-8")
+    assert 'id="walletWatchDetectedKind"' in html
+    detect = app[app.index("function walletWatchDetectMonitorKind"):app.index("function walletWatchDraftConfig")]
+    assert 'walletWatchExtractExtendedKey(source)' in detect
+    assert '["xpub","ypub","zpub"].some(prefix=>source.toLowerCase().startsWith(prefix))' in detect
+    assert 'requested==="address"&&' not in detect
+    assert "syncWalletWatchDetectedKind" in app
+    assert 'addEventListener("paste"' in app
+
+
+def test_sats_sentinel_origin_prefixed_xpub_is_not_routed_to_address_validator():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "def _extract_extended_public_key" in backend
+    assert "_EXTENDED_PUBLIC_KEY_WITH_ORIGIN_RE" in backend
+    assert 'source = _extract_extended_public_key(source) or _compact_watch_source(source)' in backend
+    assert "function walletWatchExtractExtendedKey" in app
+    assert 'walletWatchCanonicalMonitorValue(kind,rawValue)' in app
+    assert 'walletWatchCanonicalMonitorValue(kind,raw)' in app
+
+
+def test_sats_sentinel_status_exposes_last_detected_movement_per_monitor():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    assert '"last_activity_by_monitor": last_activity_by_monitor' in backend
+    assert 'last_activity_by_monitor?.[id]' in app
+    assert "Letzte von Sentinel erkannte Bewegung" in app
+    assert "Letzte erkannte Bewegung" in app
+
+
+def test_sats_sentinel_journal_visually_distinguishes_incoming_outgoing_and_detection_time():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    css = (COMPONENT / "frontend" / "static" / "style.css").read_text(encoding="utf-8")
+    assert "function walletWatchDirectionBadge" in app
+    assert 'sats-sentinel-movement-row ${outgoing?"outgoing":"incoming"}' in app
+    assert "von Sentinel erkannt" in app
+    assert "SENTINEL ERKANNT" in app
+    assert ".sats-sentinel-direction-badge.incoming" in css
+    assert ".sats-sentinel-direction-badge.outgoing" in css
+    assert ".sats-sentinel-movement-row.incoming" in css
+    assert ".sats-sentinel-movement-row.outgoing" in css
+
+
+def test_sats_sentinel_watch_target_saves_immediately_and_node_form_is_draft_safe():
+    app = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    html = (COMPONENT / "frontend" / "index.html").read_text(encoding="utf-8")
+    init_py = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    assert 'id="walletWatchMonitorSubmit" class="primary" type="submit">Überwachung speichern<' in html
+    assert 'id="walletWatchMonitorSaveResult"' in html
+    add = app[app.index("async function addWalletWatchMonitor(event){"):app.index("function addWalletWatchNotificationTarget", app.index("async function addWalletWatchMonitor(event){"))]
+    assert 'api("api/wallet-watch/upsert-monitor"' in add
+    assert '_pending_save:true' not in add
+    assert 'route == "api/wallet-watch/upsert-monitor"' in init_py
+    assert 'async def async_upsert_monitor' in backend
+    assert 'state.walletWatchSettingsDirty' in app
+    assert 'if(!state.walletWatchSettingsDirty)' in app
+    assert 'wwSettings.addEventListener("input",markWalletWatchSettingsDirty)' in app
+    assert 'wwSettings.addEventListener("change",markWalletWatchSettingsDirty)' in app
+
+
+def test_sats_sentinel_fulcrum_poll_uses_subscribe_fast_path_and_slow_balance_reconcile():
+    backend = (COMPONENT / "wallet_watch.py").read_text(encoding="utf-8")
+    block = backend[backend.index("async def _poll_electrum_source"):backend.index("async def async_monitor_transactions", backend.index("async def _poll_electrum_source"))]
+    assert "ELECTRUM_BALANCE_RECONCILE_SECONDS = 15 * 60" in backend
+    assert 'status_results = await client.call_many' in block
+    assert '"blockchain.scripthash.subscribe"' in block
+    assert 'stale_balance = now_unix - last_balance >= ELECTRUM_BALANCE_RECONCILE_SECONDS' in block
+    assert 'if changed:' in block
+    assert 'elif stale_balance:' in block
+    assert '"blockchain.scripthash.get_balance"' in block
+    assert '"blockchain.scripthash.listunspent"' in block
+    assert '"blockchain.scripthash.get_history"' in block

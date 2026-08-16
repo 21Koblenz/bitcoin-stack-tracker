@@ -1,4 +1,4 @@
-# Datenportabilität · Bitcoin Stack Tracker v0.21.0.10
+# Datenportabilität · Bitcoin Stack Tracker v0.21.0.11
 Das portable `.bstbackup` ist bewusst als installationsunabhängiges Austauschformat für die nutzerbezogenen Bitcoin-Tracker-Daten ausgelegt.
 
 ## Enthalten

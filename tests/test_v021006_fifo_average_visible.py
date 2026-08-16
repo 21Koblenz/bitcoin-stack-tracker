@@ -7,7 +7,7 @@ INIT = (ROOT / "custom_components/bitcoin_stack_tracker/__init__.py").read_text(
 CSS = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/static/style.css").read_text(encoding="utf-8")
 
 def test_final_release_version_is_visible():
-    assert 'const BUILD_VERSION = "0.21.0.10";' in APP
+    assert 'const BUILD_VERSION = "0.21.0.11";' in APP
 
 def test_fifo_summary_explicitly_names_both_methods():
     assert 'fifoAndAverageSummary:"Abgangsübersicht · FIFO + Ø-Kaufpreis"' in APP

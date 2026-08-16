@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.10
+# Bitcoin Stack Tracker v0.21.0.11
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -167,24 +167,19 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.10**. This release builds on v0.21.0.9 with **Sats Sentinel**, the adaptive/historical **market assessment**, improved live/chart refresh behavior and related privacy/UI hardening.
+Current project version: **v0.21.0.11**. This release builds on **v0.21.0.10** and focuses on causal multi-cycle market markers, correct delayed bottom confirmation, a more compact Sats Sentinel UI and the final stable frontend release layout.
 
-#### Changes since v0.21.0.9
+#### Changes since v0.21.0.10
 
-- **Sats Sentinel:** 24/7 watch-only monitoring for single/multiple Bitcoin addresses, XPUB/YPUB/ZPUB and descriptors, with encrypted runtime state, movement journal, test modes and configurable Home Assistant/ntfy/webhook notifications.
-- **Configurable Sentinel source:** Automatic, Fulcrum/Electrum, electrs/Electrum, own Mempool instance, or configured public Mempool over Tor. Explicit selections are strictly fail-closed with no hidden provider fallback.
-- **Fulcrum/electrs:** direct Electrum scripthash balance/history/UTXO queries, LAN or Tor/onion routing, TLS support and exact SHA-256 certificate pinning for self-signed server certificates.
-- **Sentinel privacy lifecycle:** XPUB/descriptors stay out of the device-bound runtime cache; discreet alerts can hide wallet/amount/TXID/address details; deleting a watch entry permanently removes its journal history.
-- **Movement journal & UI:** sender → direction → recipient layout, configurable counterparty count, paging/page size, address/TXID links to the configured Mempool explorer, category/note/threshold/channel controls, and explicit source-test/save feedback. Status refresh no longer overwrites unsaved form fields.
-- **Adaptive market assessment:** modular public-data-only 0–100 model with adaptive volatility/reference windows, valuation, drawdown, price-position/deviation, RSI/momentum, cycle models, Mayer Multiple, ATH drawdown, 200-day distance, power-law ratio, configurable weights/thresholds and bottom/top confirmation diagnostics. It is an additional assessment, **not a buy signal or forecast**.
-- **Causal market history:** historical scores are reconstructed only from data available at each historical date, with no look-ahead bias. The dedicated chart includes crosshair axis badges and an optional BTC-price overlay with independent right axis, linear/log scaling and adjustable opacity.
-- **Optional causal EMA smoothing:** Off / 3 / 5 / 7 / 14 / 30 points, default EMA 5. Smoothing is display-only and never changes the raw score or Home Assistant sensor. **Restore defaults** resets the chart display settings.
-- **Overview chart:** new **Bitcoin price + market assessment** view using the same smoothing setting. The score samples are aligned causally to the BTC timeline rather than forward-filled through every intraday candle, fixing the previous flat-line appearance; the overview score axis auto-scales to visible values.
-- **Live price/history refresh:** source-specific refresh cadence, faster public-price lane, current live quote appended/replaced in charts and real source refresh on range changes while preserving Tor-only public routing.
-- **Same-source Sentinel compatibility:** Mempool address paths remain on the configured node, `/utxo` is no longer required, and Explorer UI remains separate from the blockchain query source.
-- **Quality assurance:** **457 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON/YAML and release-integrity checks.
+- **Best values per market cycle:** `10 years` and `Max` now mark the true highest causal raw score in every 4-year window instead of only one global best value. The bucket maximum is determined before display sampling, so the real best day cannot disappear from the chart.
+- **Compact stars + details:** only small stars are drawn in the chart. The historical chart keeps a permanent date/score legend below it; desktop hover and touch tap open a popup. The same marker set is shown in the overview **Bitcoin price + market assessment** chart.
+- **Correct causal bottom confirmation:** a bottom no longer has to be confirmed on the exact best-score day. Each marker independently checks following days only inside the configured `turning_zone_memory_days` window and calculates every candidate strictly as of that date. The marker keeps its original score date while the popup can show the later confirmation date and lag. Default model thresholds are not loosened.
+- **Modular-model help:** every configurable model field includes an explanation of what it controls and the practical effect of increasing or decreasing it. Weight fields explicitly explain that more weight means more influence, not an automatic score increase.
+- **Collapsible Sats Sentinel:** status, journal, test lab, monitor settings, watch targets and privacy can be collapsed independently. The selected layout is saved per portfolio in browser storage and restored on reload/portfolio switch on the same device/browser.
+- **Stable frontend releases:** the canonical frontend files remain `index.html`, `panel.js`, `app.js`, `style.css` and `performance-math.js`; cache busting uses `?v=<VERSION>`. Legacy version/hash files are removed once during the v0.21.0.11 migration, and `.gitignore` prevents those patterns from returning.
+- **Quality assurance:** **485 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON parsing, performance-math numeric checks and release-integrity regressions.
 
-The **Tor Gateway remains at v0.21.0.3**. v0.21.0.10 changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
+The **Tor Gateway remains at v0.21.0.3**. v0.21.0.11 changes the Home Assistant custom integration and documentation while reusing the existing Tor/nftables fail-closed path.
 
 Release changes: [`CHANGELOG.md`](CHANGELOG.md)  
 Release overview: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
@@ -372,24 +367,19 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.10**. Dieses Release baut auf v0.21.0.9 auf und ergänzt **Sats Sentinel**, die adaptive/historische **Markteinschätzung**, verbesserte Live-/Chart-Aktualisierung sowie die dazugehörige Privacy- und UI-Härtung.
+Aktueller Projektstand: **v0.21.0.11**. Dieses Release baut auf **v0.21.0.10** auf und konzentriert sich auf kausale Multi-Zyklus-Marktmarker, die korrekte verzögerte Bodenbestätigung, eine kompaktere Sats-Sentinel-Oberfläche und die endgültige stabile Frontend-Release-Struktur.
 
-#### Änderungen seit v0.21.0.9
+#### Änderungen seit v0.21.0.10
 
-- **Sats Sentinel:** 24/7-Watch-only-Überwachung für einzelne/mehrere Bitcoin-Adressen, XPUB/YPUB/ZPUB und Descriptoren mit verschlüsseltem Runtime-Zustand, Bewegungsjournal, Testmodi und konfigurierbaren Home-Assistant-/ntfy-/Webhook-Benachrichtigungen.
-- **Einstellbare Sentinel-Quelle:** Automatisch, Fulcrum/Electrum, electrs/Electrum, eigene Mempool-Instanz oder konfigurierte öffentliche Mempool-Instanz über Tor. Explizite Auswahl arbeitet strikt Fail Closed ohne versteckten Provider-Fallback.
-- **Fulcrum/electrs:** direkte Electrum-Scripthash-Abfragen für Balance/History/UTXOs, LAN- bzw. Tor/Onion-Routing, TLS sowie exaktes SHA-256-Zertifikat-Pinning für selbstsignierte Serverzertifikate.
-- **Sentinel-Privacy-Lebenszyklus:** XPUB/Descriptor bleiben aus dem gerätegebundenen Runtime-Cache; diskrete Meldungen können Wallet/Betrag/TXID/Adresse verbergen; das Löschen eines Watch-Eintrags entfernt dessen Journal-Historie dauerhaft.
-- **Bewegungsjournal & UI:** Sender → Richtung → Empfänger, einstellbare Anzahl Gegenadressen, Pagination/Seitengröße, Adress-/TXID-Links zum konfigurierten Mempool-Explorer sowie Kategorie-/Notiz-/Schwellen-/Kanalregeln. Quellentest und Speichern geben sichtbares Feedback; der Statusrefresh überschreibt keine ungespeicherten Eingaben mehr.
-- **Adaptive Markteinschätzung:** modulares öffentliches 0–100-Modell mit adaptiven Volatilitäts-/Referenzfenstern, Bewertung, Drawdown, Preisposition/Abweichung, RSI/Momentum, Zyklusmodellen, Mayer Multiple, ATH-Drawdown, 200-Tage-Abstand, Power-Law-Verhältnis, einstellbaren Gewichten/Schwellen und Boden-/Top-Bestätigungsdiagnostik. Sie ist eine zusätzliche Einschätzung und **kein Kaufsignal oder Forecast**.
-- **Kausale Markthistorie:** historische Scores werden ausschließlich aus den am jeweiligen Datum bereits verfügbaren Daten rekonstruiert – ohne Look-ahead-Bias. Der eigene Chart enthält Fadenkreuz-Achsenwerte und ein optionales BTC-Preis-Overlay mit eigener rechter Achse, linear/log und einstellbarer Deckkraft.
-- **Optionale kausale EMA-Glättung:** Aus / 3 / 5 / 7 / 14 / 30 Punkte, Standard EMA 5. Die Glättung ist nur Darstellung und verändert weder Rohscore noch Home-Assistant-Sensor. **Standard wiederherstellen** setzt die Chart-Darstellung zurück.
-- **Startseitenchart:** neue Ansicht **Bitcoin-Kurs + Markteinschätzung** mit derselben Glättung. Score-Stützpunkte werden kausal an die BTC-Zeitachse gelegt statt durch jedes Intraday-Intervall vorwärts aufgefüllt; damit ist der Seitwärtsstrich behoben. Die Scoreachse der Startseite skaliert auf den sichtbaren Bereich.
-- **Live-Kurs/Historie:** quellenabhängige Aktualisierungsfrequenz, schnellere Public-Price-Lane, aktueller Live-Punkt in Charts und echter Quellenrefresh bei Zeitraumwechseln; öffentliche Verbindungen bleiben Tor-only.
-- **Same-Source-Sentinel-Kompatibilität:** Mempool-Adresspfade bleiben auf derselben konfigurierten Node, `/utxo` wird nicht mehr benötigt und die Explorer-Oberfläche bleibt von der Blockchain-Abfragequelle getrennt.
-- **Qualitätssicherung:** **457 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON/YAML und Release-Integritätsprüfung.
+- **Bestwerte je Marktzyklus:** `10 Jahre` und `Max` markieren jetzt in jedem 4-Jahres-Fenster den tatsächlich höchsten kausalen Rohscore statt nur eines globalen Bestwerts. Das Fenstermaximum wird vor dem Darstellungs-Sampling ermittelt, damit der echte Besttag nicht aus dem Chart verschwinden kann.
+- **Kompakte Sterne + Details:** Im Chart werden nur kleine Sterne gezeichnet. Unter dem Historical-Chart bleibt eine permanente Datum-/Score-Legende sichtbar; am PC öffnet Hover und auf Touch-Geräten Antippen ein Popup. Dieselben Marker erscheinen im Startseitenchart **Bitcoin-Kurs + Markteinschätzung**.
+- **Korrekte kausale Bodenbestätigung:** Ein Boden muss nicht mehr am exakten Bestscore-Tag bestätigt sein. Jeder Marker prüft unabhängig nur innerhalb des eingestellten `turning_zone_memory_days`-Fensters die Folgetage und berechnet jeden Kandidaten strikt mit den bis zu diesem Tag verfügbaren Daten. Der Marker behält seinen ursprünglichen Score-Tag; das Popup kann das spätere Bestätigungsdatum und die Verzögerung anzeigen. Die Default-Schwellen werden dafür nicht gelockert.
+- **Hilfen im modularen Modell:** Jedes einstellbare Modellfeld erklärt seinen Zweck und die praktische Auswirkung von Erhöhen oder Verringern. Bei Gewichten wird ausdrücklich erklärt: mehr Gewicht bedeutet mehr Einfluss, nicht automatisch einen höheren Endscore.
+- **Einklappbarer Sats Sentinel:** Status, Journal, Testlabor, Überwachungseinstellungen, Watch-Ziele und Datenschutz lassen sich unabhängig einklappen. Die gewählte Ansicht wird pro Portfolio im Browser gespeichert und auf demselben Gerät/Browser nach Neuladen oder Portfolio-Wechsel wiederhergestellt.
+- **Stabile Frontend-Releases:** Die kanonischen Frontend-Dateien bleiben dauerhaft `index.html`, `panel.js`, `app.js`, `style.css` und `performance-math.js`; Cache-Busting läuft über `?v=<VERSION>`. Alte Versions-/Hash-Dateien werden beim Wechsel auf v0.21.0.11 einmalig entfernt und `.gitignore` verhindert, dass diese Muster zurückkehren.
+- **Qualitätssicherung:** **485 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON-Parsing, Performance-Math-Numeriktests und Release-Integritätsregressionen.
 
-Das **Tor Gateway bleibt v0.21.0.3**. v0.21.0.10 ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
+Das **Tor Gateway bleibt v0.21.0.3**. v0.21.0.11 ändert die Home-Assistant-Custom-Integration und Dokumentation und verwendet den bestehenden Tor-/nftables-Fail-Closed-Pfad weiter.
 
 Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
 Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)

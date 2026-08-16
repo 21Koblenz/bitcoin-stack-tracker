@@ -250,3 +250,130 @@ def test_historical_market_assessment_is_causal_and_bounded():
     a = mod.calculate_buy_opportunity_history(prefix, prefix[cutoff], currency="EUR", as_of_day=cutoff, max_points=60)
     b = mod.calculate_buy_opportunity_history(with_future, with_future[cutoff], currency="EUR", as_of_day=cutoff, max_points=60)
     assert a["points"] == b["points"]
+
+
+def test_historical_best_point_is_true_unsampled_causal_maximum_and_is_kept():
+    history, as_of = synthetic_history(1800)
+    result = mod.calculate_buy_opportunity_history(
+        history, history[max(history)], currency="EUR", as_of_day=as_of, max_points=30
+    )
+    normalized = mod.normalize_buy_opportunity_settings(None, ["EUR"])
+    dated = [(day, price) for day, price in mod._parse_history(history) if day <= as_of]
+    scores = mod._main_score_series(dated, normalized)
+    eligible = [i for i, score in enumerate(scores) if score is not None]
+    expected_index = max(eligible, key=lambda i: float(scores[i]))
+    best = result["best_point"]
+    assert best is not None
+    assert best["date"] == dated[expected_index][0].isoformat()
+    assert best["score"] == round(float(scores[expected_index]), 2)
+    assert any(point["date"] == best["date"] for point in result["points"])
+    assert len(result["points"]) <= 30
+    assert "bottom_confirmation_met" in best
+    assert "market_phase" in best
+
+
+def test_historical_four_year_marker_windows_keep_each_true_bucket_maximum():
+    history, as_of = synthetic_history(4200)
+    start_day = as_of - timedelta(days=3650)
+    result = mod.calculate_buy_opportunity_history(
+        history, history[max(history)], currency="EUR", as_of_day=as_of, start_day=start_day,
+        max_points=60, marker_interval_years=4,
+    )
+    markers = result["marker_points"]
+    assert result["marker_interval_years"] == 4
+    assert len(markers) == 3
+    assert [row["date"] for row in markers] == sorted(row["date"] for row in markers)
+    assert all(any(point["date"] == marker["date"] for point in result["points"]) for marker in markers)
+    assert len(result["points"]) <= 60
+    assert all("bottom_confirmation_met" in marker for marker in markers)
+
+
+
+def test_best_marker_can_be_confirmed_causally_after_the_best_score_day(monkeypatch):
+    start = date(2024, 1, 1)
+    history = {(start + timedelta(days=i)).isoformat(): 50_000.0 + i for i in range(80)}
+    as_of = start + timedelta(days=79)
+    marker_offset = 20
+
+    def fake_scores(dated, settings):
+        scores = [20.0] * len(dated)
+        scores[marker_offset] = 98.0
+        return scores
+
+    def fake_detail(history_arg, price, *, currency="EUR", settings=None, as_of_day=None):
+        day = as_of_day if isinstance(as_of_day, date) else date.fromisoformat(str(as_of_day)[:10])
+        lag = (day - (start + timedelta(days=marker_offset))).days
+        confirmation = 65.0 if lag >= 3 else 15.0
+        return {
+            "turning_points": {
+                "market_phase": "stress",
+                "bottom_zone_memory": 82.0,
+                "bottom_confirmation": confirmation,
+                "thresholds": {"zone": 70.0, "confirmation": 40.0},
+            }
+        }
+
+    monkeypatch.setattr(mod, "_main_score_series", fake_scores)
+    monkeypatch.setattr(mod, "calculate_buy_opportunity", fake_detail)
+    result = mod.calculate_buy_opportunity_history(
+        history,
+        history[as_of.isoformat()],
+        currency="EUR",
+        as_of_day=as_of,
+        max_points=80,
+    )
+    marker = result["best_point"]
+    assert marker["date"] == (start + timedelta(days=marker_offset)).isoformat()
+    assert marker["bottom_confirmation"] == 15.0
+    assert marker["bottom_confirmation_met"] is True
+    assert marker["bottom_confirmation_date"] == (start + timedelta(days=marker_offset + 3)).isoformat()
+    assert marker["bottom_confirmation_lag_days"] == 3
+    assert marker["bottom_confirmation_confirmed_zone"] == 82.0
+    assert marker["bottom_confirmation_confirmed_score"] == 65.0
+
+
+def test_each_four_year_best_marker_gets_its_own_causal_bottom_confirmation(monkeypatch):
+    start = date(2014, 1, 1)
+    days = 365 * 10 + 8
+    history = {(start + timedelta(days=i)).isoformat(): 10_000.0 + i for i in range(days)}
+    as_of = start + timedelta(days=days - 1)
+    peak_offsets = [120, 365 * 4 + 140, 365 * 8 + 160]
+
+    def fake_scores(dated, settings):
+        scores = [10.0] * len(dated)
+        for rank, offset in enumerate(peak_offsets):
+            scores[offset] = 97.0 + rank
+        return scores
+
+    confirmation_days = {start + timedelta(days=offset + 4) for offset in peak_offsets}
+
+    def fake_detail(history_arg, price, *, currency="EUR", settings=None, as_of_day=None):
+        day = as_of_day if isinstance(as_of_day, date) else date.fromisoformat(str(as_of_day)[:10])
+        return {
+            "turning_points": {
+                "market_phase": "stress",
+                "bottom_zone_memory": 85.0,
+                "bottom_confirmation": 70.0 if day in confirmation_days else 10.0,
+                "thresholds": {"zone": 70.0, "confirmation": 40.0},
+            }
+        }
+
+    monkeypatch.setattr(mod, "_main_score_series", fake_scores)
+    monkeypatch.setattr(mod, "calculate_buy_opportunity", fake_detail)
+    result = mod.calculate_buy_opportunity_history(
+        history,
+        history[as_of.isoformat()],
+        currency="EUR",
+        as_of_day=as_of,
+        start_day=start,
+        max_points=80,
+        marker_interval_years=4,
+    )
+    markers = result["marker_points"]
+    assert len(markers) == 3
+    assert [m["date"] for m in markers] == [(start + timedelta(days=o)).isoformat() for o in peak_offsets]
+    assert all(m["bottom_confirmation_met"] for m in markers)
+    assert [m["bottom_confirmation_lag_days"] for m in markers] == [4, 4, 4]
+    assert [m["bottom_confirmation_date"] for m in markers] == [
+        (start + timedelta(days=o + 4)).isoformat() for o in peak_offsets
+    ]

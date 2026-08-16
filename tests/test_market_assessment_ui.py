@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components" / "bitcoin_stack_tracker" / "frontend"
 INDEX = (FRONTEND / "index.html").read_text(encoding="utf-8")
-APP = (FRONTEND / "static" / "app-v021010-f51973f8.js").read_text(encoding="utf-8")
+APP = (FRONTEND / "static" / "app.js").read_text(encoding="utf-8")
 SENSOR = (ROOT / "custom_components" / "bitcoin_stack_tracker" / "sensor.py").read_text(encoding="utf-8")
 
 
@@ -56,7 +56,7 @@ def test_turning_point_ui_keeps_clear_non_signal_language_and_tor_neutrality():
 
 
 def test_market_assessment_refreshes_automatically_without_external_refresh_call():
-    app = (FRONTEND / "static" / "app-v021010-f51973f8.js").read_text(encoding="utf-8")
+    app = (FRONTEND / "static" / "app.js").read_text(encoding="utf-8")
     init_py = (ROOT / "custom_components" / "bitcoin_stack_tracker" / "__init__.py").read_text(encoding="utf-8")
     assert "function startMarketAssessmentPolling()" in app
     assert "},60000);" in app
@@ -166,3 +166,55 @@ def test_overview_market_overlay_uses_causal_point_timestamps_not_midnight_for_c
     assert 'capTime:lastPriceTime' in overlay
     assert 'Do not forward-fill every intraday BTC candle with the same daily score' in overlay
     assert 'for(const key of priceKeys)' not in overlay
+
+
+def test_market_history_uses_four_year_star_markers_legend_and_interactive_popup():
+    component = ROOT / "custom_components" / "bitcoin_stack_tracker"
+    app = (component / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    css = (component / "frontend" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (component / "frontend" / "index.html").read_text(encoding="utf-8")
+    buy = (component / "buy_opportunity.py").read_text(encoding="utf-8")
+    init = (component / "__init__.py").read_text(encoding="utf-8")
+    block = app[app.index('function renderMarketAssessmentHistory'):app.index('async function loadMarketAssessmentHistory')]
+    assert 'payload?.marker_points' in block
+    assert 'market-best-star' in block
+    assert 'market-best-line' not in block
+    assert 'market-best-dot' not in block
+    assert 'market-best-badge' not in block
+    assert 'Bestwerte je ${intervalYears} Jahre' in block
+    assert 'pointerenter' in block and 'pointerdown' in block
+    assert 'marketAssessmentHistoryBestLegend' in html
+    assert 'marketAssessmentHistoryMarkerTooltip' in html
+    assert '.market-best-star' in css and '.market-best-legend' in css
+    assert 'marker_interval_years: int = 0' in buy
+    assert 'marker_points' in buy
+    assert 'marker_interval_years=4 if range_key in {"10y", "max"} else 0' in init
+    assert 'bottom_confirmation_met' in buy
+
+
+def test_overview_market_chart_uses_same_interactive_best_markers():
+    component = ROOT / "custom_components" / "bitcoin_stack_tracker"
+    app = (component / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    block = app[app.index('function renderChart()'):app.index('function ledgerTypeClass')]
+    assert 'marketRawMarkers' in block
+    assert 'marketPayload?.marker_points' in block
+    assert 'chart-market-best' in block
+    assert 'marketBestMarkerPopupHtml' in block
+    assert 'pointerenter' in block and 'pointerdown' in block
+
+
+def test_modular_model_has_help_for_every_field_and_tuning_direction():
+    component = ROOT / "custom_components" / "bitcoin_stack_tracker"
+    app = (component / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+    html = (component / "frontend" / "index.html").read_text(encoding="utf-8")
+    css = (component / "frontend" / "static" / "style.css").read_text(encoding="utf-8")
+    block = app[app.index('const BUY_OPPORTUNITY_FIELD_HELP='):app.index('const t = key')]
+    import re
+    form = html[html.index('id="buyOpportunitySettingsForm"'):html.index('</form>', html.index('id="buyOpportunitySettingsForm"'))]
+    field_names = re.findall(r'<(?:input|select)[^>]+name="([^"]+)"', form)
+    assert len(field_names) == 94
+    for name in field_names:
+        assert f'"{name}":[' in block
+    assert 'renderBuyOpportunityFieldHelp' in app
+    assert 'Höher' in block and 'niedriger' in block
+    assert '.buy-opportunity-field-help' in css

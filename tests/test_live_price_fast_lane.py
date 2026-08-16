@@ -48,12 +48,15 @@ class LivePriceFastLaneTests(unittest.TestCase):
         market_end = app.index('function startMarketAssessmentPolling', market_start)
         self.assertNotIn('state.data.locked', app[market_start:market_end])
 
-    def test_frontend_assets_are_cache_busted_for_sentinel_v5(self):
+    def test_frontend_assets_use_stable_names_with_query_cache_busting(self):
         index = (ROOT / "custom_components/bitcoin_stack_tracker/frontend/index.html").read_text()
-        self.assertIn('style-v021010-', index)
-        self.assertNotIn('style-v021006-', index)
+        self.assertIn('static/style.css?v=0.21.0.11', index)
+        self.assertIn('static/performance-math.js?v=0.21.0.11', index)
+        self.assertIn('static/app.js?v=0.21.0.11', index)
+        self.assertNotIn('style-v021010-', index)
         panel = (ROOT / "custom_components/bitcoin_stack_tracker/panel.py").read_text()
-        self.assertIn('release021010-r1', panel)
+        self.assertIn('panel.js?v={VERSION}', panel)
+        self.assertIn('index.html?native=1&v={VERSION}', panel)
 
     def test_sentinel_own_mempool_rule_remains_exclusive(self):
         text = (ROOT / "custom_components/bitcoin_stack_tracker/wallet_watch.py").read_text()
