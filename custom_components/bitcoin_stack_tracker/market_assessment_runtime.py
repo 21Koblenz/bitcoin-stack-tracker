@@ -11,7 +11,8 @@ or historical source data) invalidate immediately. Intraday live-price ticks do
 not invalidate the current snapshot before the five-minute TTL expires. When
 the next calculation is due it uses the newest coordinator price available at
 that moment. Historical chart scores are cached separately and are never
-invalidated by intraday price ticks.
+invalidated by intraday price ticks. A separate low-duty background task may
+reconstruct the last 90 days of five-minute scores from public OHLC data.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from homeassistant.util import dt as dt_util
 from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
 from .const import CONF_BUY_OPPORTUNITY_SETTINGS, DOMAIN
 from .helpers import configured_currencies, effective_settings
+from .market_assessment_backfill import async_market_assessment_backfill_loop
 from .market_assessment_intraday_cache import market_assessment_intraday_signature
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 MARKET_ASSESSMENT_CACHE_SECONDS = 5 * 60
 _CACHE_KEY = "_market_assessment_cache"
 _TASK_KEY = "_market_assessment_task"
+_BACKFILL_TASK_KEY = "_market_assessment_backfill_task"
 
 
 def _assessment_inputs(
@@ -86,6 +89,51 @@ def _assessment_inputs(
     return structural_key, history, current_price, currency, scoring_settings, price_source
 
 
+def _ensure_backfill(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    history_storage: Any,
+    runtime: dict[str, Any],
+    *,
+    currency: str,
+    settings: dict[str, Any],
+) -> None:
+    """Ensure at most one low-duty 90-day backfill task exists per entry."""
+    intraday_cache = runtime.get("market_assessment_intraday_cache")
+    if intraday_cache is None:
+        return
+    signature = market_assessment_intraday_signature(currency=currency, settings=settings)
+    status = runtime.get("market_assessment_backfill_status")
+    if (
+        isinstance(status, dict)
+        and bool(status.get("complete"))
+        and str(status.get("signature") or "") == signature
+    ):
+        return
+    current = runtime.get(_BACKFILL_TASK_KEY)
+    if current is not None and not current.done():
+        return
+
+    task = hass.async_create_task(
+        async_market_assessment_backfill_loop(
+            hass, entry, history_storage, intraday_cache
+        ),
+        "Bitcoin Stack Tracker throttled market assessment backfill",
+    )
+    runtime[_BACKFILL_TASK_KEY] = task
+
+    def _finished(done: Any) -> None:
+        active = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if isinstance(active, dict) and active.get(_BACKFILL_TASK_KEY) is done:
+            active.pop(_BACKFILL_TASK_KEY, None)
+        try:
+            done.result()
+        except Exception:
+            _LOGGER.debug("Market-assessment backfill task ended", exc_info=True)
+
+    task.add_done_callback(_finished)
+
+
 async def async_market_assessment(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -101,6 +149,14 @@ async def async_market_assessment(
 
     structural_key, history, current_price, currency, settings, price_source = _assessment_inputs(
         entry, coordinator, history_storage
+    )
+    _ensure_backfill(
+        hass,
+        entry,
+        history_storage,
+        runtime,
+        currency=currency,
+        settings=settings,
     )
     now = monotonic()
     cached = runtime.get(_CACHE_KEY)
