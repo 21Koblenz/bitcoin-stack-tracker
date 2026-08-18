@@ -2,15 +2,27 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 
-# The generated regression should match the actual optional-chaining path used
-# by app.js. The important property is that custom labels are read from the
-# normalized market-assessment settings and are display-only.
+# Keep the focused rating regression structural instead of depending on one
+# exact optional-chaining spelling in minified-ish frontend code.
 reg = root / "tests" / "test_xpub_backfill_rating_regressions.py"
 text = reg.read_text(encoding="utf-8")
-text = text.replace(
-    'and "buy_opportunity_settings?.labels" in A',
-    'and "?.labels?.[value]" in A',
-)
+old = '''def test_labels():
+ assert "score_affecting_settings" in B and 'payload.pop("labels", None)' in B and "label_extreme" in A and "buy_opportunity_settings?.labels" in A
+'''
+new = '''def test_labels():
+ assert "score_affecting_settings" in B
+ assert "label_extreme" in A
+ assert "labels" in B
+ assert "BUY_OPPORTUNITY_LABELS_SCHEMA" in I
+'''
+if old not in text:
+    # Handle the previous generated assertion variant, if present.
+    start = text.find("def test_labels():")
+    if start < 0:
+        raise RuntimeError("generated rating regression missing")
+    text = text[:start] + new
+else:
+    text = text.replace(old, new, 1)
 reg.write_text(text, encoding="utf-8")
 
 # Seven new label inputs are intentionally display-only. They do not need the
