@@ -216,8 +216,16 @@ def test_modular_model_has_help_for_every_field_and_tuning_direction():
     import re
     form = html[html.index('id="buyOpportunitySettingsForm"'):html.index('</form>', html.index('id="buyOpportunitySettingsForm"'))]
     field_names = re.findall(r'<(?:input|select)[^>]+name="([^"]+)"', form)
-    assert len(field_names) == 94
+    assert len(field_names) == 101
+    label_fields = [name for name in field_names if name.startswith("label_")]
+    assert len(label_fields) == 7
+    assert set(label_fields) == {
+        "label_very_expensive", "label_expensive", "label_neutral",
+        "label_interesting", "label_cheap", "label_very_cheap", "label_extreme",
+    }
     for name in field_names:
+        if name.startswith("label_"):
+            continue
         assert f'"{name}":[' in block
     assert 'renderBuyOpportunityFieldHelp' in app
     assert 'Höher' in block and 'niedriger' in block

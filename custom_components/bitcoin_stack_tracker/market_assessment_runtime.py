@@ -26,7 +26,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
+from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings, score_affecting_settings
 from .const import CONF_BUY_OPPORTUNITY_SETTINGS, DOMAIN
 from .helpers import configured_currencies, effective_settings
 from .market_assessment_backfill import async_market_assessment_backfill_loop
@@ -83,7 +83,7 @@ def _assessment_inputs(
         len(history) if isinstance(history, dict) else 0,
         latest_history_day,
         latest_history_value,
-        repr(scoring_settings),
+        repr(score_affecting_settings(scoring_settings)),
         today,
     )
     return structural_key, history, current_price, currency, scoring_settings, price_source

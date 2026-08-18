@@ -67,6 +67,7 @@ from .buy_opportunity import (
     calculate_buy_opportunity_history,
     calculate_buy_opportunity_history_scores,
     normalize_buy_opportunity_settings,
+    score_affecting_settings,
 )
 from .coordinator import BitcoinPriceCoordinator
 from .crypto import (
@@ -100,6 +101,7 @@ from .market_assessment_history_cache import (
     MarketAssessmentHistoryCache,
     market_assessment_history_signature,
 )
+from .market_assessment_backfill import async_market_assessment_backfill_loop
 from .network import async_routed_session, async_tor_gateway_host, mempool_source_uses_tor, network_security_snapshot, rotate_tor_isolation, tor_proxy_from_settings
 from .rate_limit import OperationRateLimiter
 from .csv_import import MAX_IMPORT_BYTES, parse_transaction_upload
@@ -372,6 +374,10 @@ BUY_OPPORTUNITY_THRESHOLDS_SCHEMA = vol.Schema({
     vol.Optional("very_cheap"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
     vol.Optional("extreme"): vol.All(vol.Coerce(float), vol.Range(min=1, max=99)),
 })
+BUY_OPPORTUNITY_LABELS_SCHEMA = vol.Schema({
+    vol.Optional(key): vol.All(cv.string, vol.Length(max=120))
+    for key in ("very_expensive", "expensive", "neutral", "interesting", "cheap", "very_cheap", "extreme")
+})
 BUY_OPPORTUNITY_MODEL_SCHEMA = vol.Schema({
     vol.Optional("minimum_history_points"): vol.All(vol.Coerce(int), vol.Range(min=90, max=3650)),
     vol.Optional("adaptive_window_days"): vol.All(vol.Coerce(int), vol.Range(min=365, max=3650)),
@@ -429,6 +435,7 @@ SET_BUY_OPPORTUNITY_SETTINGS_SCHEMA = vol.Schema({
     vol.Optional("signal_weights"): BUY_OPPORTUNITY_SIGNAL_WEIGHTS_SCHEMA,
     vol.Optional("turning_point_weights"): BUY_OPPORTUNITY_TURNING_WEIGHTS_SCHEMA,
     vol.Optional("thresholds"): BUY_OPPORTUNITY_THRESHOLDS_SCHEMA,
+    vol.Optional("labels"): BUY_OPPORTUNITY_LABELS_SCHEMA,
     vol.Optional("model"): BUY_OPPORTUNITY_MODEL_SCHEMA,
     vol.Optional("reset_defaults"): cv.boolean,
 })
@@ -2966,14 +2973,16 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             }.get(range_key, 0)
 
             async def _with_intraday(payload: dict[str, Any]) -> dict[str, Any]:
-                if intraday_days <= 0:
-                    return payload
                 intraday_cache = runtime.get("market_assessment_intraday_cache")
-                if intraday_cache is None:
-                    return payload
+                backfill_status = deepcopy(runtime.get("market_assessment_backfill_status") or {})
+                if intraday_cache is not None:
+                    backfill_status.update(await intraday_cache.async_stats(intraday_signature))
+                enriched = {**payload, "intraday_backfill": backfill_status}
+                if intraday_days <= 0 or intraday_cache is None:
+                    return enriched
                 since = datetime.now(timezone.utc) - timedelta(days=intraday_days)
                 points = await intraday_cache.async_points(intraday_signature, since=since)
-                return {**payload, "intraday_points": points}
+                return {**enriched, "intraday_points": points}
 
             cache: MarketAssessmentHistoryCache = runtime["market_assessment_history_cache"]
             cached = await cache.async_get(signature, range_key)
@@ -3756,12 +3765,15 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                     for model_name, values in current["turning_point_weights"].items()
                 },
                 "thresholds": dict(current["thresholds"]),
+                "labels": dict(current.get("labels", {})),
                 "model": dict(current["model"]),
             }
             if isinstance(call.data.get("weights"), dict):
                 merged["weights"].update(call.data["weights"])
             if isinstance(call.data.get("thresholds"), dict):
                 merged["thresholds"].update(call.data["thresholds"])
+            if isinstance(call.data.get("labels"), dict):
+                merged["labels"].update(call.data["labels"])
             if isinstance(call.data.get("model"), dict):
                 merged["model"].update(call.data["model"])
             if isinstance(call.data.get("signal_weights"), dict):
@@ -3790,17 +3802,24 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 raise vol.Invalid("Turning-point zone threshold must be below extreme threshold")
             normalized = normalize_buy_opportunity_settings(merged, currencies)
 
+        score_settings_changed = score_affecting_settings(current) != score_affecting_settings(normalized)
         options = dict(entry.options)
         options[CONF_BUY_OPPORTUNITY_SETTINGS] = normalized
         hass.config_entries.async_update_entry(entry, options=options)
         runtime = _runtime(hass, entry_id)
-        invalidate_market_assessment_cache(hass, entry_id)
-        for task in list(runtime.get("_market_assessment_history_tasks", {}).values()):
-            if task is not None and not task.done():
-                task.cancel()
-        runtime["_market_assessment_history_tasks"] = {}
-        await runtime["market_assessment_history_cache"].async_clear()
-        await runtime["market_assessment_intraday_cache"].async_clear()
+        if score_settings_changed:
+            invalidate_market_assessment_cache(hass, entry_id)
+            for task in list(runtime.get("_market_assessment_history_tasks", {}).values()):
+                if task is not None and not task.done():
+                    task.cancel()
+            runtime["_market_assessment_history_tasks"] = {}
+            await runtime["market_assessment_history_cache"].async_clear()
+            await runtime["market_assessment_intraday_cache"].async_clear()
+            runtime["market_assessment_backfill_status"] = {
+                "state": "restart_scheduled", "complete": False,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _start_market_assessment_backfill(hass, entry, runtime)
         _notify_entities(runtime)
         return {
             "settings": normalized,
@@ -4290,6 +4309,20 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return version == LATEST_CONFIG_VERSION
 
 
+def _start_market_assessment_backfill(
+    hass: HomeAssistant, entry: ConfigEntry, runtime: dict[str, Any]
+) -> None:
+    old = runtime.get("market_assessment_backfill_task")
+    if old is not None and not old.done():
+        old.cancel()
+    runtime["market_assessment_backfill_task"] = hass.async_create_task(
+        async_market_assessment_backfill_loop(
+            hass, entry, runtime["history_storage"], runtime["market_assessment_intraday_cache"]
+        ),
+        "Bitcoin Stack Tracker 90-day market assessment backfill",
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Bitcoin portfolio without persisting its master password."""
     # Register again at config-entry setup as a defensive fallback.  A full Core
@@ -4380,6 +4413,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _configure_history_timer(
         hass, entry, runtime, sync_if_stale=True
     )
+    _start_market_assessment_backfill(hass, entry, runtime)
     # Entry-local watchdog in addition to the domain timer.  This survives the
     # exact setup path used by config-entry-only reloads and makes the persisted
     # Tor rotation deadline independent from an open browser.
@@ -4411,12 +4445,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await history_store.async_load()
     market_history_cache = MarketAssessmentHistoryCache(hass, entry.entry_id)
     await market_history_cache.async_load()
+    market_intraday_cache = MarketAssessmentIntradayCache(hass, entry.entry_id)
+    await market_intraday_cache.async_load()
     statistic_ids = list(history_store.data.get("statistics_ids", []))
     removed = await async_clear_entry_statistics(hass, statistic_ids)
     security_store = BitcoinSecurityStore(hass, entry.entry_id)
     ledger_store = BitcoinLedgerStore(hass, entry.entry_id, security_store)
     await history_store.async_remove()
     await market_history_cache.async_remove()
+    await market_intraday_cache.async_remove()
     await ledger_store.async_remove()
     await security_store.async_remove()
     _LOGGER.info(
@@ -4436,6 +4473,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cancel()
     if cancel := runtime.get("cancel_price_refresh_listener"):
         cancel()
+    backfill_task = runtime.get("market_assessment_backfill_task") if isinstance(runtime, dict) else None
+    if backfill_task is not None and not backfill_task.done():
+        backfill_task.cancel()
+        try:
+            await backfill_task
+        except asyncio.CancelledError:
+            pass
     market_task = runtime.get("_market_assessment_task") if isinstance(runtime, dict) else None
     if market_task is not None and not market_task.done():
         market_task.cancel()

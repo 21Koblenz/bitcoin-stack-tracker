@@ -10,7 +10,7 @@ VERSION = "0.21.0.13"
 # Public frontend build stays aligned with the release. A separate cache revision
 # can be bumped for final/repacked assets without inventing a new integration version.
 FRONTEND_BUILD = "0.21.0.13"
-FRONTEND_CACHE_REVISION = "5"
+FRONTEND_CACHE_REVISION = "6"
 
 CONF_NAME = "name"
 CONF_GOAL_BTC = "goal_btc"  # Legacy single-goal setting; migrated to local storage.

@@ -23,7 +23,7 @@ from typing import Any, Mapping
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .buy_opportunity import SCORE_VERSION
+from .buy_opportunity import SCORE_VERSION, score_affecting_settings
 from .const import DOMAIN
 
 _STORAGE_VERSION = 1
@@ -40,7 +40,7 @@ def market_assessment_intraday_signature(*, currency: str, settings: Mapping[str
     payload = {
         "score_version": SCORE_VERSION,
         "currency": str(currency).upper(),
-        "settings": settings,
+        "settings": score_affecting_settings(settings),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -247,6 +247,28 @@ class MarketAssessmentIntradayCache:
             else:
                 self._schedule_save()
             return changed
+
+    async def async_stats(self, signature: str) -> dict[str, Any]:
+        """Return lightweight 90-day cache completeness diagnostics."""
+        async with self._lock:
+            if str(self._data.get("signature") or "") != str(signature):
+                return {
+                    "cached_points": 0, "live_points": 0, "backfilled_points": 0,
+                    "expected_full_grid_points": _RETENTION_DAYS * _BUCKETS_PER_DAY,
+                    "oldest_timestamp": None, "newest_timestamp": None,
+                }
+            points = [item for item in self._data.get("points", []) if isinstance(item, dict)]
+            live = sum(1 for item in points if not bool(item.get("backfilled")))
+            backfilled = len(points) - live
+            ordered = sorted(str(item.get("timestamp") or "") for item in points if item.get("timestamp"))
+            return {
+                "cached_points": len(points),
+                "live_points": live,
+                "backfilled_points": backfilled,
+                "expected_full_grid_points": _RETENTION_DAYS * _BUCKETS_PER_DAY,
+                "oldest_timestamp": ordered[0] if ordered else None,
+                "newest_timestamp": ordered[-1] if ordered else None,
+            }
 
     async def async_points(self, signature: str, *, since: datetime | None = None) -> list[dict[str, Any]]:
         async with self._lock:

@@ -7,59 +7,26 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  agent_patch:
-    name: Apply XPUB/backfill/labels patch
-    if: (github.ref == 'refs/heads/agent/sentinel-market-cache-cleanup' || github.head_ref == 'agent/sentinel-market-cache-cleanup') && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: agent/sentinel-market-cache-cleanup
-          fetch-depth: 0
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - name: Install test runner
-        run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
-      - name: Apply fixes
-        run: |
-          python tools/agent_apply_current_fixes.py
-          python tools/agent_patch_fix_tests.py
-      - name: Validate patched source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m compileall -q custom_components/bitcoin_stack_tracker
-          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
-          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
-          python -m pytest -q tests/test_xpub_backfill_rating_regressions.py tests/test_sentinel_market_regressions.py tests/test_market_assessment_ui.py tests/test_chart_independent_scales.py tests/test_release_features.py
-      - name: Commit final patch and restore normal validation
-        shell: bash
-        run: |
-          set -euo pipefail
-          git checkout 79c1ac84f6d7dd0430a69f1e2dfdd96aa3922b3d -- .github/workflows/validate.yml
-          rm -f .github/workflows/agent-xpub-backfill-labels.yml tools/agent_apply_current_fixes.py tools/agent_patch_fix_tests.py
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
-          git commit -m "Fix XPUB discovery and expose market backfill progress"
-          git push origin HEAD:agent/sentinel-market-cache-cleanup
-
   hassfest:
     name: Hassfest validation
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: home-assistant/actions/hassfest@master
+      - name: Checkout the repository
+        uses: actions/checkout@v5
+
+      - name: Run hassfest validation
+        uses: home-assistant/actions/hassfest@master
 
   hacs:
     name: HACS validation
     runs-on: ubuntu-latest
+
     steps:
-      - uses: hacs/action@main
+      - name: Run HACS validation
+        uses: hacs/action@main
         with:
           category: integration
