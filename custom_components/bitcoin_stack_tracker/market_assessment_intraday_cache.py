@@ -1,10 +1,10 @@
 """Persistent five-minute snapshots for the public market assessment.
 
 The expensive current assessment is already calculated at most once every five
-minutes. Short overview charts should use those real model observations instead
-of fabricating/interpolating values from daily closes, so this store records one
-snapshot for each completed five-minute UTC bucket without triggering another
-model calculation.
+minutes. Short overview charts use those real model observations. A one-time,
+throttled upgrade backfill may additionally reconstruct recent five-minute
+points from real exchange OHLC closes; such points are explicitly marked as
+backfilled and never overwrite an actually observed live snapshot.
 
 Only public market/model output is stored. A model/settings/currency change
 selects a new generation. Points older than 90 days are removed automatically.
@@ -65,14 +65,40 @@ def _bucket_key(stamp: datetime) -> str:
     return stamp.replace(minute=minute, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
 
 
+def _normalized_point(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    stamp = _parse_utc(raw.get("timestamp"))
+    try:
+        score = float(raw.get("score"))
+    except (TypeError, ValueError):
+        return None
+    if stamp is None or not 0 <= score <= 100:
+        return None
+    point = dict(raw)
+    point["timestamp"] = stamp.isoformat()
+    point["date"] = stamp.date().isoformat()
+    point["score"] = score
+    point["bucket"] = _bucket_key(stamp)
+    if "currency" in point:
+        point["currency"] = str(point.get("currency") or "").upper()
+    return point
+
+
 class MarketAssessmentIntradayCache:
-    """Persist real market-assessment samples in five-minute UTC buckets."""
+    """Persist observed/reconstructed assessment samples in five-minute buckets."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self._store = Store[dict[str, Any]](hass, _STORAGE_VERSION, f"{_KEY_PREFIX}.{entry_id}")
         self._lock = asyncio.Lock()
         self._data: dict[str, Any] = {"signature": "", "points": []}
         self._save_scheduled = False
+        self._bucket_index: dict[str, dict[str, Any]] = {}
+
+    def _rebuild_index(self) -> None:
+        self._bucket_index = {
+            str(point.get("bucket") or ""): point
+            for point in self._data.get("points", [])
+            if isinstance(point, dict) and point.get("bucket")
+        }
 
     async def async_load(self) -> None:
         loaded = await self._store.async_load()
@@ -82,6 +108,7 @@ class MarketAssessmentIntradayCache:
             self._data["points"] = []
         self._data["signature"] = str(self._data.get("signature") or "")
         await self._async_prune(save=True)
+        self._rebuild_index()
 
     def _delayed_save_payload(self) -> dict[str, Any]:
         self._save_scheduled = False
@@ -95,31 +122,30 @@ class MarketAssessmentIntradayCache:
 
     async def _async_prune(self, *, save: bool = False) -> bool:
         cutoff = datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)
-        cleaned: list[dict[str, Any]] = []
+        deduped: dict[str, dict[str, Any]] = {}
         for raw in self._data.get("points", []):
-            if not isinstance(raw, dict):
+            if not isinstance(raw, Mapping):
                 continue
-            stamp = _parse_utc(raw.get("timestamp"))
-            try:
-                score = float(raw.get("score"))
-            except (TypeError, ValueError):
+            point = _normalized_point(raw)
+            if point is None:
                 continue
-            if stamp is None or stamp < cutoff or not (0 <= score <= 100):
+            stamp = _parse_utc(point.get("timestamp"))
+            if stamp is None or stamp < cutoff:
                 continue
-            point = dict(raw)
-            point["bucket"] = _bucket_key(stamp)
-            cleaned.append(point)
-        cleaned.sort(key=lambda item: str(item.get("timestamp") or ""))
+            bucket = str(point["bucket"])
+            previous = deduped.get(bucket)
+            # An actual live observation is authoritative for its bucket. Older
+            # cache generations and the upgrade backfill must never replace it.
+            if previous is not None and not bool(previous.get("backfilled")):
+                continue
+            if previous is None or not bool(point.get("backfilled")):
+                deduped[bucket] = point
+        cleaned = sorted(deduped.values(), key=lambda item: str(item.get("timestamp") or ""))
         if len(cleaned) > _MAX_POINTS:
             cleaned = cleaned[-_MAX_POINTS:]
-        # Deduplicate old hourly/v1 data and any accidental duplicate bucket.
-        deduped: dict[str, dict[str, Any]] = {}
-        for point in cleaned:
-            deduped[str(point.get("bucket") or point.get("timestamp") or "")] = point
-        cleaned = list(deduped.values())
-        cleaned.sort(key=lambda item: str(item.get("timestamp") or ""))
         changed = cleaned != self._data.get("points", [])
         self._data["points"] = cleaned
+        self._rebuild_index()
         if save and changed:
             await self._store.async_save(self._data)
         return changed
@@ -132,7 +158,7 @@ class MarketAssessmentIntradayCache:
         result: Mapping[str, Any],
         currency: str,
     ) -> bool:
-        """Record one already-calculated model sample per five-minute bucket."""
+        """Record one actually calculated live sample per five-minute bucket."""
         stamp = _parse_utc(calculated_at)
         try:
             score = float(result.get("score_raw", result.get("score")))
@@ -156,19 +182,24 @@ class MarketAssessmentIntradayCache:
             "price": price,
             "currency": str(currency).upper(),
             "bucket": bucket,
+            "backfilled": False,
         }
         async with self._lock:
             signature_changed = str(self._data.get("signature") or "") != str(signature)
             if signature_changed:
                 self._data = {"signature": str(signature), "points": []}
-            points = self._data.setdefault("points", [])
-            if any(str(item.get("bucket") or "") == bucket for item in points if isinstance(item, dict)):
+                self._bucket_index = {}
+            previous = self._bucket_index.get(bucket)
+            if previous is not None and not bool(previous.get("backfilled")):
                 return False
-            points.append(point)
+            if previous is not None:
+                self._data["points"] = [
+                    item
+                    for item in self._data.get("points", [])
+                    if not isinstance(item, dict) or str(item.get("bucket") or "") != bucket
+                ]
+            self._data.setdefault("points", []).append(point)
             await self._async_prune(save=False)
-            # Keep the hot path cheap: the point is immediately visible to API
-            # reads, while Store coalesces durable writes instead of rewriting a
-            # growing 90-day JSON document every five minutes.
             if signature_changed:
                 await self._store.async_save(self._data)
                 self._save_scheduled = False
@@ -176,16 +207,58 @@ class MarketAssessmentIntradayCache:
                 self._schedule_save()
             return True
 
+    async def async_merge_points(
+        self, signature: str, points: list[Mapping[str, Any]]
+    ) -> int:
+        """Merge a bounded backfill batch without O(n) scans for every point.
+
+        Existing live observations win over reconstructed points. A new live point
+        can later replace a backfilled point through ``async_record``.
+        """
+        if not points:
+            return 0
+        async with self._lock:
+            signature_changed = str(self._data.get("signature") or "") != str(signature)
+            if signature_changed:
+                self._data = {"signature": str(signature), "points": []}
+                self._bucket_index = {}
+            changed = 0
+            for raw in points:
+                point = _normalized_point(raw)
+                if point is None:
+                    continue
+                point["backfilled"] = True
+                bucket = str(point["bucket"])
+                previous = self._bucket_index.get(bucket)
+                if previous is not None:
+                    # Never replace a live observation; replacing an older
+                    # reconstructed point is unnecessary because generation
+                    # changes already select a new empty cache.
+                    continue
+                self._data.setdefault("points", []).append(point)
+                self._bucket_index[bucket] = point
+                changed += 1
+            if not changed:
+                return 0
+            await self._async_prune(save=False)
+            if signature_changed:
+                await self._store.async_save(self._data)
+                self._save_scheduled = False
+            else:
+                self._schedule_save()
+            return changed
+
     async def async_points(self, signature: str, *, since: datetime | None = None) -> list[dict[str, Any]]:
         async with self._lock:
             if str(self._data.get("signature") or "") != str(signature):
                 return []
+            cutoff = since.astimezone(timezone.utc) if since is not None else None
             result: list[dict[str, Any]] = []
             for raw in self._data.get("points", []):
                 if not isinstance(raw, dict):
                     continue
                 stamp = _parse_utc(raw.get("timestamp"))
-                if stamp is None or (since is not None and stamp < since.astimezone(timezone.utc)):
+                if stamp is None or (cutoff is not None and stamp < cutoff):
                     continue
                 result.append(deepcopy(raw))
             return result
@@ -193,11 +266,13 @@ class MarketAssessmentIntradayCache:
     async def async_clear(self) -> None:
         async with self._lock:
             self._data = {"signature": "", "points": []}
+            self._bucket_index = {}
             self._save_scheduled = False
             await self._store.async_save(self._data)
 
     async def async_remove(self) -> None:
         async with self._lock:
             self._data = {"signature": "", "points": []}
+            self._bucket_index = {}
             self._save_scheduled = False
             await self._store.async_remove()
