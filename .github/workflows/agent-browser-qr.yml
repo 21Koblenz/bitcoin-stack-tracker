@@ -1,0 +1,142 @@
+name: Agent browser QR bootstrap
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-browser-qr.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 0
+
+      - name: Vendor pinned local QR decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p custom_components/bitcoin_stack_tracker/frontend/static/vendor
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/cozmo/jsQR/8e6a036beafa7053dd44b1b76ac578d22b1b3311/dist/jsQR.js \
+            -o custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR.js
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/cozmo/jsQR/8e6a036beafa7053dd44b1b76ac578d22b1b3311/LICENSE \
+            -o custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR-LICENSE.txt
+          test -s custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR.js
+          test -s custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR-LICENSE.txt
+
+      - name: Patch browser scanner and local script load
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app_path = Path('custom_components/bitcoin_stack_tracker/frontend/static/app.js')
+          app = app_path.read_text(encoding='utf-8')
+
+          old = '''  const BarcodeDetectorCtor=walletWatchBarcodeDetectorCtor();
+          if(!BarcodeDetectorCtor){
+            toast(walletWatchLang(`QR-Scan ist in diesem Client nicht verfügbar · ${FRONTEND_BUILD}. In der aktuellen Home-Assistant-Companion-App wird der native Scanner verwendet; im Browser bleibt Einfügen möglich.`,`QR scanning is not available in this client · ${FRONTEND_BUILD}. The current Home Assistant Companion app uses the native scanner; pasting remains available in browsers.`));
+            return;
+          }
+          if(!navigator.mediaDevices?.getUserMedia){'''
+          new = '''  const BarcodeDetectorCtor=walletWatchBarcodeDetectorCtor();
+          const JsQrDecoder=typeof window.jsQR==="function"?window.jsQR:null;
+          if(!navigator.mediaDevices?.getUserMedia){'''
+          if old not in app:
+              raise SystemExit('scanner capability block not found')
+          app = app.replace(old, new, 1)
+
+          old = '''    if(typeof BarcodeDetectorCtor.getSupportedFormats==="function"){'''
+          new = '''    if(BarcodeDetectorCtor&&typeof BarcodeDetectorCtor.getSupportedFormats==="function"){'''
+          if old not in app:
+              raise SystemExit('supported-formats block not found')
+          app = app.replace(old, new, 1)
+
+          old = '''    const detector=new BarcodeDetectorCtor({formats:["qr_code"]});'''
+          new = '''    const detector=BarcodeDetectorCtor?new BarcodeDetectorCtor({formats:["qr_code"]}):null;
+          const qrCanvas=detector?null:document.createElement("canvas");
+          const qrContext=qrCanvas?.getContext("2d",{willReadFrequently:true})||null;
+          if(!detector&&(!JsQrDecoder||!qrContext))throw new Error(walletWatchLang("Lokaler QR-Decoder konnte nicht geladen werden.","Local QR decoder could not be loaded."));'''
+          if old not in app:
+              raise SystemExit('detector construction not found')
+          app = app.replace(old, new, 1)
+
+          old = '''          const codes=await detector.detect(video);
+          const raw=Array.isArray(codes)?String(codes.find(item=>String(item?.rawValue||"").trim())?.rawValue||""):"";'''
+          new = '''          let raw="";
+          if(detector){
+            const codes=await detector.detect(video);
+            raw=Array.isArray(codes)?String(codes.find(item=>String(item?.rawValue||"").trim())?.rawValue||""):"";
+          }else if(JsQrDecoder&&qrCanvas&&qrContext){
+            const sourceWidth=Math.max(1,Number(video.videoWidth||0)),sourceHeight=Math.max(1,Number(video.videoHeight||0));
+            const maxWidth=720,scale=Math.min(1,maxWidth/sourceWidth);
+            const width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
+            if(qrCanvas.width!==width)qrCanvas.width=width;
+            if(qrCanvas.height!==height)qrCanvas.height=height;
+            qrContext.drawImage(video,0,0,width,height);
+            const frame=qrContext.getImageData(0,0,width,height);
+            const decoded=JsQrDecoder(frame.data,width,height,{inversionAttempts:"dontInvert"});
+            raw=String(decoded?.data||"");
+          }'''
+          if old not in app:
+              raise SystemExit('detector frame block not found')
+          app = app.replace(old, new, 1)
+          app_path.write_text(app, encoding='utf-8')
+
+          index_path = Path('custom_components/bitcoin_stack_tracker/frontend/index.html')
+          index = index_path.read_text(encoding='utf-8')
+          old = '  <script src="static/performance-math.js?v=0.21.0.13"></script>\n  <script src="static/app.js?v=0.21.0.13&r=5"></script>'
+          new = '  <script src="static/performance-math.js?v=0.21.0.13"></script>\n  <script src="static/vendor/jsQR.js?v=1.4.0"></script>\n  <script src="static/app.js?v=0.21.0.13&r=6"></script>'
+          if old not in index:
+              raise SystemExit('frontend script block not found')
+          index_path.write_text(index.replace(old, new, 1), encoding='utf-8')
+
+      - name: Add third-party notice
+        shell: bash
+        run: |
+          cat > THIRD_PARTY-NOTICES.md <<'EOF'
+          # Third-party notices
+
+          ## jsQR 1.4.0
+
+          The browser-only Sats Sentinel QR fallback vendors `jsQR` 1.4.0 from
+          `cozmo/jsQR`, pinned to upstream commit
+          `8e6a036beafa7053dd44b1b76ac578d22b1b3311`.
+
+          License: Apache License 2.0. The complete upstream license text is kept
+          next to the vendored file at
+          `custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR-LICENSE.txt`.
+
+          The library is served locally by Home Assistant. No CDN or third-party
+          QR service is contacted and camera frames remain in the browser.
+          EOF
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/vendor/jsQR.js
+          python - <<'PY'
+          from pathlib import Path
+          app=Path('custom_components/bitcoin_stack_tracker/frontend/static/app.js').read_text()
+          index=Path('custom_components/bitcoin_stack_tracker/frontend/index.html').read_text()
+          assert 'const JsQrDecoder=typeof window.jsQR==="function"?window.jsQR:null;' in app
+          assert 'JsQrDecoder(frame.data,width,height' in app
+          assert 'static/vendor/jsQR.js?v=1.4.0' in index
+          PY
+          rm .github/workflows/agent-browser-qr.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Add private local QR scanner fallback for browsers"
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
