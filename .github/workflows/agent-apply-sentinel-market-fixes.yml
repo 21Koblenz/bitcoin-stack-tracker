@@ -1,4 +1,4 @@
-name: Apply agent Sentinel market fixes
+name: Apply complete Sentinel and market fixes
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  patch-and-test:
+  patch-test-cleanup:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout work branch
@@ -20,7 +20,7 @@ jobs:
           ref: agent/sentinel-market-cache-cleanup
           fetch-depth: 0
 
-      - name: Apply deterministic fixes
+      - name: Apply complete fixes
         shell: python
         run: |
           from pathlib import Path
@@ -30,7 +30,16 @@ jobs:
               text = p.read_text(encoding="utf-8")
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"Expected exactly one match in {path}, got {count}: {old[:120]!r}")
+                  raise SystemExit(f"Expected exactly one match in {path}, got {count}: {old[:160]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          def ensure_replace(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f"Neither old nor new form found in {path}: {old[:160]!r}")
               p.write_text(text.replace(old, new, 1), encoding="utf-8")
 
           app = "custom_components/bitcoin_stack_tracker/frontend/static/app.js"
@@ -38,106 +47,345 @@ jobs:
           css = "custom_components/bitcoin_stack_tracker/frontend/static/style.css"
           index = "custom_components/bitcoin_stack_tracker/frontend/index.html"
           const = "custom_components/bitcoin_stack_tracker/const.py"
-          market_test = "tests/test_market_assessment_ui.py"
           cache = "custom_components/bitcoin_stack_tracker/market_assessment_intraday_cache.py"
+          market_test = "tests/test_market_assessment_ui.py"
+          scale_test = "tests/test_chart_independent_scales.py"
 
-          # Dedicated market-assessment history must include the persisted
-          # intraday observations instead of rendering only daily points.
-          replace_one(
+          # -----------------------------------------------------------------
+          # Market assessment: real five-minute observations, 90-day retention
+          # -----------------------------------------------------------------
+          ensure_replace(cache, "_STORAGE_VERSION = 2", "_STORAGE_VERSION = 1")
+          cache_text = Path(cache).read_text(encoding="utf-8")
+          for required in (
+              "_RETENTION_DAYS = 90",
+              "_BUCKET_MINUTES = 5",
+              "_BUCKETS_PER_DAY = (24 * 60) // _BUCKET_MINUTES",
+              "_SAVE_DELAY_SECONDS = 60 * 60",
+              "def _bucket_key(stamp: datetime) -> str:",
+              "Record one already-calculated model sample per five-minute bucket.",
+          ):
+              if required not in cache_text:
+                  raise SystemExit(f"Five-minute market cache invariant missing: {required}")
+
+          ensure_replace(init, '                "90d": 31,', '                "90d": 91,')
+
+          ensure_replace(
               app,
               'const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload),points=smoothMarketAssessmentPoints(rawPoints);',
               'const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true}),points=smoothMarketAssessmentPoints(rawPoints);',
           )
 
-          # A new five-minute model snapshot is a history change even when the
-          # daily BTC history revision did not change. Force only the cheap
-          # local history endpoint to refresh; the expensive historical model
-          # remains backed by its persistent backend cache.
-          replace_one(
+          # Keep the overview overlay dense enough to consume real five-minute
+          # observations for Today. Longer ranges remain compact and cheap.
+          ensure_replace(
+              app,
+              'function marketAssessmentOverlayIntervalMinutesForRange(){\n  if(state.historyRange==="1")return 60;',
+              'function marketAssessmentOverlayIntervalMinutesForRange(){\n  if(state.historyRange==="1")return 5;',
+          )
+          ensure_replace(
+              app,
+              '  // Refresh the lightweight intraday tail at most once per hour. The expensive\n  // causal daily score cache keeps its own stable server-side content signature.\n  const intradayRevision=shortOverlay?Math.floor(Date.now()/3600000):"daily";',
+              '  // Refresh only the lightweight persisted intraday tail once per five-minute\n  // bucket. The expensive causal daily score cache keeps its own stable signature.\n  const intradayRevision=shortOverlay?Math.floor(Date.now()/300000):"daily";',
+          )
+
+          ensure_replace(
               app,
               '    const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();\n',
               '    const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();\n    const previousAssessmentCalculatedAt=String(state.data?.buy_opportunity_calculated_at||"");\n',
           )
-          replace_one(
+          ensure_replace(
               app,
               '    const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;\n',
               '    const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;\n    const assessmentAdvanced=Boolean(result?.calculated_at&&String(result.calculated_at)!==previousAssessmentCalculatedAt);\n',
           )
-          replace_one(
+          ensure_replace(
               app,
               '      if(historyRevisionChanged)void loadMarketAssessmentHistory();',
               '      if(historyRevisionChanged||assessmentAdvanced)void loadMarketAssessmentHistory({force:true});',
           )
-          replace_one(
+          ensure_replace(
               app,
               '      if(historyRevisionChanged)void ensureChartMarketAssessmentHistory();',
               '      if(historyRevisionChanged||assessmentAdvanced)void ensureChartMarketAssessmentHistory({force:true});',
           )
 
-          # The server endpoints already enforce Owner access. Do not suppress
-          # the locked-vault Sentinel client before that authoritative check can
-          # run, because locked dashboard data may intentionally omit owner UI
-          # metadata.
-          replace_one(
+          # -----------------------------------------------------------------
+          # Locked Sats Sentinel: local opt-in + authoritative server owner gate
+          # -----------------------------------------------------------------
+          ensure_replace(
               app,
               '    const showLockedSentinel=Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked();',
               '    const showLockedSentinel=walletWatchShowWhenLocked();',
           )
-          replace_one(
+          ensure_replace(
               app,
-              '  if(!state.entryId||!state.data?.security?.owner)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});',
-              '  if(!state.entryId||!state.data?.locked)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});',
+              'async function loadLockedWalletWatchManagement(){\n  if(!state.entryId||!state.data?.security?.owner)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};return true;}catch(_error){return false;}\n}',
+              'async function loadLockedWalletWatchManagement(){\n  if(!state.entryId||!state.data?.locked)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};state.data.security={...(state.data.security||{}),owner:true};return true;}catch(_error){return false;}\n}',
           )
-          replace_one(
+          ensure_replace(
               app,
               '  if(!state.data?.locked||!state.data?.security?.owner||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}',
               '  if(!state.data?.locked||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}',
           )
 
-          # Serve the full 90-day five-minute tail to the 90-day range.
-          replace_one(init, '                "90d": 31,', '                "90d": 91,')
+          # Make address accordions explicit on desktop as well as mobile.
+          css_path = Path(css)
+          css_text = css_path.read_text(encoding="utf-8")
+          marker = "/* monitored Sentinel addresses: explicit desktop/mobile accordion */"
+          if marker not in css_text:
+              css_text += (
+                  "\n\n" + marker + "\n"
+                  ".sats-sentinel-monitored-addresses>summary{cursor:pointer;user-select:none}\n"
+                  ".sats-sentinel-monitored-addresses:not([open])>.sats-sentinel-address-list{display:none!important}\n"
+              )
+              css_path.write_text(css_text, encoding="utf-8")
 
-          # Keep Store's external format version stable: the v1 hourly rows are
-          # shape-compatible and are migrated/deduplicated by the cache itself.
-          replace_one(cache, '_STORAGE_VERSION = 2', '_STORAGE_VERSION = 1')
+          # -----------------------------------------------------------------
+          # Independent logarithmic axes: signed P/L uses symmetric log (SymLog)
+          # -----------------------------------------------------------------
+          ensure_replace(
+              app,
+              'linear:"Linear",logarithmic:"Logarithmisch",logUnavailable:"Für Gewinn-/Verlust-Ansichten ist nur die lineare Skala möglich.",marketScoreLinearOnly:',
+              'linear:"Linear",logarithmic:"Logarithmisch",symlogarithmic:"SymLog",logUnavailable:"Für diese Datenreihe ist keine logarithmische Skala verfügbar.",marketScoreLinearOnly:',
+          )
+          ensure_replace(
+              app,
+              'linear:"Linear",logarithmic:"Logarithmic",logUnavailable:"Profit/loss views support the linear scale only.",marketScoreLinearOnly:',
+              'linear:"Linear",logarithmic:"Logarithmic",symlogarithmic:"SymLog",logUnavailable:"A logarithmic scale is unavailable for this series.",marketScoreLinearOnly:',
+          )
+          ensure_replace(
+              app,
+              '    const logBlocked = Boolean(item?.allowNegative || item?.forceLinear);\n    if (logBlocked && chartAxisScale(index) === "log") setChartAxisScale(index,"linear");\n    const label = chartAxisScale(index) === "log" ? t("logarithmic") : t("linear");',
+              '    const logBlocked = Boolean(item?.forceLinear);\n    if (logBlocked && chartAxisScale(index) === "log") setChartAxisScale(index,"linear");\n    const signedLog = Boolean(item?.allowNegative && chartAxisScale(index) === "log");\n    const label = chartAxisScale(index) === "log" ? t(signedLog?"symlogarithmic":"logarithmic") : t("linear");',
+          )
+          ensure_replace(
+              app,
+              '  const logarithmic = index => Boolean(series[index] && !series[index].allowNegative && chartAxisScale(index) === "log");\n  $("#overlayOpacity").disabled = !overlay;',
+              '  const logarithmic = index => Boolean(series[index] && !series[index].allowNegative && chartAxisScale(index) === "log");\n  const symlogarithmic = index => Boolean(series[index]?.allowNegative && chartAxisScale(index) === "log");\n  const symlogThresholds = series.map(item=>{if(!item?.allowNegative)return 1;const values=Object.values(item.values||{}).map(Number).filter(Number.isFinite).map(Math.abs).filter(value=>value>0);const maxAbs=values.length?Math.max(...values):1;return Math.max(1,maxAbs*.01);});\n  const chartScaleLabel = index => symlogarithmic(index)?t("symlogarithmic"):(logarithmic(index)?t("logarithmic"):t("linear"));\n  $("#overlayOpacity").disabled = !overlay;',
+          )
+          ensure_replace(
+              app,
+              '  const transform = (value,index) => logarithmic(index) ? Math.log10(Number(value)) : Number(value);\n  const inverse = (value,index) => logarithmic(index) ? 10 ** Number(value) : Number(value);',
+              '  const transform = (value,index) => {const numeric=Number(value);if(logarithmic(index))return Math.log10(numeric);if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*Math.log10(1+Math.abs(numeric)/threshold);}return numeric;};\n  const inverse = (value,index) => {const numeric=Number(value);if(logarithmic(index))return 10 ** numeric;if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*threshold*((10 ** Math.abs(numeric))-1);}return numeric;};',
+          )
+          ensure_replace(
+              app,
+              '<text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(logarithmic(0)?t("logarithmic"):t("linear"))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(logarithmic(1)?t("logarithmic"):t("linear"))}</text>`:""}',
+              '<text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(chartScaleLabel(0))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(chartScaleLabel(1))}</text>`:""}',
+          )
 
-          # Make desktop behavior explicit as well as mobile: monitored address
-          # lists are real accordions and stay closed until the summary is used.
-          p = Path(css)
-          text = p.read_text(encoding="utf-8")
-          marker = '/* rc15: monitored addresses are explicit accordions on desktop and mobile */'
-          if marker not in text:
-              text += f'''\n\n{marker}\n.sats-sentinel-monitored-addresses>summary{{cursor:pointer;user-select:none}}\n.sats-sentinel-monitored-addresses:not([open])>.sats-sentinel-address-list{{display:none!important}}\n'''
-              p.write_text(text, encoding="utf-8")
+          # -----------------------------------------------------------------
+          # Frontend cache busting: stable filenames remain unchanged.
+          # -----------------------------------------------------------------
+          ensure_replace(const, 'FRONTEND_CACHE_REVISION = "4"', 'FRONTEND_CACHE_REVISION = "5"')
+          ensure_replace(index, 'static/style.css?v=0.21.0.13&r=4', 'static/style.css?v=0.21.0.13&r=5')
+          ensure_replace(index, 'static/app.js?v=0.21.0.13&r=4', 'static/app.js?v=0.21.0.13&r=5')
 
-          # Cache-bust the panel assets without inventing a release version on
-          # this review branch.
-          replace_one(const, 'FRONTEND_CACHE_REVISION = "4"', 'FRONTEND_CACHE_REVISION = "5"')
-          replace_one(index, 'static/style.css?v=0.21.0.13&r=4', 'static/style.css?v=0.21.0.13&r=5')
-          replace_one(index, 'static/app.js?v=0.21.0.13&r=4', 'static/app.js?v=0.21.0.13&r=5')
+          # The UI intentionally polls the shared assessment cache every five minutes.
+          ensure_replace(market_test, '    assert "},60000);" in app', '    assert "},300000);" in app')
 
-          # Existing test had the old one-minute UI polling value although the
-          # shared backend cache has intentionally been five minutes for CPU
-          # efficiency.
-          replace_one(market_test, '    assert "},60000);" in app', '    assert "},300000);" in app')
+          # Rewrite independent-scale regression tests for signed SymLog.
+          Path(scale_test).write_text('''from pathlib import Path
 
-          # Self-remove: this one-shot patch workflow must not ship.
-          Path('.github/workflows/agent-apply-sentinel-market-fixes.yml').unlink()
+ROOT = Path(__file__).resolve().parents[1]
+FRONTEND = ROOT / "custom_components/bitcoin_stack_tracker/frontend"
+APP = (FRONTEND / "static/app.js").read_text(encoding="utf-8")
+INDEX = (FRONTEND / "index.html").read_text(encoding="utf-8")
 
-      - name: Run focused tests
+
+def test_chart_has_independent_left_and_right_scale_controls():
+    assert 'id="chartScaleLeftButton"' in INDEX
+    assert 'id="chartScaleRightButton"' in INDEX
+    assert 'bst_chart_scale_left' in APP
+    assert 'bst_chart_scale_right' in APP
+    assert 'function chartAxisScale(index)' in APP
+    assert 'const logarithmic = index =>' in APP
+    assert 'const symlogarithmic = index =>' in APP
+    assert 'chartScaleLabel(0)' in APP
+    assert 'chartScaleLabel(1)' in APP
+
+
+def test_signed_series_uses_symlog_on_its_own_axis():
+    assert 'const logBlocked = Boolean(item?.forceLinear);' in APP
+    assert 'const signedLog = Boolean(item?.allowNegative && chartAxisScale(index) === "log");' in APP
+    assert 't(signedLog?"symlogarithmic":"logarithmic")' in APP
+    assert 'Math.sign(numeric)*Math.log10(1+Math.abs(numeric)/threshold)' in APP
+    assert 'Math.sign(numeric)*threshold*((10 ** Math.abs(numeric))-1)' in APP
+    assert 'const signedSeries = series.some' not in APP
+
+
+def test_large_chart_and_ledger_ui_use_revision_caches():
+    assert 'const chartTimestampCache = new Map();' in APP
+    assert 'derivedCacheKey("chartTimeline"' in APP
+    assert 'derivedCacheKey("chartSeries"' in APP
+    assert 'function uiIndexes()' in APP
+    assert 'matchesBySale=new Map()' in APP
+    assert 'openLotByEntry=new Map(' in APP
+    assert 'const points = sortedNumericPoints(values);' in APP
+
+
+def test_market_score_overlay_keeps_linear_but_auto_scaled_right_axis():
+    start = APP.index('const marketScoreSeries')
+    block = APP[start:APP.index('if(state.fiatFree)', start)]
+    assert 'forceLinear:true,publicValue:true' in block
+    assert 'fixedMin:0,fixedMax:100' not in block
+    assert 'marketScoreLinearOnly' in APP
+''', encoding="utf-8")
+
+          # Additional regression coverage for every issue fixed in this pass.
+          Path("tests/test_sentinel_market_regressions.py").write_text('''from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+COMPONENT = ROOT / "custom_components" / "bitcoin_stack_tracker"
+APP = (COMPONENT / "frontend" / "static" / "app.js").read_text(encoding="utf-8")
+CSS = (COMPONENT / "frontend" / "static" / "style.css").read_text(encoding="utf-8")
+INIT = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+CACHE = (COMPONENT / "market_assessment_intraday_cache.py").read_text(encoding="utf-8")
+
+
+def test_market_assessment_persists_real_five_minute_points_for_90_days():
+    assert "_STORAGE_VERSION = 1" in CACHE
+    assert "_RETENTION_DAYS = 90" in CACHE
+    assert "_BUCKET_MINUTES = 5" in CACHE
+    assert "_SAVE_DELAY_SECONDS = 60 * 60" in CACHE
+    assert '"90d": 91' in INIT
+
+
+def test_market_history_consumes_intraday_points_and_refreshes_on_new_score():
+    assert 'marketAssessmentLiveTailPoints(payload,{includeIntraday:true})' in APP
+    assert 'if(state.historyRange==="1")return 5;' in APP
+    assert 'Math.floor(Date.now()/300000)' in APP
+    assert 'const assessmentAdvanced=' in APP
+    assert 'loadMarketAssessmentHistory({force:true})' in APP
+    assert 'ensureChartMarketAssessmentHistory({force:true})' in APP
+
+
+def test_locked_sentinel_uses_local_opt_in_but_server_remains_authoritative():
+    assert 'const showLockedSentinel=walletWatchShowWhenLocked();' in APP
+    assert 'if(!state.entryId||!state.data?.locked)return false;' in APP
+    assert 'state.data.security={...(state.data.security||{}),owner:true}' in APP
+    assert 'Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked()' not in APP
+    assert '!state.data?.security?.owner||!walletWatchShowWhenLocked()' not in APP
+
+
+def test_sentinel_addresses_are_collapsible_on_desktop_and_mobile():
+    assert '.sats-sentinel-monitored-addresses>summary{cursor:pointer;user-select:none}' in CSS
+    assert '.sats-sentinel-monitored-addresses:not([open])>.sats-sentinel-address-list{display:none!important}' in CSS
+
+
+def test_no_temporary_runtime_patch_ships():
+    assert not (COMPONENT / "frontend" / "static" / "runtime-fixes.js").exists()
+
+
+def test_version_specific_root_notes_are_archived():
+    for pattern in ("GITHUB-RELEASE-v*.md", "RELEASE-QC-v*.md", "AUDIT-v*.md", "GIT-CLEANUP-v*.md"):
+        assert not list(ROOT.glob(pattern)), pattern
+''', encoding="utf-8")
+
+          # -----------------------------------------------------------------
+          # Repository cleanup: keep active docs at root, archive version notes,
+          # and place test/audit notes under docs instead of cluttering root.
+          # -----------------------------------------------------------------
+          moves = {
+              "AUDIT-v0.21.0.6.md": "docs/archive/audits/AUDIT-v0.21.0.6.md",
+              "GIT-CLEANUP-v0.21.0.9.md": "docs/archive/maintenance/GIT-CLEANUP-v0.21.0.9.md",
+              "GITHUB-RELEASE-v0.21.0.9.md": "docs/archive/releases/GITHUB-RELEASE-v0.21.0.9.md",
+              "GITHUB-RELEASE-v0.21.0.10.md": "docs/archive/releases/GITHUB-RELEASE-v0.21.0.10.md",
+              "GITHUB-RELEASE-v0.21.0.11.md": "docs/archive/releases/GITHUB-RELEASE-v0.21.0.11.md",
+              "GITHUB-RELEASE-v0.21.0.12.md": "docs/archive/releases/GITHUB-RELEASE-v0.21.0.12.md",
+              "GITHUB-RELEASE-v0.21.0.13.md": "docs/archive/releases/GITHUB-RELEASE-v0.21.0.13.md",
+              "RELEASE-QC-v0.21.0.9.md": "docs/archive/releases/qc/RELEASE-QC-v0.21.0.9.md",
+              "RELEASE-QC-v0.21.0.10.md": "docs/archive/releases/qc/RELEASE-QC-v0.21.0.10.md",
+              "RELEASE-QC-v0.21.0.11.md": "docs/archive/releases/qc/RELEASE-QC-v0.21.0.11.md",
+              "RELEASE-QC-v0.21.0.12.md": "docs/archive/releases/qc/RELEASE-QC-v0.21.0.12.md",
+              "BUY-OPPORTUNITY-TEST.md": "docs/testing/BUY-OPPORTUNITY-TEST.md",
+              "LIVE-PRICE-FAST-LANE-TEST.md": "docs/testing/LIVE-PRICE-FAST-LANE-TEST.md",
+              "MARKET-ASSESSMENT-V4-TEST.md": "docs/testing/MARKET-ASSESSMENT-V4-TEST.md",
+              "SATS-SENTINEL-TEST.md": "docs/testing/SATS-SENTINEL-TEST.md",
+              "MATH-AUDIT.md": "docs/audits/MATH-AUDIT.md",
+          }
+          for source, target in moves.items():
+              src = Path(source)
+              dst = Path(target)
+              if not src.exists():
+                  if dst.exists():
+                      continue
+                  raise SystemExit(f"Expected cleanup source missing: {source}")
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              src.replace(dst)
+
+          Path("docs/README.md").write_text('''# Documentation map
+
+The repository root contains only current project and release-facing documents. Historical release/QC notes and development test notes live here so the HACS repository stays easier to navigate.
+
+## Current documents
+
+- [README](../README.md)
+- [Installation](../INSTALLATION.md)
+- [CSV import](../CSV-IMPORT.md)
+- [Data portability](../DATA-PORTABILITY.md)
+- [Security](../SECURITY.md)
+- [Storage](../STORAGE.md)
+- [Tor notes](../TOR-HINWEISE.md)
+- [Publishing](../PUBLISHING.md)
+- [Changelog](../CHANGELOG.md)
+- [Release notes](../RELEASE-NOTES.md)
+- [SBOM](../SBOM.md)
+
+## Engineering references
+
+- `audits/` – current technical/math audits
+- `testing/` – manual and model test notes
+- `archive/releases/` – historical GitHub release drafts
+- `archive/releases/qc/` – historical release QC notes
+- `archive/audits/` – historical security/audit snapshots
+- `archive/maintenance/` – historical repository-maintenance notes
+''', encoding="utf-8")
+
+          # Remove temporary branch-only runtime shim. The real fixes now live in
+          # the normal source files and stable frontend asset structure.
+          runtime_fix = Path("custom_components/bitcoin_stack_tracker/frontend/static/runtime-fixes.js")
+          if runtime_fix.exists():
+              runtime_fix.unlink()
+
+          # This workflow is one-shot and must never ship with the release.
+          Path(".github/workflows/agent-apply-sentinel-market-fixes.yml").unlink()
+
+      - name: Validate JavaScript and Python syntax
+        run: |
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
+          python -m compileall -q custom_components/bitcoin_stack_tracker
+
+      - name: Run focused regression suite
         run: |
           python -m pip install --disable-pip-version-check --no-input pytest
-          python -m compileall -q custom_components/bitcoin_stack_tracker
-          python -m pytest -q tests/test_market_assessment_ui.py tests/test_release_features.py
+          python -m pytest -q \
+            tests/test_market_assessment_ui.py \
+            tests/test_chart_independent_scales.py \
+            tests/test_release_features.py \
+            tests/test_sentinel_market_regressions.py
 
-      - name: Commit patched files
+      - name: Ensure temporary files are gone and root is clean
+        shell: bash
+        run: |
+          test ! -e .github/workflows/agent-apply-sentinel-market-fixes.yml
+          test ! -e custom_components/bitcoin_stack_tracker/frontend/static/runtime-fixes.js
+          ! compgen -G 'GITHUB-RELEASE-v*.md' >/dev/null
+          ! compgen -G 'RELEASE-QC-v*.md' >/dev/null
+          ! compgen -G 'AUDIT-v*.md' >/dev/null
+          ! compgen -G 'GIT-CLEANUP-v*.md' >/dev/null
+
+      - name: Commit complete branch state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
+          git diff --cached --check
+          git status --short
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Fix Sentinel locked view and five-minute market history"
+          git commit -m "Complete Sentinel market history and repository cleanup"
           git push origin HEAD:agent/sentinel-market-cache-cleanup
