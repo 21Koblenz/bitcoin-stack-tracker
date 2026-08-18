@@ -9,7 +9,7 @@ reg = root / "tests" / "test_xpub_backfill_rating_regressions.py"
 text = reg.read_text(encoding="utf-8")
 text = text.replace(
     'and "buy_opportunity_settings?.labels" in A',
-    'and "buy_opportunity_settings?.labels" in A.replace("?.buy_opportunity_settings", "buy_opportunity_settings")',
+    'and "?.labels?.[value]" in A',
 )
 reg.write_text(text, encoding="utf-8")
 
