@@ -26,7 +26,7 @@ from homeassistant.helpers.storage import Store
 from .buy_opportunity import SCORE_VERSION
 from .const import DOMAIN
 
-_STORAGE_VERSION = 2
+_STORAGE_VERSION = 1
 _KEY_PREFIX = f"{DOMAIN}.market_assessment_intraday"
 _RETENTION_DAYS = 90
 _BUCKET_MINUTES = 5
