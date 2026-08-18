@@ -1,14 +1,16 @@
 """Throttled 90-day five-minute market-assessment backfill.
 
-The live assessment cache records real observations as they happen.  This module
-fills the recent public chart history after an upgrade by downloading exact
-five-minute BTC candle closes from Bitstamp through the configured Tor proxy and
-replaying the existing causal model at those historical timestamps.
+The live assessment cache records actual observations as they happen. After an
+upgrade this module can additionally reconstruct the recent public chart history
+from real five-minute Bitstamp OHLC closes and the existing causal price-only
+model. Reconstructed points are marked ``backfilled``; a later live observation
+always wins for the same five-minute bucket.
 
 No portfolio, wallet, address, XPUB, descriptor or other private tracker data is
-used or sent to the provider.  CPU work is intentionally bounded to a tiny batch
-in Home Assistant's executor followed by a pause, so the backfill can take many
-hours without competing aggressively with normal Home Assistant work.
+used or sent to the exchange. Public requests go through the configured Tor
+proxy and are fail-closed. CPU work is intentionally limited to tiny executor
+batches separated by pauses, so filling all 90 days can take multiple days
+without monopolising Home Assistant.
 """
 from __future__ import annotations
 
@@ -17,19 +19,21 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 import logging
 from typing import Any, Mapping
+from urllib.parse import urljoin, urlparse
 
+from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
 from .const import CONF_BUY_OPPORTUNITY_SETTINGS, CONF_HISTORY_ENABLED, DOMAIN
 from .helpers import configured_currencies, effective_settings
-from .history import _fetch_bitstamp_ohlc_samples
+from .http_limits import async_json_limited
 from .market_assessment_intraday_cache import (
     MarketAssessmentIntradayCache,
     market_assessment_intraday_signature,
 )
-from .network import tor_proxy_from_settings
+from .network import async_routed_session, tor_proxy_from_settings
 from .storage import BitcoinHistoryStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,17 +43,26 @@ BACKFILL_INTERVAL_MINUTES = 5
 BACKFILL_PAGE_LIMIT = 1000
 BACKFILL_MAX_PAGES = 40
 BACKFILL_NETWORK_PAUSE_SECONDS = 2
-BACKFILL_SCORE_BATCH_POINTS = 4
+# The full current model is intentionally replayed only two points at a time.
+# At 20 s between batches the one-time fill takes days rather than creating a
+# sustained CPU spike on smaller Home Assistant hosts.
+BACKFILL_SCORE_BATCH_POINTS = 2
 BACKFILL_SCORE_PAUSE_SECONDS = 20
-BACKFILL_INITIAL_DELAY_SECONDS = 45
+BACKFILL_INITIAL_DELAY_SECONDS = 60
 BACKFILL_RETRY_SECONDS = 6 * 60 * 60
-BACKFILL_GENERATION_RETRY_SECONDS = 30
+BACKFILL_GENERATION_RETRY_SECONDS = 60
+BITSTAMP_OHLC_HOSTS = {"bitstamp.net", "www.bitstamp.net"}
 
 
-def _utc_stamp(value: str) -> datetime | None:
+def _utc_stamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
+        if text.isdigit():
+            return datetime.fromtimestamp(int(text), tz=timezone.utc)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError, OSError, OverflowError):
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -59,6 +72,94 @@ def _utc_stamp(value: str) -> datetime | None:
 def _bucket(stamp: datetime) -> str:
     minute = (stamp.minute // BACKFILL_INTERVAL_MINUTES) * BACKFILL_INTERVAL_MINUTES
     return stamp.replace(minute=minute, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+
+def _validated_bitstamp_redirect(current_url: str, location: str | None) -> str:
+    """Keep redirects on Bitstamp HTTPS OHLC endpoints only."""
+    if not location:
+        raise ValueError("Bitstamp OHLC redirect did not include Location")
+    candidate = urljoin(current_url, location)
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https" or host not in BITSTAMP_OHLC_HOSTS:
+        raise ValueError(f"Blocked unsafe Bitstamp OHLC redirect to {host or 'unknown host'}")
+    if not parsed.path.startswith("/api/v2/ohlc/"):
+        raise ValueError("Blocked Bitstamp redirect outside the OHLC API")
+    return candidate
+
+
+async def _fetch_bitstamp_5m_page(
+    hass: HomeAssistant,
+    *,
+    currency: str,
+    proxy_url: str,
+    end_timestamp: int,
+) -> dict[str, float]:
+    """Fetch at most 1,000 exact five-minute closes through Tor.
+
+    Bitstamp's public OHLC API documents step=300, limit<=1000 and an ``end``
+    Unix timestamp. Paging backwards with ``end`` therefore does not require an
+    account, API key or any user-specific request data.
+    """
+    market = f"btc{currency.lower()}"
+    target_url = f"https://www.bitstamp.net/api/v2/ohlc/{market}/"
+    request_url = target_url
+    params: dict[str, Any] | None = {
+        "step": BACKFILL_INTERVAL_MINUTES * 60,
+        "limit": BACKFILL_PAGE_LIMIT,
+        "end": int(end_timestamp),
+        "exclude_current_candle": "true",
+    }
+    payload: Any = None
+    async with async_routed_session(
+        hass, target_url=target_url, proxy_url=proxy_url
+    ) as (session, request_kwargs):
+        async with asyncio.timeout(45):
+            for _hop in range(3):
+                response = await session.get(
+                    request_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "User-Agent": "BitcoinStackTracker/0.21",
+                    },
+                    allow_redirects=False,
+                    **request_kwargs,
+                )
+                if response.status in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("Location")
+                    response.release()
+                    request_url = _validated_bitstamp_redirect(request_url, location)
+                    params = None if urlparse(request_url).query else {
+                        "step": BACKFILL_INTERVAL_MINUTES * 60,
+                        "limit": BACKFILL_PAGE_LIMIT,
+                        "end": int(end_timestamp),
+                        "exclude_current_candle": "true",
+                    }
+                    continue
+                response.raise_for_status()
+                payload = await async_json_limited(response)
+                break
+            else:
+                raise ValueError("Too many Bitstamp OHLC redirects")
+
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    rows = data.get("ohlc", []) if isinstance(data, dict) else []
+    result: dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stamp = _utc_stamp(row.get("timestamp"))
+        try:
+            price = float(row.get("close"))
+        except (TypeError, ValueError):
+            continue
+        if stamp is None or price <= 0:
+            continue
+        result[stamp.isoformat()] = price
+    if not result:
+        raise ValueError("Bitstamp returned no usable five-minute OHLC values")
+    return result
 
 
 def _score_batch(
@@ -100,15 +201,32 @@ def _score_batch(
     return points
 
 
+def _runtime(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
+    value = hass.data.get(DOMAIN, {}).get(entry_id)
+    return value if isinstance(value, dict) else None
+
+
 def _set_status(hass: HomeAssistant, entry_id: str, **values: Any) -> None:
-    runtime = hass.data.get(DOMAIN, {}).get(entry_id)
-    if not isinstance(runtime, dict):
+    runtime = _runtime(hass, entry_id)
+    if runtime is None:
         return
     current = runtime.get("market_assessment_backfill_status")
     status = dict(current) if isinstance(current, dict) else {}
     status.update(values)
     status["updated_at"] = datetime.now(timezone.utc).isoformat()
     runtime["market_assessment_backfill_status"] = status
+
+
+async def _sleep_while_loaded(hass: HomeAssistant, entry_id: str, seconds: float) -> bool:
+    """Sleep in short slices so an unloaded integration leaves no orphan task."""
+    remaining = max(0.0, float(seconds))
+    while remaining > 0:
+        if _runtime(hass, entry_id) is None:
+            return False
+        step = min(30.0, remaining)
+        await asyncio.sleep(step)
+        remaining -= step
+    return _runtime(hass, entry_id) is not None
 
 
 def _current_generation(entry: ConfigEntry) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
@@ -130,7 +248,9 @@ async def _backfill_once(
 ) -> bool:
     signature, currency, scoring_settings, settings = _current_generation(entry)
     if not bool(settings.get(CONF_HISTORY_ENABLED, True)):
-        _set_status(hass, entry.entry_id, state="disabled", complete=False)
+        _set_status(
+            hass, entry.entry_id, state="disabled", complete=False, signature=signature
+        )
         return False
 
     history = history_store.data.get("prices", {}).get(currency, {})
@@ -141,6 +261,7 @@ async def _backfill_once(
             state="waiting_for_daily_history",
             complete=False,
             currency=currency,
+            signature=signature,
         )
         return False
 
@@ -155,42 +276,36 @@ async def _backfill_once(
         entry.entry_id,
         state="downloading",
         complete=False,
+        signature=signature,
         currency=currency,
         interval_minutes=BACKFILL_INTERVAL_MINUTES,
         retention_days=BACKFILL_DAYS,
         source="Bitstamp",
         network_route="Tor only",
         downloaded_points=0,
+        error=None,
     )
 
     for page_index in range(BACKFILL_MAX_PAGES):
-        page = await _fetch_bitstamp_ohlc_samples(
+        if _runtime(hass, entry.entry_id) is None:
+            return True
+        page = await _fetch_bitstamp_5m_page(
             hass,
-            currency,
-            proxy_url,
-            BACKFILL_INTERVAL_MINUTES,
+            currency=currency,
+            proxy_url=proxy_url,
             end_timestamp=cursor,
-            limit=BACKFILL_PAGE_LIMIT,
-            exclude_current_candle=True,
         )
-        page_rows: list[tuple[datetime, str, float]] = []
+        page_stamps: list[datetime] = []
         for raw_stamp, raw_price in page.items():
             stamp = _utc_stamp(raw_stamp)
-            try:
-                price = float(raw_price)
-            except (TypeError, ValueError):
+            if stamp is None:
                 continue
-            if stamp is None or price <= 0:
-                continue
+            page_stamps.append(stamp)
             if stamp >= cutoff:
-                page_rows.append((stamp, raw_stamp, price))
-        if page_rows:
-            for _stamp, raw_stamp, price in page_rows:
-                candles[raw_stamp] = price
-        all_page_stamps = [stamp for raw in page for stamp in [_utc_stamp(raw)] if stamp is not None]
-        if not all_page_stamps:
+                candles[stamp.isoformat()] = float(raw_price)
+        if not page_stamps:
             break
-        oldest = min(all_page_stamps)
+        oldest = min(page_stamps)
         _set_status(
             hass,
             entry.entry_id,
@@ -203,14 +318,20 @@ async def _backfill_once(
         if next_cursor >= cursor:
             break
         cursor = next_cursor
-        await asyncio.sleep(BACKFILL_NETWORK_PAUSE_SECONDS)
+        if not await _sleep_while_loaded(
+            hass, entry.entry_id, BACKFILL_NETWORK_PAUSE_SECONDS
+        ):
+            return True
 
-    ordered: list[tuple[datetime, float]] = []
-    for raw_stamp, price in candles.items():
-        stamp = _utc_stamp(raw_stamp)
-        if stamp is not None and cutoff <= stamp <= now:
-            ordered.append((stamp, float(price)))
-    ordered.sort(key=lambda item: item[0])
+    ordered = sorted(
+        (
+            (stamp, float(price))
+            for raw_stamp, price in candles.items()
+            for stamp in [_utc_stamp(raw_stamp)]
+            if stamp is not None and cutoff <= stamp <= now
+        ),
+        key=lambda item: item[0],
+    )
     if not ordered:
         raise ValueError("Bitstamp returned no usable five-minute candles for backfill")
 
@@ -228,6 +349,7 @@ async def _backfill_once(
         entry.entry_id,
         state="scoring" if missing else "complete",
         complete=not missing,
+        signature=signature,
         source_points=total,
         completed_points=completed,
         remaining_points=len(missing),
@@ -236,6 +358,8 @@ async def _backfill_once(
         return True
 
     for offset in range(0, len(missing), BACKFILL_SCORE_BATCH_POINTS):
+        if _runtime(hass, entry.entry_id) is None:
+            return True
         latest_signature, latest_currency, _latest_scoring, _latest_settings = _current_generation(entry)
         if latest_signature != signature or latest_currency != currency:
             _set_status(
@@ -243,6 +367,7 @@ async def _backfill_once(
                 entry.entry_id,
                 state="generation_changed",
                 complete=False,
+                signature=latest_signature,
             )
             return False
 
@@ -258,23 +383,27 @@ async def _backfill_once(
         )
         added = await cache.async_merge_points(signature, points)
         completed += added
-        remaining = max(0, total - completed)
         _set_status(
             hass,
             entry.entry_id,
             state="scoring",
             complete=False,
+            signature=signature,
             completed_points=completed,
-            remaining_points=remaining,
+            remaining_points=max(0, total - completed),
         )
         if offset + BACKFILL_SCORE_BATCH_POINTS < len(missing):
-            await asyncio.sleep(BACKFILL_SCORE_PAUSE_SECONDS)
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_SCORE_PAUSE_SECONDS
+            ):
+                return True
 
     _set_status(
         hass,
         entry.entry_id,
         state="complete",
         complete=True,
+        signature=signature,
         completed_points=total,
         remaining_points=0,
     )
@@ -288,15 +417,19 @@ async def async_market_assessment_backfill_loop(
     cache: MarketAssessmentIntradayCache,
 ) -> None:
     """Run/retry the public-data backfill until the current generation is complete."""
-    await asyncio.sleep(BACKFILL_INITIAL_DELAY_SECONDS)
-    while True:
+    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
+        return
+    while _runtime(hass, entry.entry_id) is not None:
         try:
             if await _backfill_once(hass, entry, history_store, cache):
                 return
-            await asyncio.sleep(BACKFILL_GENERATION_RETRY_SECONDS)
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_GENERATION_RETRY_SECONDS
+            ):
+                return
         except asyncio.CancelledError:
             raise
-        except Exception as err:  # display-only background work must not break setup
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
             _LOGGER.warning("Market-assessment intraday backfill paused: %s", err)
             _set_status(
                 hass,
@@ -305,4 +438,7 @@ async def async_market_assessment_backfill_loop(
                 complete=False,
                 error=str(err)[:240],
             )
-            await asyncio.sleep(BACKFILL_RETRY_SECONDS)
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_RETRY_SECONDS
+            ):
+                return
