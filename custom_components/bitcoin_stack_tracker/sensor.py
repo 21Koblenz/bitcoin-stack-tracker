@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -15,11 +17,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
 from .const import (
     ALL_DEPOTS,
     BRAND_NAME,
-    CONF_BUY_OPPORTUNITY_SETTINGS,
     CONF_NAME,
     DOMAIN,
     VERSION,
@@ -28,7 +28,10 @@ from .coordinator import BitcoinPriceCoordinator
 from .fifo import currency_summary_from_result
 from .helpers import configured_currencies, effective_settings
 from .models import SATOSHIS_PER_BTC, decimal_value, goal_reached_at, slugify
+from .market_assessment_runtime import async_market_assessment
 from .storage import BitcoinHistoryStore, BitcoinLedgerStore
+
+_LOGGER = logging.getLogger(__name__)
 
 GLOBAL_METRICS = [
     "stack_btc", "stack_sats", "purchase_count", "sale_count", "known_cost_btc",
@@ -502,7 +505,12 @@ class BitcoinGoalSensor(BitcoinBaseSensor):
 
 
 class BitcoinBuyOpportunitySensor(CoordinatorEntity[BitcoinPriceCoordinator], SensorEntity):
-    """Public price-history-only Bitcoin market-assessment score, always exposed in HA."""
+    """Public price-history-only Bitcoin market-assessment score.
+
+    The full model is shared with the native panel through one bounded per-entry
+    runtime cache. Coordinator ticks therefore do not rebuild years of history
+    every minute, and every heavy calculation stays in Home Assistant's executor.
+    """
 
     _attr_has_entity_name = True
     _attr_translation_key = "buy_opportunity"
@@ -527,67 +535,61 @@ class BitcoinBuyOpportunitySensor(CoordinatorEntity[BitcoinPriceCoordinator], Se
             model="Only Bitcoin · local portfolio tracker",
             sw_version=VERSION,
         )
-        self._buy_opportunity_cache_key: tuple[Any, ...] | None = None
-        self._buy_opportunity_cache: dict[str, Any] | None = None
+        self._buy_opportunity_cache: dict[str, Any] = {}
+        self._buy_opportunity_calculated_at: str | None = None
+        self._buy_opportunity_price_source = "live"
+        self._buy_opportunity_refresh_task: asyncio.Task[Any] | None = None
 
-    def _result(self) -> dict[str, Any]:
-        current_settings = effective_settings(self.entry)
-        currencies = configured_currencies(current_settings)
-        scoring_settings = normalize_buy_opportunity_settings(
-            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+    async def _async_refresh_result(self, *, write_state: bool = True) -> None:
+        try:
+            snapshot = await async_market_assessment(
+                self.hass, self.entry, self.coordinator, self.history_storage
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # keep coordinator callbacks from leaking task exceptions
+            _LOGGER.warning("Bitcoin market assessment refresh failed: %s: %s", type(err).__name__, err)
+            return
+        calculated_at = str(snapshot.get("calculated_at") or "") or None
+        changed = calculated_at != self._buy_opportunity_calculated_at
+        self._buy_opportunity_cache = snapshot.get("result") or {}
+        self._buy_opportunity_calculated_at = calculated_at
+        self._buy_opportunity_price_source = str(snapshot.get("price_source") or "live")
+        # A 60-second coordinator tick can now hit the 5-minute model cache.
+        # Do not write an identical HA state/attribute set on those cache hits.
+        if write_state and changed:
+            self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._async_refresh_result(write_state=False)
+
+    def _handle_coordinator_update(self) -> None:
+        if self._buy_opportunity_refresh_task is not None and not self._buy_opportunity_refresh_task.done():
+            return
+        self._buy_opportunity_refresh_task = self.hass.async_create_task(
+            self._async_refresh_result(),
+            "Bitcoin Stack Tracker market assessment refresh",
         )
-        currency = scoring_settings["currency"]
-        prices = (self.coordinator.data or {}).get("prices", {})
-        current_price = prices.get(currency)
-        history = self.history_storage.data.get("prices", {}).get(currency, {})
-        price_source = "live"
-        # Keep the public 0-100 market score available across HA restarts even
-        # when the first live-price request is still warming up. The most recent
-        # locally cached daily market price is public data and is replaced
-        # automatically as soon as the live coordinator has a fresh value.
-        if current_price is None and isinstance(history, dict) and history:
-            for day in sorted(history, reverse=True):
-                try:
-                    candidate = float(history[day])
-                except (TypeError, ValueError):
-                    continue
-                if candidate > 0:
-                    current_price = candidate
-                    price_source = "history_fallback"
-                    break
-        today = dt_util.utcnow().date()
-        history_last_sync = self.history_storage.data.get("last_sync")
-        latest_history_day = max(history, default=None) if isinstance(history, dict) else None
-        cache_key = (
-            currency,
-            current_price,
-            price_source,
-            history_last_sync,
-            len(history) if isinstance(history, dict) else 0,
-            latest_history_day,
-            repr(scoring_settings),
-            today,
-        )
-        if cache_key == self._buy_opportunity_cache_key and self._buy_opportunity_cache is not None:
-            return self._buy_opportunity_cache
-        result = calculate_buy_opportunity(
-            history,
-            current_price,
-            currency=currency,
-            settings=scoring_settings,
-            as_of_day=today,
-        )
-        self._buy_opportunity_cache_key = cache_key
-        self._buy_opportunity_cache = result
-        return result
+
+    async def async_will_remove_from_hass(self) -> None:
+        task = self._buy_opportunity_refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._buy_opportunity_refresh_task = None
+        await super().async_will_remove_from_hass()
 
     @property
     def available(self) -> bool:
-        return self._result().get("score") is not None
+        return self._buy_opportunity_cache.get("score") is not None
 
     @property
     def native_value(self) -> float | None:
-        result = self._result()
+        result = self._buy_opportunity_cache
         value = result.get("score_raw", result.get("score"))
         if value is None:
             return None
@@ -595,25 +597,36 @@ class BitcoinBuyOpportunitySensor(CoordinatorEntity[BitcoinPriceCoordinator], Se
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        result = self._result()
-        current_settings = effective_settings(self.entry)
-        currencies = configured_currencies(current_settings)
-        scoring_settings = normalize_buy_opportunity_settings(
-            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
-        )
-        currency = scoring_settings["currency"]
-        live_price = (self.coordinator.data or {}).get("prices", {}).get(currency)
-        # The complete diagnostic breakdown is intentionally public: it contains
-        # market prices and derived statistics only, never ledger/portfolio data.
-        attrs = {key: value for key, value in result.items() if key != "score"}
-        attrs.update({
+        """Expose automation-friendly diagnostics without recorder-heavy model dumps."""
+        result = self._buy_opportunity_cache
+        turning = result.get("turning_points") if isinstance(result.get("turning_points"), dict) else {}
+        data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
+        component_scores = result.get("component_scores") if isinstance(result.get("component_scores"), dict) else {}
+        return {
+            "rating": result.get("rating"),
+            "currency": result.get("currency"),
+            "current_price": result.get("current_price"),
+            "as_of_day": result.get("as_of_day"),
+            "calculated_at": self._buy_opportunity_calculated_at,
+            "score_version": result.get("score_version"),
+            "scoring_mode": result.get("scoring_mode"),
+            "profile": result.get("profile"),
+            "component_scores": component_scores,
+            "market_phase": turning.get("market_phase"),
+            "bottom_zone": turning.get("bottom_zone"),
+            "bottom_confirmation": turning.get("bottom_confirmation"),
+            "top_zone": turning.get("top_zone"),
+            "top_confirmation": turning.get("top_confirmation"),
+            "history_points": data_quality.get("history_points"),
+            "weight_coverage_pct": data_quality.get("weight_coverage_pct"),
+            "look_ahead": data_quality.get("look_ahead"),
             "score_min": 0,
             "score_max": 100,
             "range": "0-100",
-            "live_price_available": live_price is not None,
-            "price_source": "live" if live_price is not None else "local_history_fallback",
-        })
-        return attrs
+            "refresh_interval_seconds": 300,
+            "price_source": self._buy_opportunity_price_source,
+            "assessment_notice": result.get("assessment_notice"),
+        }
 
 
 class BitcoinHistoryStatusSensor(BitcoinBaseSensor):

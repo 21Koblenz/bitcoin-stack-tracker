@@ -4,10 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090a0d">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <meta name="referrer" content="no-referrer">
   <title>Bitcoin Stack Tracker · Einundzwanzig Koblenz</title>
-  <link rel="stylesheet" href="static/style.css?v=0.21.0.12">
+  <link rel="stylesheet" href="static/style.css?v=0.21.0.13&r=4">
 </head>
 <body>
   <div class="topography" aria-hidden="true"></div>
@@ -49,6 +52,7 @@
       <p class="storage-note" data-i18n="unlockHardened">Nativer Core-Geheimnis-Pfad: Master- und Backup-Passwörter gehen direkt vom Browser an Home Assistant Core. Das Tor-/Netzwerk-Add-on erhält keine Tresor-Passwörter und keine Portfolio-Dateien.</p>
       <p class="danger-note" data-i18n="passwordLoss">Das Passwort wird nicht gespeichert.</p>
     </div>
+    <section id="lockedWalletWatch" class="locked-wallet-watch hidden" aria-live="polite"></section>
   </section>
 
   <main id="app" class="app-shell hidden">
@@ -451,8 +455,9 @@
         <form id="walletWatchSettingsForm">
           <div class="form-grid">
             <label><span>Sats Sentinel aktiv</span><input id="walletWatchEnabled" type="checkbox"></label>
+            <label><span>Sentinel bei gesperrtem Tresor anzeigen</span><input id="walletWatchShowWhenLocked" type="checkbox"><small>Standard: aus. Betrifft nur diese Browser-/Geräteanzeige. Bei gesperrtem Haupttresor bleiben Wallets, Adressen, Bestände und Abfragequelle dann vollständig verborgen. Die 24/7-Überwachung und alle aktivierten Benachrichtigungen laufen unabhängig davon weiter.</small></label>
             <label><span>Prüfintervall</span><select id="walletWatchInterval"><option value="30">30 Sekunden</option><option value="60">60 Sekunden</option><option value="120">2 Minuten</option><option value="300">5 Minuten</option></select><small>Fulcrum/electrs: im kurzen Takt nur Status-Hash. Balance/UTXO/History werden nur bei Änderung bzw. spätestens alle 15 Minuten abgeglichen.</small></label>
-            <label><span>Abfragequelle</span><select id="walletWatchQuerySource"><option value="auto">Automatisch</option><option value="fulcrum">Fulcrum / Electrum</option><option value="electrs">electrs / Electrum</option><option value="mempool_own">Eigene Mempool-Instanz</option><option value="mempool_public">Öffentliche Mempool-Instanz · Tor</option></select><small>Explizite Auswahl = Fail Closed. Fällt diese Quelle aus, wird nicht auf eine andere Quelle gewechselt.</small></label>
+            <label><span>Abfragequelle</span><select id="walletWatchQuerySource"><option value="auto">Automatisch · Electrum zuerst</option><option value="fulcrum">Fulcrum / Electrum</option><option value="electrs">electrs / Electrum</option><option value="mempool_own">Eigene Mempool-Instanz</option><option value="mempool_public">Öffentliche Mempool-Instanz · Tor</option></select><small>Automatisch: Ist ein Fulcrum/electrs-Host gespeichert, wird ausschließlich dieser verwendet. Nur ohne gespeicherten Electrum-Host wird die eigene Mempool-Instanz gewählt. Explizite Auswahl = Fail Closed.</small></label>
             <label><span>Konfigurierte öffentliche Mempool-Quelle über Tor nutzen</span><input id="walletWatchPublicTor" type="checkbox"></label>
             <div id="walletWatchElectrumSettings" class="span-2 sats-sentinel-source-settings">
               <div class="form-grid">
@@ -466,7 +471,7 @@
               <p class="storage-note">Lokale/private Fulcrum- oder electrs-Ziele werden direkt angesprochen. .onion und öffentliche Hostnamen laufen ausschließlich über den integrierten Tor-SOCKS5-Proxy mit Remote-DNS.</p>
             </div>
             <label><span>Persistente HA-Meldung</span><input id="walletWatchPersistent" type="checkbox"></label>
-            <label><span>Benachrichtigungsdetails</span><select id="walletWatchDetail"><option value="discreet">Diskret</option><option value="normal">Normal</option><option value="detailed">Detailliert</option></select></label>
+            <label><span>Standard für neue Wallets</span><select id="walletWatchDetail"><option value="discreet">Diskret</option><option value="normal">Normal</option><option value="detailed">Detailliert</option></select><small><strong>Diskret · keine Walletdaten</strong> · Normal · reduzierte Details · Detailliert · vollständige Bewegungsdetails. Wird nur beim Anlegen einer neuen Wallet/Adresse übernommen. Danach entscheidet ausschließlich die Einstellung der einzelnen Wallet.</small></label>
             <label><span>Journal anzeigen</span><select id="walletWatchLogMode"><option value="days">Nach Zeitraum</option><option value="count">Nach Anzahl</option><option value="unlimited">Unbegrenzt</option></select></label>
             <label id="walletWatchLogDaysWrap"><span>Letzte Tage anzeigen</span><input id="walletWatchLogDays" type="number" min="1" max="36500" value="30"></label>
             <label id="walletWatchLogCountWrap"><span>Letzte Einträge anzeigen</span><input id="walletWatchLogCount" type="number" min="1" max="500" value="100"></label>
@@ -478,13 +483,13 @@
         </form>
         <div class="analysis-head"><span class="kicker">MULTI CHANNEL</span><h3>Weitere Benachrichtigungsziele</h3></div>
         <p class="storage-note">Mehrere Ziele können parallel verwendet werden. Lokale Ziele gehen direkt im LAN; öffentliche Ziele und Onion-Dienste ausschließlich über Tor. Kein Clearnet-Fallback.</p>
+        <p class="storage-note"><strong>Wallet hat Vorrang:</strong> Bei Wallet-Alarmen bestimmt immer die Einstellung der jeweiligen Wallet oder Adresse (<em>Diskret · Normal · Detailliert</em>) den Inhalt. Die Server-Einstellung ist nur die Vorauswahl beim erstmaligen Anlegen einer neuen Wallet.</p>
         <form id="walletWatchNotifyTargetForm">
           <div class="form-grid">
             <label><span>Typ</span><select name="kind"><option value="ntfy">ntfy</option><option value="webhook">Webhook</option></select></label>
             <label><span>Name</span><input name="label" maxlength="120" placeholder="Privates ntfy"></label>
             <label class="span-2"><span>Ziel-URL</span><input name="url" type="url" required maxlength="2048" placeholder="https://ntfy.example/bitcoin-watch"></label>
             <label class="span-2"><span>Bearer-Token (optional)</span><input name="token" type="password" maxlength="1024" autocomplete="new-password" placeholder="wird verschlüsselt gespeichert"></label>
-            <label><span>Inhalt</span><select name="detail"><option value="inherit">Globale Einstellung</option><option value="discreet">Diskret · keine Walletdaten</option><option value="normal">Normal</option><option value="detailed">Detailliert</option></select></label>
             <label><span>TLS prüfen</span><input name="verify_ssl" type="checkbox" checked></label>
           </div>
           <button class="secondary" type="submit">Benachrichtigungsziel hinzufügen</button>
@@ -493,19 +498,20 @@
         <p class="danger-note">Für öffentliche ntfy/Webhook-Ziele gilt Tor-only. TLS-Prüfung darf nur bei lokalen oder Onion-Zielen abgeschaltet werden. Zugangstoken werden im verschlüsselten Monitor-Cache benötigt, damit Benachrichtigungen auch bei gesperrtem Tresor nach einem Neustart funktionieren.</p>
       </section>
       <section class="panel" data-sentinel-panel="targets" data-sentinel-default="open">
-        <div class="panel-head"><div><span class="kicker">WATCH TARGETS</span><h2>Überwachte Wallets & Adressen</h2></div></div>
+        <div class="panel-head"><div><span class="kicker">WATCH TARGETS</span><h2>Überwachte Wallets & Adressen</h2></div><div class="panel-actions"><button id="walletWatchCollapseAll" class="ghost compact" type="button">Alle einklappen</button></div></div>
         <form id="walletWatchAddForm">
           <input name="edit_id" type="hidden" value="">
           <div class="form-grid">
             <label><span>Name</span><input name="label" maxlength="120" placeholder="Cold Storage"></label>
             <label><span>Kategorie</span><select name="category"><option value="own">Eigene Adresse / Wallet</option><option value="exchange">Exchange</option><option value="interesting">Interessant</option><option value="incident">Hacker / Incident</option><option value="other" selected>Sonstige</option></select></label>
             <label><span>Typ</span><select name="kind"><option value="address">Einzelne Adresse</option><option value="xpub">XPUB / YPUB / ZPUB</option><option value="descriptor">Output Descriptor</option></select></label>
-            <label class="span-2"><span>Adresse / XPUB / Descriptor</span><textarea name="value" rows="3" required spellcheck="false"></textarea><small id="walletWatchDetectedKind" class="storage-note" aria-live="polite"></small></label>
-            <label class="wallet-watch-derived"><span>Receive Gap-Limit</span><input name="receive_count" type="number" min="0" max="20" value="2"><small>Alle benutzten Receive-Adressen bleiben überwacht. Gestoppt wird erst nach so vielen aufeinanderfolgenden unbenutzten Receive-Adressen.</small></label>
-            <label class="wallet-watch-derived"><span>Change Gap-Limit</span><input name="change_count" type="number" min="0" max="20" value="2"><small>Alle benutzten Change-Adressen bleiben überwacht. Gestoppt wird erst nach so vielen aufeinanderfolgenden unbenutzten Change-Adressen.</small></label>
+            <label class="span-2 wallet-watch-scan-field"><span>Adresse / XPUB / Descriptor</span><div class="wallet-watch-scan-input"><textarea name="value" rows="3" required spellcheck="false"></textarea><button id="walletWatchQrScan" class="secondary wallet-watch-qr-scan" type="button" title="QR-Code mit der Kamera scannen" aria-label="Adresse, XPUB oder Descriptor per QR-Code scannen"><span aria-hidden="true">▣</span> QR scannen</button></div><small id="walletWatchDetectedKind" class="storage-note" aria-live="polite"></small><small class="storage-note">QR-Scan läuft lokal auf diesem Gerät. Bitcoin-URIs werden auf die reine Adresse reduziert. Descriptoren mit /&lt;0;1&gt;/* werden als Receive /0/* + Change /1/* unterstützt.</small></label>
+            <label class="wallet-watch-xpub-format hidden"><span>Adressformat bei XPUB</span><select name="address_type"><option value="auto" selected>Automatisch aus Historie erkennen</option><option value="p2wpkh">Native SegWit · bc1q · BIP84</option><option value="p2sh-p2wpkh">Nested SegWit · 3… · BIP49</option><option value="p2tr">Taproot · bc1p · BIP86</option><option value="p2pkh">Legacy · 1… · BIP44</option></select><small>Nur ein nacktes xpub ist mehrdeutig. YPUB/ZPUB und Descriptoren legen das Format bereits fest. Auto prüft die historische Nutzung über Fulcrum/electrs.</small></label><label class="wallet-watch-derived"><span>Receive Gap-Limit</span><input name="receive_count" type="number" min="0" max="20" value="20"><small>Alle jemals benutzten Receive-Adressen bleiben überwacht – auch bei 0 BTC aktuellem Bestand. Gestoppt wird erst nach so vielen aufeinanderfolgenden historisch unbenutzten Receive-Adressen.</small></label>
+            <label class="wallet-watch-derived"><span>Change Gap-Limit</span><input name="change_count" type="number" min="0" max="20" value="20"><small>Alle jemals benutzten Change-Adressen bleiben überwacht – auch bei 0 BTC aktuellem Bestand. Gestoppt wird erst nach so vielen aufeinanderfolgenden historisch unbenutzten Change-Adressen.</small></label>
             <label><span>Letzte Transaktionen laden</span><select name="history_limit"><option value="5">5 TX</option><option value="10" selected>10 TX</option><option value="25">25 TX</option><option value="50">50 TX</option><option value="100">100 TX</option><option value="0">Unbegrenzt · 25 pro Seite</option></select><small>Nur Übersicht. Alte TX lösen keinen Alarm aus. „Unbegrenzt“ lädt seitenweise, nicht alles gleichzeitig in den RAM.</small></label>
             <label><span>Mindestbetrag für Alarm</span><input name="min_notify_amount" type="number" min="0" step="any" value="0"></label>
             <label><span>Einheit Mindestbetrag</span><select name="min_notify_unit"><option value="sats">sats</option><option value="btc">BTC</option></select></label>
+            <label><span>Benachrichtigungsdetails dieser Wallet</span><select name="notification_detail"><option value="discreet">Diskret</option><option value="normal">Normal</option><option value="detailed">Detailliert</option></select><small>Diese Einstellung ist für diese Wallet maßgeblich. Der Server-Standard wird nur beim erstmaligen Anlegen übernommen.</small></label>
             <label class="span-2"><span>Notiz</span><textarea name="note" rows="2" maxlength="500" placeholder="z. B. Binance Hot Wallet / eigene Cold Storage"></textarea></label>
             <label><span>Eingänge alarmieren</span><input name="notify_incoming" type="checkbox" checked></label>
             <label><span>Ausgänge alarmieren</span><input name="notify_outgoing" type="checkbox" checked></label>
@@ -522,7 +528,7 @@
       <section class="panel" data-sentinel-panel="privacy" data-sentinel-default="collapsed">
         <div class="panel-head"><div><span class="kicker">SECURITY BOUNDARY</span><h2>Datenschutzstatus</h2></div></div>
         <div id="walletWatchPrivacy" class="sats-sentinel-card-grid sats-sentinel-privacy-grid"></div>
-        <p class="danger-note">Watch-only-Daten können keine Bitcoin ausgeben, verraten aber echte Bestände und Aktivität. XPUB/ZPUB/Descriptor werden deshalb ausschließlich im passwortverschlüsselten Haupttresor gespeichert. Für den 24/7-Hintergrundmonitor liegen nur konkret abgeleitete Adressen, Saldenstatus und das Sentinel-Journal im device-bound AES-256-GCM-Cache. Die historische TX-Übersicht wird nicht dauerhaft gespeichert.</p>
+        <p class="danger-note">Watch-only-Daten können keine Bitcoin ausgeben, verraten aber echte Bestände und Aktivität. XPUB/ZPUB/Descriptor/Adressen sind Watch-only-Material und werden zusätzlich im separaten device-bound AES-256-GCM-Sentinel-Tresor gespeichert, damit Wallets auch bei gesperrtem Portfolio-Tresor verwaltet werden können. Seeds, xprv/yprv/zprv und Private Keys werden niemals akzeptiert. Konkrete abgeleitete Adressen, Saldenstatus und das Sentinel-Journal liegen ebenfalls in diesem verschlüsselten Sentinel-Tresor. Die historische TX-Übersicht wird nicht dauerhaft gespeichert.</p>
       </section>
     </section>
 
@@ -680,7 +686,7 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="static/performance-math.js?v=0.21.0.12"></script>
-  <script src="static/app.js?v=0.21.0.12"></script>
+  <script src="static/performance-math.js?v=0.21.0.13"></script>
+  <script src="static/app.js?v=0.21.0.13&r=4"></script>
 </body>
 </html>

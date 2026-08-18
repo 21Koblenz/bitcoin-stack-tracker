@@ -64,8 +64,8 @@ from .buy_opportunity import (
     DEFAULT_SIGNAL_WEIGHTS,
     DEFAULT_TURNING_POINT_WEIGHTS,
     PROFILE_WEIGHTS,
-    calculate_buy_opportunity,
     calculate_buy_opportunity_history,
+    calculate_buy_opportunity_history_scores,
     normalize_buy_opportunity_settings,
 )
 from .coordinator import BitcoinPriceCoordinator
@@ -91,6 +91,15 @@ from .migrations import LATEST_CONFIG_VERSION, migrate_config_data
 from .models import amount_to_btc, btc_string, decimal_value, goal_reached_at, money_string
 from .reference_price import historical_reference_price
 from .metrics import build_dashboard_metrics
+from .market_assessment_runtime import async_market_assessment, invalidate_market_assessment_cache
+from .market_assessment_intraday_cache import (
+    MarketAssessmentIntradayCache,
+    market_assessment_intraday_signature,
+)
+from .market_assessment_history_cache import (
+    MarketAssessmentHistoryCache,
+    market_assessment_history_signature,
+)
 from .network import async_routed_session, async_tor_gateway_host, mempool_source_uses_tor, network_security_snapshot, rotate_tor_isolation, tor_proxy_from_settings
 from .rate_limit import OperationRateLimiter
 from .csv_import import MAX_IMPORT_BYTES, parse_transaction_upload
@@ -1136,7 +1145,7 @@ async def _async_unlock_for_requester(
         if isinstance(watch_manager, WalletWatchManager):
             async def _restore_wallet_watch_after_unlock() -> None:
                 try:
-                    await watch_manager.async_apply_full_config(watch_config, poll=False)
+                    await watch_manager.async_restore_full_config(watch_config, poll=False)
                 except Exception as err:  # recovery must never break vault unlock
                     _LOGGER.warning("Sats Sentinel restart recovery after vault unlock failed: %s", err)
 
@@ -1165,6 +1174,57 @@ async def _async_unlock_for_requester(
 
 _HISTORY_AUTO_CHECK_INTERVAL = timedelta(hours=6)
 _HISTORY_COMPLETE_SYNC_INTERVAL = timedelta(hours=20)
+
+
+async def _async_warm_market_assessment_history_scores(
+    hass: HomeAssistant, entry: ConfigEntry, runtime: dict[str, Any]
+) -> str:
+    """Persist the causal score series after durable daily history changes.
+
+    Intraday coordinator quotes are intentionally not part of this path. The
+    history signature is derived only from the durable daily price series plus
+    model inputs, so an unchanged history is a cheap cache hit while a newly
+    added/corrected daily value triggers exactly one executor rebuild.
+    """
+    current_settings = effective_settings(entry)
+    currencies = configured_currencies(current_settings)
+    market_settings = normalize_buy_opportunity_settings(
+        current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+    )
+    currency = market_settings["currency"]
+    history_prices = runtime["history_storage"].data.get("prices", {}).get(currency, {})
+    signature = await hass.async_add_executor_job(partial(
+        market_assessment_history_signature,
+        history_prices,
+        currency=currency,
+        settings=market_settings,
+    ))
+    cache: MarketAssessmentHistoryCache = runtime["market_assessment_history_cache"]
+    if await cache.async_get_scores(signature) is not None:
+        runtime["market_assessment_history_warm_status"] = "persistent-hit"
+        return "persistent-hit"
+
+    await cache.async_prepare(signature)
+    compute_lock = runtime.setdefault("_market_assessment_history_compute_lock", asyncio.Lock())
+    async with compute_lock:
+        # A panel request may have filled the same generation while this warm-up
+        # was waiting for the single history-model CPU slot.
+        if await cache.async_get_scores(signature) is not None:
+            runtime["market_assessment_history_warm_status"] = "persistent-hit"
+            return "persistent-hit"
+        score_cache = await hass.async_add_executor_job(partial(
+            calculate_buy_opportunity_history_scores,
+            history_prices,
+            None,
+            currency=currency,
+            settings=market_settings,
+            as_of_day=dt_util.utcnow().date(),
+        ))
+        stored = await cache.async_put_scores(signature, score_cache)
+        status = "rebuilt" if stored else "stale-superseded"
+        runtime["market_assessment_history_warm_status"] = status
+        runtime["market_assessment_history_warmed_at"] = dt_util.utcnow().isoformat()
+        return status
 
 
 def _history_bootstrap_incomplete(entry: ConfigEntry, runtime: dict[str, Any]) -> bool:
@@ -1234,6 +1294,13 @@ def _configure_history_timer(
                 "completed-with-notes" if result.get("errors") else "success"
             )
             runtime["history_auto_last_success"] = dt_util.utcnow().isoformat()
+            try:
+                runtime["history_auto_market_cache"] = await _async_warm_market_assessment_history_scores(
+                    hass, entry, runtime
+                )
+            except Exception:
+                runtime["history_auto_market_cache"] = "warm-failed"
+                _LOGGER.exception("Automatic market-assessment history cache warm-up failed")
             _notify_entities(runtime)
         except Exception:
             runtime["history_auto_last_result"] = "failed"
@@ -1650,6 +1717,7 @@ async def _async_halving_markers(
 _PANEL_STATE_VERSION = 1
 _PANEL_STATE_KEY = f"{DOMAIN}.panel_state"
 _PANEL_RPC_MAX_BYTES = 36 * 1024 * 1024
+_PANEL_TOR_STATUS_CACHE_SECONDS = 30.0
 _TECHNICAL_LOG_MAX_ENTRIES = 500
 _TOR_ROTATION_INTERVALS = {10, 15, 30, 60, 120, 180, 360, 720, 1440}
 _TOR_ROTATION_ENTRY_CHECK = timedelta(seconds=30)
@@ -1833,7 +1901,7 @@ def _tor_rotation_settings_view(settings: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-async def _async_expire_vault_sessions(hass: HomeAssistant, _now: Any = None) -> None:
+async def _async_expire_vault_sessions(hass: HomeAssistant) -> None:
     """Enforce password-vault auto-lock in Core, even after the browser closes.
 
     Browser timers remain a UX convenience, but this Core timer is the security
@@ -2085,6 +2153,19 @@ async def _panel_tor_exit_ip(hass: HomeAssistant, *, force: bool = False) -> str
 
 async def _panel_tor_status(hass: HomeAssistant, *, force: bool = False) -> dict[str, Any]:
     """Return Core route status plus independently reported gateway transport state."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    now_monotonic = monotonic()
+    cache = domain_data.get("_panel_tor_status_cache")
+    if not force and isinstance(cache, dict):
+        cached_at = float(cache.get("monotonic_at") or 0.0)
+        cached_value = cache.get("value")
+        if (
+            cached_at > 0
+            and now_monotonic - cached_at < _PANEL_TOR_STATUS_CACHE_SECONDS
+            and isinstance(cached_value, dict)
+        ):
+            return deepcopy(cached_value)
+
     state = network_security_snapshot(hass)
     socks_connected = False
     socks_error: str | None = None
@@ -2135,7 +2216,7 @@ async def _panel_tor_status(hass: HomeAssistant, *, force: bool = False) -> dict
         "Tor gateway reported a non-Tor public socket" if leak else None
     )
     tor_exit_ip = await _panel_tor_exit_ip(hass, force=force) if connected else None
-    return {
+    result = {
         "killswitch_active": firewall,
         "killswitch_scope": "Tor-gateway nftables namespace + Core fail-closed route policy",
         "firewall_verified_from_core": bool(gateway),
@@ -2178,6 +2259,11 @@ async def _panel_tor_status(hass: HomeAssistant, *, force: bool = False) -> dict
         "tor_identity_generation": state.get("tor_identity_generation"),
         "tor_last_rotated_at": state.get("tor_last_rotated_at"),
     }
+    domain_data["_panel_tor_status_cache"] = {
+        "monotonic_at": monotonic(),
+        "value": deepcopy(result),
+    }
+    return result
 
 
 class BitcoinStackNativePanelRpcView(HomeAssistantView):
@@ -2543,8 +2629,15 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 runtime["security"].require_unlocked(requester)
             except (VaultAccessDenied, VaultLockedError) as err:
                 raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
-            config = normalize_watch_config(runtime["storage"].wallet_watch_config)
             manager: WalletWatchManager = runtime["wallet_watch"]
+            # Reconcile the unlocked password-vault copy with the richer
+            # device-bound Sentinel runtime vault before returning settings.
+            # This prevents an older/empty vault snapshot from hiding existing
+            # wallet cards or making Auto incorrectly fall back to the own
+            # mempool source after lock -> unlock.
+            config = await manager.async_recover_unlocked_config(
+                normalize_watch_config(runtime["storage"].wallet_watch_config)
+            )
             notify_services = sorted(self.hass.services.async_services().get("notify", {}).keys())
             return respond({
                 "config": config,
@@ -2561,6 +2654,19 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             except VaultAccessDenied as err:
                 raise web.HTTPForbidden(text="Owner access is required") from err
             return respond(runtime["wallet_watch"].public_status(include_addresses=False))
+
+        if route == "api/wallet-watch/manage" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            manager: WalletWatchManager = runtime["wallet_watch"]
+            return respond({
+                "config": manager.public_locked_management_config(),
+                "status": manager.public_status(include_addresses=True),
+            })
 
         if route == "api/wallet-watch/log" and method == "GET":
             entry_id = q("entry_id")
@@ -2616,13 +2722,17 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             runtime = _runtime(self.hass, entry_id)
             try:
                 runtime["security"].require_owner(requester)
-                runtime["security"].require_unlocked(requester)
-            except (VaultAccessDenied, VaultLockedError) as err:
-                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
             if runtime["security"].encryption_mode != ENCRYPTION_PASSWORD:
                 raise web.HTTPBadRequest(text="Sats Sentinel requires the password-encrypted vault before watch-only data can be stored")
+            manager: WalletWatchManager = runtime["wallet_watch"]
+            unlocked = runtime["security"].is_user_unlocked(requester)
             try:
-                result = await runtime["wallet_watch"].async_upsert_monitor(monitor)
+                if unlocked:
+                    result = await manager.async_upsert_monitor(monitor)
+                else:
+                    result = await manager.async_upsert_runtime_monitor(monitor)
             except ValueError as err:
                 raise web.HTTPBadRequest(text=f"Sats Sentinel watch save failed: {err}") from err
             except Exception as err:
@@ -2631,7 +2741,11 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                     text=f"Sats Sentinel watch save failed: {type(err).__name__}: {err}"
                 ) from err
             result["notify_services"] = sorted(self.hass.services.async_services().get("notify", {}).keys())
-            result["activity_log"] = runtime["wallet_watch"].public_activity_log(result["config"], page=1, category="all")
+            result["activity_log"] = (
+                manager.public_activity_log(result["config"], page=1, category="all")
+                if unlocked else {"items": [], "page": 1, "pages": 1, "total": 0, "stored_total": 0}
+            )
+            result["locked_runtime_edit"] = not unlocked
             return respond(result)
 
         if route == "api/wallet-watch/remove-monitor" and method == "POST":
@@ -2641,11 +2755,15 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             runtime = _runtime(self.hass, entry_id)
             try:
                 runtime["security"].require_owner(requester)
-                runtime["security"].require_unlocked(requester)
-            except (VaultAccessDenied, VaultLockedError) as err:
-                raise web.HTTPForbidden(text="Owner access and unlocked vault are required") from err
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            manager: WalletWatchManager = runtime["wallet_watch"]
+            unlocked = runtime["security"].is_user_unlocked(requester)
             try:
-                result = await runtime["wallet_watch"].async_remove_monitor(monitor_id)
+                if unlocked:
+                    result = await manager.async_remove_monitor(monitor_id)
+                else:
+                    result = await manager.async_remove_runtime_monitor(monitor_id)
             except ValueError as err:
                 raise web.HTTPBadRequest(text=f"Sats Sentinel remove failed: {err}") from err
             except Exception as err:  # defensive: return an actionable message instead of an opaque 500
@@ -2654,7 +2772,11 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                     text=f"Sats Sentinel remove failed: {type(err).__name__}: {err}"
                 ) from err
             result["notify_services"] = sorted(self.hass.services.async_services().get("notify", {}).keys())
-            result["activity_log"] = runtime["wallet_watch"].public_activity_log(result["config"], page=1, category="all")
+            result["activity_log"] = (
+                manager.public_activity_log(result["config"], page=1, category="all")
+                if unlocked else {"items": [], "page": 1, "pages": 1, "total": 0, "stored_total": 0}
+            )
+            result["locked_runtime_edit"] = not unlocked
             return respond(result)
 
         if route == "api/wallet-watch" and method == "POST":
@@ -2670,14 +2792,12 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 config = normalize_watch_config(incoming.get("config"))
                 if (config.get("monitors") or config.get("notification_targets")) and runtime["security"].encryption_mode != ENCRYPTION_PASSWORD:
                     raise ValueError("Sats Sentinel requires the password-encrypted vault before watch-only data or notification credentials can be stored")
-                runtime["wallet_watch"].cancel_background_refresh()
-                await runtime["storage"].async_set_wallet_watch_config(config)
-                # Persist the device-bound runtime shell immediately, then perform
-                # potentially long XPUB/descriptor gap discovery asynchronously.
-                # Saving settings must never look like a Home Assistant outage.
-                await runtime["wallet_watch"].runtime_store.async_replace_from_full_config(config)
-                runtime["wallet_watch"].schedule_background_refresh(config, poll=True)
-                status = runtime["wallet_watch"].public_status(include_addresses=True)
+                # Server/global settings are isolated from the watch list. Saving
+                # Fulcrum/Tor/poll defaults must never rebuild, delete or collapse
+                # already discovered address/xpub runtime state.
+                result = await runtime["wallet_watch"].async_update_settings(config)
+                config = result["config"]
+                status = result["status"]
             except ValueError as err:
                 raise web.HTTPBadRequest(text=str(err)) from err
             return respond({"saved": True, "config": config, "status": status, "notify_services": sorted(self.hass.services.async_services().get("notify", {}).keys()), "activity_log": runtime["wallet_watch"].public_activity_log(config, page=1, category="all")})
@@ -2775,7 +2895,7 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 "updated_at": live.get("updated_at"),
                 "local_interval_seconds": live.get("local_interval_seconds", getattr(runtime["coordinator"], "local_interval_seconds", 300)),
                 "public_interval_seconds": live.get("public_interval_seconds", getattr(runtime["coordinator"], "public_interval_seconds", 60)),
-                "dashboard_poll_seconds": 15,
+                "dashboard_poll_seconds": 30,
             })
 
         if route == "api/market-assessment/history" and method == "GET":
@@ -2794,9 +2914,8 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
             )
             currency = market_settings["currency"]
-            live = runtime["coordinator"].data or {}
-            prices = live.get("prices", {}) if isinstance(live.get("prices", {}), dict) else {}
             history_data = runtime["history_storage"].data
+            history_prices = history_data.get("prices", {}).get(currency, {})
             today = dt_util.utcnow().date()
             range_key = str(q("range") or "1y").lower()
             if range_key == "1d":
@@ -2824,18 +2943,106 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             else:
                 start_day = None
                 range_key = "max"
-            result = await self.hass.async_add_executor_job(partial(
-                calculate_buy_opportunity_history,
-                history_data.get("prices", {}).get(currency, {}),
-                prices.get(currency),
+            signature = await self.hass.async_add_executor_job(partial(
+                market_assessment_history_signature,
+                history_prices,
                 currency=currency,
                 settings=market_settings,
-                as_of_day=today,
-                start_day=start_day,
-                max_points=420,
-                marker_interval_years=4 if range_key in {"10y", "max"} else 0,
             ))
-            return respond({**result, "range": range_key, "calculated_at": datetime.now(timezone.utc).isoformat()})
+            intraday_signature = await self.hass.async_add_executor_job(partial(
+                market_assessment_intraday_signature,
+                currency=currency,
+                settings=market_settings,
+            ))
+            intraday_days = {
+                "1d": 2,
+                "7d": 8,
+                "week_start": 8,
+                "30d": 31,
+                "month_start": 31,
+                # The overview maps its visible 30-day range to the wider 90d
+                # causal daily cache, so keep the recent intraday tail here too.
+                "90d": 31,
+            }.get(range_key, 0)
+
+            async def _with_intraday(payload: dict[str, Any]) -> dict[str, Any]:
+                if intraday_days <= 0:
+                    return payload
+                intraday_cache = runtime.get("market_assessment_intraday_cache")
+                if intraday_cache is None:
+                    return payload
+                since = datetime.now(timezone.utc) - timedelta(days=intraday_days)
+                points = await intraday_cache.async_points(intraday_signature, since=since)
+                return {**payload, "intraday_points": points}
+
+            cache: MarketAssessmentHistoryCache = runtime["market_assessment_history_cache"]
+            cached = await cache.async_get(signature, range_key)
+            if cached is not None:
+                payload = {**cached, "range": range_key, "cache_status": "persistent_hit"}
+                return respond(await _with_intraday(payload))
+
+            await cache.async_prepare(signature)
+            task_key = (signature, range_key)
+            tasks = runtime.setdefault("_market_assessment_history_tasks", {})
+            compute_lock = runtime.setdefault("_market_assessment_history_compute_lock", asyncio.Lock())
+            running = tasks.get(task_key)
+            if running is None or running.done():
+                async def _calculate_history() -> dict[str, Any]:
+                    async with compute_lock:
+                        # A preceding queued request may already have produced
+                        # this exact range while we were waiting for the CPU slot.
+                        queued_hit = await cache.async_get(signature, range_key)
+                        if queued_hit is not None:
+                            return {**queued_hit, "range": range_key, "cache_status": "persistent_hit"}
+                        # Calculate the expensive daily causal score series once
+                        # per source/settings generation. Range changes then only
+                        # filter/downsample and decorate marker points.
+                        score_cache = await cache.async_get_scores(signature)
+                        if score_cache is None:
+                            score_cache = await self.hass.async_add_executor_job(partial(
+                                calculate_buy_opportunity_history_scores,
+                                history_prices,
+                                None,
+                                currency=currency,
+                                settings=market_settings,
+                                as_of_day=today,
+                            ))
+                            await cache.async_put_scores(signature, score_cache)
+                        # Historical reconstruction uses only the durable daily cache.
+                        # The frontend appends the already cached current-day score so
+                        # every live quote does not force years of history to rebuild.
+                        result = await self.hass.async_add_executor_job(partial(
+                            calculate_buy_opportunity_history,
+                            history_prices,
+                            None,
+                            currency=currency,
+                            settings=market_settings,
+                            as_of_day=today,
+                            start_day=start_day,
+                            max_points=420,
+                            marker_interval_years=4 if range_key in {"10y", "max"} else 0,
+                            precomputed_scores=score_cache.get("scores", {}),
+                        ))
+                        payload = {
+                            **result,
+                            "range": range_key,
+                            "calculated_at": datetime.now(timezone.utc).isoformat(),
+                            "cache_status": "rebuilt",
+                        }
+                        await cache.async_put(signature, range_key, payload)
+                        return payload
+
+                running = self.hass.async_create_task(
+                    _calculate_history(),
+                    f"Bitcoin Stack Tracker market history {range_key}",
+                )
+                tasks[task_key] = running
+            try:
+                result = await running
+            finally:
+                if tasks.get(task_key) is running and running.done():
+                    tasks.pop(task_key, None)
+            return respond(await _with_intraday(result))
 
         if route == "api/market-assessment" and method == "GET":
             entry_id = q("entry_id")
@@ -2850,28 +3057,18 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
             entry = self.hass.config_entries.async_get_entry(entry_id)
             if entry is None:
                 raise web.HTTPBadRequest(text="Config entry was not found")
-            current_settings = effective_settings(entry)
-            currencies = configured_currencies(current_settings)
-            market_settings = normalize_buy_opportunity_settings(
-                current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
-            )
-            currency = market_settings["currency"]
             live = runtime["coordinator"].data or {}
-            prices = live.get("prices", {}) if isinstance(live.get("prices", {}), dict) else {}
-            history_data = runtime["history_storage"].data
-            result = calculate_buy_opportunity(
-                history_data.get("prices", {}).get(currency, {}),
-                prices.get(currency),
-                currency=currency,
-                settings=market_settings,
-                as_of_day=dt_util.utcnow().date(),
+            snapshot = await async_market_assessment(
+                self.hass, entry, runtime["coordinator"], runtime["history_storage"]
             )
             return respond({
-                "buy_opportunity": result,
-                "buy_opportunity_settings": market_settings,
+                "buy_opportunity": snapshot["result"],
+                "buy_opportunity_settings": snapshot["settings"],
                 "live_price_updated_at": live.get("updated_at"),
-                "calculated_at": datetime.now(timezone.utc).isoformat(),
+                "history_last_sync": runtime["history_storage"].data.get("last_sync"),
+                "calculated_at": snapshot["calculated_at"],
                 "automatic": True,
+                "cache_seconds": 300,
             })
 
         if route == "api/core-network" and method == "GET":
@@ -3058,6 +3255,39 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
         raise web.HTTPNotFound(text=f"Unknown native panel route: {route}")
 
 
+def _register_global_timers(hass: HomeAssistant) -> None:
+    """(Re)register global timers with Home Assistant bound explicitly.
+
+    Config-entry reloads can leave callbacks created by an older custom-component
+    module alive in the running Core. Always cancel any previously stored timer
+    before registering the current callback shape so a datetime argument can never
+    be mistaken for ``hass`` after an update.
+    """
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    for key in ("_cancel_tor_rotation_timer", "_cancel_vault_expiry_timer"):
+        cancel = domain_data.pop(key, None)
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception:
+                pass
+
+    async def _tor_timer(now: Any) -> None:
+        await _async_rotate_tor_if_due(hass, now, trigger="global-timer")
+
+    async def _vault_timer(now: Any) -> None:
+        await _async_expire_vault_sessions(hass)
+
+    domain_data["_cancel_tor_rotation_timer"] = async_track_time_interval(
+        hass, _tor_timer, timedelta(minutes=1)
+    )
+    domain_data["_cancel_vault_expiry_timer"] = async_track_time_interval(
+        hass, _vault_timer, timedelta(seconds=30)
+    )
+    domain_data["_tor_rotation_timer_registered"] = True
+    domain_data["_vault_expiry_timer_registered"] = True
+
+
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Register integration service actions."""
     hass.data.setdefault(DOMAIN, {})
@@ -3072,16 +3302,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     await async_register_native_panel(hass)
 
     domain_data = hass.data.setdefault(DOMAIN, {})
-    if not domain_data.get("_tor_rotation_timer_registered"):
-        domain_data["_cancel_tor_rotation_timer"] = async_track_time_interval(
-            hass, _async_rotate_tor_if_due, timedelta(minutes=1)
-        )
-        domain_data["_tor_rotation_timer_registered"] = True
-    if not domain_data.get("_vault_expiry_timer_registered"):
-        domain_data["_cancel_vault_expiry_timer"] = async_track_time_interval(
-            hass, _async_expire_vault_sessions, timedelta(seconds=30)
-        )
-        domain_data["_vault_expiry_timer_registered"] = True
+    _register_global_timers(hass)
 
     async def add_purchase(call: ServiceCall) -> dict[str, Any]:
         runtime = _runtime(hass, call.data[CONF_CONFIG_ENTRY_ID])
@@ -3448,6 +3669,13 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         result = await async_sync_history(
             hass, entry, runtime["storage"], runtime["history_storage"]
         )
+        try:
+            result["market_assessment_history_cache"] = await _async_warm_market_assessment_history_scores(
+                hass, entry, runtime
+            )
+        except Exception:
+            result["market_assessment_history_cache"] = "warm-failed"
+            _LOGGER.exception("Manual market-assessment history cache warm-up failed")
         _notify_entities(runtime)
         return result
 
@@ -3566,6 +3794,13 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         options[CONF_BUY_OPPORTUNITY_SETTINGS] = normalized
         hass.config_entries.async_update_entry(entry, options=options)
         runtime = _runtime(hass, entry_id)
+        invalidate_market_assessment_cache(hass, entry_id)
+        for task in list(runtime.get("_market_assessment_history_tasks", {}).values()):
+            if task is not None and not task.done():
+                task.cancel()
+        runtime["_market_assessment_history_tasks"] = {}
+        await runtime["market_assessment_history_cache"].async_clear()
+        await runtime["market_assessment_intraday_cache"].async_clear()
         _notify_entities(runtime)
         return {
             "settings": normalized,
@@ -3813,17 +4048,11 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             "all_cached": history_days == 0,
             "series_loaded": False,
         }
-        buy_opportunity_settings = normalize_buy_opportunity_settings(
-            current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+        market_snapshot = await async_market_assessment(
+            hass, entry, runtime["coordinator"], runtime["history_storage"]
         )
-        buy_currency = buy_opportunity_settings["currency"]
-        buy_opportunity = calculate_buy_opportunity(
-            history_data.get("prices", {}).get(buy_currency, {}),
-            prices.get(buy_currency),
-            currency=buy_currency,
-            settings=buy_opportunity_settings,
-            as_of_day=dt_util.utcnow().date(),
-        )
+        buy_opportunity_settings = market_snapshot["settings"]
+        buy_opportunity = market_snapshot["result"]
 
         result: dict[str, Any] = {
             "locked": False,
@@ -3843,6 +4072,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             "buy_opportunity_settings": buy_opportunity_settings,
             "buy_opportunity_profiles": [*PROFILE_WEIGHTS.keys(), "custom"],
             "buy_opportunity": buy_opportunity,
+            "buy_opportunity_calculated_at": market_snapshot.get("calculated_at"),
             "tax_settings": tax_settings,
             "depots": depots,
             "goals": calculations["goals"],
@@ -4115,6 +4345,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     history_storage = BitcoinHistoryStore(hass, entry.entry_id)
     await history_storage.async_load()
+    market_assessment_history_cache = MarketAssessmentHistoryCache(hass, entry.entry_id)
+    await market_assessment_history_cache.async_load()
+    market_assessment_intraday_cache = MarketAssessmentIntradayCache(hass, entry.entry_id)
+    await market_assessment_intraday_cache.async_load()
     coordinator = BitcoinPriceCoordinator(hass, entry, history_storage)
     await coordinator.async_config_entry_first_refresh()
     # Keep one integration-owned listener registered permanently. Home Assistant's
@@ -4127,16 +4361,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime: dict[str, Any] = {
         "storage": storage,
         "history_storage": history_storage,
+        "market_assessment_history_cache": market_assessment_history_cache,
+        "market_assessment_intraday_cache": market_assessment_intraday_cache,
         "coordinator": coordinator,
         "cancel_price_refresh_listener": cancel_price_refresh_listener,
         "security": security,
         "wallet_watch": wallet_watch,
     }
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+    _register_global_timers(hass)
     await wallet_watch.async_start()
     if not storage.is_locked:
         try:
-            await wallet_watch.async_apply_full_config(normalize_watch_config(storage.wallet_watch_config))
+            await wallet_watch.async_restore_full_config(normalize_watch_config(storage.wallet_watch_config), poll=False)
         except ValueError as err:
             _LOGGER.warning("Sats Sentinel configuration was not activated: %s", err)
 
@@ -4172,11 +4409,14 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await runtime["wallet_watch"].runtime_store.async_remove()
     history_store = BitcoinHistoryStore(hass, entry.entry_id)
     await history_store.async_load()
+    market_history_cache = MarketAssessmentHistoryCache(hass, entry.entry_id)
+    await market_history_cache.async_load()
     statistic_ids = list(history_store.data.get("statistics_ids", []))
     removed = await async_clear_entry_statistics(hass, statistic_ids)
     security_store = BitcoinSecurityStore(hass, entry.entry_id)
     ledger_store = BitcoinLedgerStore(hass, entry.entry_id, security_store)
     await history_store.async_remove()
+    await market_history_cache.async_remove()
     await ledger_store.async_remove()
     await security_store.async_remove()
     _LOGGER.info(
@@ -4196,6 +4436,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cancel()
     if cancel := runtime.get("cancel_price_refresh_listener"):
         cancel()
+    market_task = runtime.get("_market_assessment_task") if isinstance(runtime, dict) else None
+    if market_task is not None and not market_task.done():
+        market_task.cancel()
+        try:
+            await market_task
+        except asyncio.CancelledError:
+            pass
+    history_tasks = list(runtime.get("_market_assessment_history_tasks", {}).values()) if isinstance(runtime, dict) else []
+    for task in history_tasks:
+        if task is not None and not task.done():
+            task.cancel()
+    for task in history_tasks:
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _LOGGER.debug("Market-assessment history task ended during unload", exc_info=True)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)

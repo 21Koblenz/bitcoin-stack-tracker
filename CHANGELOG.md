@@ -1,5 +1,111 @@
 # Changelog
 
+## v0.21.0.13 — 2026-08-18: Sats Sentinel accuracy, locked management, QR & HA performance
+
+### English
+
+This release consolidates the post-v0.21.0.12 RC line through RC20 and adds the final regression/performance fixes required for a clean public build.
+
+#### Fixed
+- Fixed HD watch targets incorrectly stopping at `Receive 2 · Change 2` and reporting zero balance/UTXOs when the first historically used address was beyond index 1. Existing small-gap configs now bootstrap discovery across 20 addresses before a branch can be considered unused; new HD monitors default to 20/20.
+- Fixed ambiguous plain `xpub` handling. Auto mode now resolves P2WPKH, P2SH-P2WPKH, P2TR or P2PKH from transaction history instead of treating the xpub serialization prefix as a definitive legacy script type.
+- Fixed Home Assistant vault-expiry timer callback mismatch causing `AttributeError: 'datetime.datetime' object has no attribute 'data'` and unhandled background task warnings.
+- Fixed Home Assistant Companion barcode/QR result handling. `bar_code/scan_result` and abort messages are now matched by external-bus message type; the iframe/parent startup race is removed with a 3-second acknowledgement window.
+- Fixed stale wallet-card collapse state on production browsers by moving the UI preference key to v5; cards default to collapsed.
+- Fixed duplicate first Mempool address snapshot work during discovery and removed duplicate/legacy runtime status keys.
+
+#### Sats Sentinel RC consolidation
+- Added separately encrypted device-bound watch-only runtime catalog for locked-vault owner management. It may contain public address/XPUB/descriptor material, derived addresses and endpoint metadata, but never seeds/private keys/xprv/spend keys.
+- Existing watch targets can be edited/removed while the portfolio vault is locked, then reconciled back into the encrypted portfolio configuration after unlock.
+- Preserve already discovered HD ranges when changing labels, notifications or source settings; avoid collapsing back to initial gap seed addresses.
+- Persist source endpoint configuration independently from the larger runtime cache so cache/schema recovery cannot erase the selected Fulcrum/electrs endpoint.
+- Added Taproot (`tr()`/P2TR) watch-only derivation, standard Receive/Change multipath descriptor handling, explicit XPUB script-type selection and history-based Auto resolution.
+- Added bounded Electrum/Fulcrum batching/yields, small periodic reconciliation slices and coalesced runtime-store writes to reduce Core stalls and storage churn.
+- Keep non-blocking HD save/scan behavior and scan supersession from v0.21.0.12.
+- Bound the activity journal to the newest 5,000 rows.
+- Locked-vault privacy is now fail-closed in the UI: the complete Sentinel wallet/address/balance/source card is hidden by default and the locked frontend does not request the management payload. An unlocked per-browser/per-device option can explicitly show it; the Core monitor and all enabled alerts continue independently.
+
+#### Performance
+- Added `market_assessment_runtime.py`: one shared per-entry current-assessment cache, executor execution and concurrent-request coalescing for dashboard, endpoint and HA sensor. The expensive current score is recalculated at most once every five minutes from the newest available live quote; duplicate clients never multiply the work.
+- Added a content-addressed **persistent historical score cache** in Home Assistant storage. The expensive causal daily score series is reused across restarts and chart ranges and is invalidated only when the score-model version, currency, model parameters or stored historical daily prices change. Intraday live-price changes do not invalidate it.
+- Fixed the `Bitcoin-Kurs + Markteinschätzung` overlay race where a slow request for an old range could leave the new range with price only and no score series. Per-range in-flight requests are now deduplicated and stale-range responses trigger the current range instead of blocking it.
+- Short overview ranges request a small invisible causal score pre-roll so the assessment line has a left-edge anchor. In addition, the already scheduled five-minute current assessment now feeds a lightweight public intraday snapshot store: **1 day uses real 1-hour score points, week-to-date/1 week use 6-hour points, month-to-date/30 days use 12-hour points**. No score interpolation and no extra model calculations are introduced; up to 45 days of real intraday observations are retained.
+- The current score follows the live market on a bounded five-minute cadence: intraday quote ticks update the price chart immediately but do not bypass the score TTL; the next shared calculation uses the newest available quote while the historical series stays cached.
+- After automatic or manual durable-history synchronization, the tracker now warms the causal score cache. An unchanged history is a persistent hit; a newly added or corrected daily value changes the signature, triggers one executor rebuild and immediately stores the new score generation for subsequent chart loads.
+- Reduced recorder/state churn: the market sensor writes only on a new calculated snapshot and exposes a compact attribute set (~88.9% smaller in the local regression harness).
+- Frontend market poll 300 s; wallet status 30 s; live price 30 s; network status 60 s.
+- Added 30-second shared Tor-status cache and stopped the halving ticker from force-bypassing it each minute.
+- Wallet manager cancels duplicate startup timers; market tasks are cancelled on entity/integration removal.
+
+#### Security / privacy
+- Corrected the v0.21.0.12 privacy wording to accurately describe the separately encrypted device-bound Sats Sentinel runtime vault.
+- Revalidated authenticated native RPC, owner-only management, `no-store` sensitive responses, native CSP with `connect-src 'none'`, fail-closed network routing, public TLS requirements and local-only direct Electrum.
+- Static audit found no dynamic code execution paths using `eval`, `exec`, `os.system` or `popen`.
+
+#### Validation
+- 68/68 static release/security checks passed.
+- 7/7 functional/performance checks passed.
+- 6/6 current-market-runtime checks, 12/12 historical persistent-cache/overlay/daily-warm checks, 11/11 intraday-store checks and 7/7 short-overlay sampling checks passed.
+- Python parse: 28/28 modules; JavaScript syntax: panel/app/performance-math; JSON/version checks passed.
+- Local 5,000-day market-model harness: ~0.83 s uncached average, ~6.00 MiB peak temporary allocation; compact sensor attrs 885 B vs 7,988 B.
+- The uploaded RC20 archive does not contain the full repository test suite, so the v0.21.0.12 result of 502 tests + 8 subtests is not represented as rerun here.
+- Custom Integration: v0.21.0.13. Tor Gateway: v0.21.0.3 unchanged.
+
+#### Upgrade
+- Full Home Assistant Core restart required after replacing files; then hard-reload the browser/fully reopen Companion if an old panel remains cached.
+
+### Deutsch
+
+Dieses Release bündelt die Entwicklung nach v0.21.0.12 bis einschließlich RC20 und ergänzt die finalen Regression-/Performance-Fixes für einen sauberen öffentlichen Build.
+
+#### Behoben
+- HD-Watch-Ziele bleiben nicht mehr fälschlich bei `Receive 2 · Change 2` stehen und melden nicht mehr 0 Bestand/UTXOs, nur weil die erste historisch benutzte Adresse hinter Index 1 liegt. Bestehende kleine Gaps erhalten einen 20-Adressen-Discovery-Bootstrap; neue HD-Watches starten mit 20/20.
+- Mehrdeutige nackte `xpub` werden korrigiert behandelt. Auto erkennt P2WPKH, P2SH-P2WPKH, P2TR oder P2PKH anhand der Transaktionshistorie statt anhand des xpub-Serialisierungspräfixes.
+- Vault-Expiry-Timer-Callback behoben, der `AttributeError: 'datetime.datetime' object has no attribute 'data'` und unhandled Background-Task-Warnungen erzeugte.
+- Home-Assistant-Companion-QR-/Barcode-Ergebnisverarbeitung korrigiert. `bar_code/scan_result` und Abbruch werden nach External-Bus-Nachrichtentyp verarbeitet; 3-Sekunden-ACK beseitigt das Parent/Iframe-Timeout-Rennen.
+- Veralteten Wallet-Card-Collapse-Zustand über neuen v5-Preference-Key zurückgesetzt; Karten sind standardmäßig eingeklappt.
+- Doppelte erste Mempool-Adressabfrage sowie doppelte/alte Runtime-Status-Keys entfernt.
+
+#### Sats-Sentinel-RC-Konsolidierung
+- Separat gerätegebunden verschlüsselter Watch-only-Runtime-Katalog für Owner-Verwaltung bei gesperrtem Portfolio-Tresor. Er darf öffentliche Adresse/XPUB/Descriptor-Daten, abgeleitete Adressen und Endpoint-Metadaten enthalten, aber niemals Seeds/Private Keys/xprv/Spend-Keys.
+- Bestehende Watch-Ziele können gesperrt bearbeitet/gelöscht und nach Unlock wieder in die verschlüsselte Portfolio-Konfiguration synchronisiert werden.
+- Bereits gefundene HD-Bereiche bleiben bei Änderungen von Namen, Notifications oder Quellen erhalten; kein Rückfall auf anfängliche Gap-Seed-Adressen.
+- Quell-/Endpoint-Konfiguration wird unabhängig vom größeren Runtime-Cache persistiert, damit Cache-/Schema-Recovery nicht den gewählten Fulcrum-/electrs-Endpunkt löscht.
+- Taproot (`tr()`/P2TR), Standard-Receive/Change-Multipath-Descriptoren, explizite XPUB-Script-Typ-Wahl und historische Auto-Erkennung ergänzt.
+- Begrenzte Electrum/Fulcrum-Batches/Yields, kleine periodische Reconcile-Slices und zusammengefasste Runtime-Store-Writes reduzieren Core-Stalls und Storage-Churn.
+- Nichtblockierendes HD-Speichern/-Scannen und Scan-Supersession aus v0.21.0.12 bleiben erhalten.
+- Aktivitätsjournal auf die neuesten 5.000 Zeilen begrenzt.
+- Locked-UI jetzt datenschutzfreundlich fail-closed: Die komplette Sentinel-Wallet-/Adress-/Bestands-/Quellenkarte ist bei gesperrtem Haupttresor standardmäßig verborgen und das gesperrte Frontend fordert das Management-Payload nicht an. Im entsperrten Sentinel-Bereich kann die Anzeige lokal pro Browser/Gerät bewusst aktiviert werden; Core-Überwachung und aktivierte Alarme laufen unabhängig davon weiter.
+
+#### Performance
+- Neue `market_assessment_runtime.py`: gemeinsamer Current-Assessment-Cache pro Entry, Executor-Ausführung und Request-Coalescing für Dashboard, Endpoint und HA-Sensor. Der rechenintensive aktuelle Score wird höchstens alle fünf Minuten mit dem dann neuesten Live-Kurs neu berechnet; mehrere Clients vervielfachen die Arbeit nicht.
+- Neuer in Home Assistant persistierter, inhaltsadressierter **History-Score-Cache**. Die teure kausale Tages-Score-Serie wird über Neustarts und Chart-Zeiträume wiederverwendet und nur verworfen, wenn sich Score-Modellversion, Währung, Modellparameter oder gespeicherte historische Tageskurse ändern. Intraday-Livekursänderungen invalidieren sie nicht.
+- Race im Startseiten-Overlay `Bitcoin-Kurs + Markteinschätzung` behoben: ein langsamer Request für einen alten Zeitraum kann den neuen Zeitraum nicht mehr mit nur dem Kurschart zurücklassen. Requests werden pro Zeitraum zusammengeführt und ein veraltetes Ergebnis löst den aktuell gewählten Zeitraum erneut aus.
+- Kurze Übersichtszeiträume laden einen kleinen unsichtbaren kausalen Score-Vorlauf. Zusätzlich speist die ohnehin höchstens alle fünf Minuten laufende aktuelle Markteinschätzung einen kleinen öffentlichen Intraday-Cache: **Heute nutzt echte 1-Stunden-Scorepunkte, Seit Wochenbeginn/1 Woche 6-Stunden-Punkte, Seit Monatsbeginn/30 Tage 12-Stunden-Punkte**. Es gibt keine künstliche Score-Interpolation und keine zusätzlichen Modellberechnungen; reale Intraday-Beobachtungen werden bis zu 45 Tage gehalten.
+- Der aktuelle Score folgt dem Live-Markt bewusst im 5-Minuten-Takt: Intraday-Kursticks aktualisieren den Kurschart sofort, umgehen aber nicht mehr die Score-TTL; der nächste gemeinsame Lauf verwendet den dann neuesten Kurs, während die Historie im Cache bleibt.
+- Nach automatischer oder manueller Synchronisation der dauerhaften Tageshistorie wird der kausale Score-Cache vorgewärmt. Unveränderte Historie bleibt ein Persistent-Hit; ein neuer oder korrigierter Tageswert ändert die Content-Signatur, löst genau einen Executor-Neuaufbau aus und speichert die neue Score-Generation direkt persistent.
+- Weniger Recorder-/State-Churn: Sensor schreibt nur bei neuem Snapshot und liefert kompakten Attributsatz (~88,9 % kleiner im lokalen Regression-Harness).
+- Frontend: Markteinschätzung 300 s, Wallet-Status 30 s, Live-Kurs 30 s, Netzwerk 60 s. Live-Kursticks erzwingen keine vorzeitige Score-Neuberechnung.
+- 30-Sekunden-Shared-Tor-Status-Cache; Halving-Ticker umgeht ihn nicht mehr erzwungen jede Minute.
+- Wallet-Manager entfernt doppelte Starttimer; Market-Tasks werden beim Entity-/Integration-Unload abgebrochen.
+
+#### Sicherheit / Datenschutz
+- Datenschutztext aus v0.21.0.12 auf die tatsächliche getrennt verschlüsselte Sats-Sentinel-Runtime-Vault-Architektur korrigiert.
+- Authentifizierte native RPCs, Owner-only-Verwaltung, `no-store`, native CSP mit `connect-src 'none'`, Fail-Closed-Netzwerkpfade, öffentliche TLS-Pflicht und nur lokale direkte Electrum-Verbindungen erneut geprüft.
+- Statischer Audit fand keine dynamischen Code-Ausführungspfade via `eval`, `exec`, `os.system` oder `popen`.
+
+#### Prüfung
+- 68/68 statische Release-/Security-Checks bestanden.
+- 7/7 Funktions-/Performance-Checks bestanden.
+- 6/6 Current-Market-Runtime-, 12/12 persistente History-Cache-/Overlay-/Daily-Warm-, 11/11 Intraday-Store- und 7/7 Kurzzeit-Overlay-Sampling-Checks bestanden.
+- Python-Parse 28/28 Module; JavaScript-Syntax Panel/App/Performance-Math; JSON-/Versionschecks bestanden.
+- Lokaler 5.000-Tage-Market-Harness: ~0,83 s ungecacht, ~6,00 MiB temporäre Peak-Allokation; kompakte Sensorattribute 885 B statt 7.988 B.
+- Das hochgeladene RC20-Archiv enthält nicht die vollständige Repository-Testsuite; deshalb wird „502 Tests + 8 Subtests“ aus v0.21.0.12 nicht als erneut ausgeführt dargestellt.
+- Custom Integration: v0.21.0.13. Tor Gateway: v0.21.0.3 unverändert.
+
+#### Update
+- Nach Dateiaustausch Home Assistant Core vollständig neu starten; danach Browser hart neu laden bzw. Companion vollständig neu öffnen, falls noch ein altes Panel gecacht ist.
+
 ## v0.21.0.12 — 2026-08-16: Sats Sentinel HD-wallet reliability, persistence & non-blocking scans
 
 ### English

@@ -1220,3 +1220,178 @@ html.viewport-resizing .chart .series-primary{filter:none}
 .sats-sentinel-panel-toggle>span:first-child{font-size:13px;line-height:1}
 #tab-walletwatch .panel.is-collapsed>.panel-head{margin-bottom:0}
 @media(max-width:760px){#tab-walletwatch .panel-head .sats-sentinel-panel-toggle{width:100%;justify-content:space-between}}
+
+/* Sats Sentinel locked-vault read-only runtime view */
+.vault-gate:has(.locked-wallet-watch:not(.hidden)){align-content:start;gap:18px;padding-top:28px;padding-bottom:42px}
+.locked-wallet-watch{width:min(980px,100%);background:color-mix(in srgb,var(--card) 96%,transparent);border:1px solid rgba(247,147,26,.34);border-radius:20px;padding:clamp(16px,2.5vw,26px);box-shadow:var(--shadow)}
+.locked-wallet-watch-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
+.locked-wallet-watch-head h2{margin:4px 0 6px;font-size:24px}.locked-wallet-watch-head p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+.locked-wallet-watch-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.locked-wallet-card{background:var(--bg-soft);border:1px solid var(--line);border-radius:15px;padding:15px;display:grid;gap:10px}
+.locked-wallet-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.locked-wallet-card-head h3{margin:0;font-size:17px}.locked-wallet-card-head .badge{flex:0 0 auto}
+.locked-wallet-balance{font-size:clamp(22px,4vw,30px);font-weight:850}.locked-wallet-meta{display:flex;flex-wrap:wrap;gap:6px 12px;color:var(--muted);font-size:12px}
+.locked-wallet-watch-note{margin:14px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+@media(max-width:700px){.locked-wallet-watch-grid{grid-template-columns:1fr}.locked-wallet-watch-head{display:grid}}
+/* Sats Sentinel locked-vault watch-only management */
+.locked-wallet-card:has(.locked-wallet-edit-form){grid-column:1/-1}
+.locked-wallet-card-head>div:first-child{display:flex;align-items:center;gap:9px;min-width:0;flex-wrap:wrap}
+.locked-wallet-card-head .sats-sentinel-watch-actions{display:flex;gap:7px;flex-wrap:wrap}
+.locked-wallet-watch-value{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
+.locked-wallet-edit-form{margin-top:6px;padding-top:14px;border-top:1px solid var(--line);display:grid;gap:12px}
+.locked-wallet-edit-form .analysis-head{margin:0}
+.locked-wallet-edit-form code{display:block;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--card);overflow-wrap:anywhere}
+.locked-wallet-edit-form .panel-actions{margin-top:0}
+@media(max-width:700px){.locked-wallet-card-head{align-items:flex-start}.locked-wallet-card-head .sats-sentinel-watch-actions{width:100%}.locked-wallet-card-head .sats-sentinel-watch-actions button{flex:1}.locked-wallet-edit-form .form-grid{grid-template-columns:1fr}.locked-wallet-edit-form .span-2{grid-column:auto}}
+
+/* rc9: per-wallet collapse + mobile-first Sats Sentinel layout */
+.sats-sentinel-watch-toggle{
+  width:100%;min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;
+  align-items:center;gap:9px;padding:2px 0 9px;border:0;background:transparent;color:var(--text);
+  text-align:left;cursor:pointer
+}
+.sats-sentinel-watch-toggle-chevron{color:var(--orange);font-size:15px;font-weight:900}
+.sats-sentinel-watch-toggle-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:17px;font-weight:850}
+.sats-sentinel-watch-toggle-kind{font-size:10px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
+.sats-sentinel-watch-toggle-balance{font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sats-sentinel-watch-body,.locked-wallet-card-body{min-width:0;display:grid;gap:12px}
+.sats-sentinel-watch-card.is-collapsed,.locked-wallet-card.is-collapsed{gap:0}
+.sats-sentinel-watch-card.is-collapsed .sats-sentinel-watch-toggle,.locked-wallet-card.is-collapsed .sats-sentinel-watch-toggle{padding-bottom:0}
+.sats-sentinel-tx-mobile-list{display:none;gap:10px;min-width:0}
+.sats-sentinel-tx-mobile-card{min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft);display:grid;gap:10px;overflow:hidden}
+.sats-sentinel-tx-mobile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
+.sats-sentinel-tx-mobile-head>div{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.sats-sentinel-tx-mobile-head>span{color:var(--muted);font-size:11px;text-align:right;overflow-wrap:anywhere}
+.sats-sentinel-tx-mobile-card section{min-width:0;display:grid;gap:5px}
+.sats-sentinel-tx-mobile-card section>span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.sats-sentinel-tx-mobile-footer{grid-template-columns:minmax(0,1fr) auto!important;align-items:center;gap:10px!important}
+.sats-sentinel-tx-mobile-footer>a,.sats-sentinel-tx-mobile-footer code{max-width:100%;min-width:0}
+.locked-wallet-source{margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft);display:grid;gap:4px;min-width:0}
+.locked-wallet-source strong,.locked-wallet-source small{overflow-wrap:anywhere;word-break:break-word}
+
+@media(max-width:760px){
+  #tab-walletwatch,.sats-sentinel-page,#tab-walletwatch>.panel,#tab-walletwatch .sats-sentinel-panel-body{min-width:0;max-width:100%}
+  #tab-walletwatch .form-grid,#tab-walletwatch .sats-sentinel-source-settings .form-grid{grid-template-columns:1fr!important}
+  #tab-walletwatch .form-grid>.span-2,#tab-walletwatch .sats-sentinel-source-settings,.locked-wallet-edit-form .span-2{grid-column:auto!important;min-width:0}
+  #tab-walletwatch input,#tab-walletwatch select,#tab-walletwatch textarea{max-width:100%;min-width:0;width:100%;box-sizing:border-box}
+  #tab-walletwatch code,.locked-wallet-watch code{max-width:100%;overflow-wrap:anywhere;word-break:break-all}
+  #tab-walletwatch .panel-actions{width:100%;display:grid;grid-template-columns:1fr;gap:8px}
+  #tab-walletwatch .panel-actions button{width:100%;max-width:100%}
+  #walletWatchMonitors,.goal-list{min-width:0}
+  .sats-sentinel-watch-card{width:100%;max-width:100%;box-sizing:border-box;padding:12px;overflow:hidden}
+  .sats-sentinel-watch-toggle{grid-template-columns:auto minmax(0,1fr) auto;gap:7px}
+  .sats-sentinel-watch-toggle-kind{display:none}
+  .sats-sentinel-watch-toggle-balance{grid-column:2/4;font-size:11px;color:var(--muted);white-space:normal}
+  .sats-sentinel-watch-title,.sats-sentinel-watch-head,.sats-sentinel-watch-badges,.sats-sentinel-watch-actions{min-width:0;max-width:100%}
+  .sats-sentinel-watch-address{box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-all}
+  .sats-sentinel-watch-actions{display:grid!important;grid-template-columns:1fr 1fr;width:100%}
+  .sats-sentinel-watch-actions button{min-width:0;width:100%}
+  .wallet-watch-monitor-meta{grid-template-columns:1fr!important}
+  .wallet-watch-monitor-meta>div{grid-column:auto!important;min-width:0}
+  .sats-sentinel-tx-desktop{display:none!important}
+  .sats-sentinel-tx-mobile-list{display:grid}
+  .sats-sentinel-tx-summary{grid-template-columns:1fr 1fr}
+  .sats-sentinel-tx-overview-head{min-width:0}
+  .sats-sentinel-tx-overview-head small{max-width:100%;overflow-wrap:anywhere}
+  .sats-sentinel-address-detail,.sats-sentinel-address-list,.sats-sentinel-tx-host{max-width:100%;min-width:0;overflow:hidden}
+  .sats-sentinel-address-list>div{min-width:0}
+  .sats-sentinel-party,.sats-sentinel-party-address,.sats-sentinel-counterparty-list{min-width:0;max-width:100%}
+  .sats-sentinel-party-address a,.sats-sentinel-counterparty-list a{max-width:100%}
+  .locked-wallet-watch{width:100%;max-width:100%;box-sizing:border-box;padding:14px}
+  .locked-wallet-card{width:100%;max-width:100%;box-sizing:border-box;overflow:hidden;padding:12px}
+  .locked-wallet-watch-grid{min-width:0}
+  .locked-wallet-card-head{display:grid;grid-template-columns:1fr;min-width:0}
+}
+@media(max-width:430px){
+  .sats-sentinel-tx-summary{grid-template-columns:1fr}
+  .sats-sentinel-tx-mobile-head{display:grid;grid-template-columns:1fr}
+  .sats-sentinel-tx-mobile-head>span{text-align:left}
+  .sats-sentinel-tx-mobile-footer{grid-template-columns:1fr!important}
+  .sats-sentinel-watch-actions{grid-template-columns:1fr!important}
+}
+
+/* rc11: consistent mobile wallet cards + directly collapsible monitored-address lists */
+.sats-sentinel-watch-body>* ,.locked-wallet-card-body>*{min-width:0;max-width:100%}
+.locked-wallet-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.locked-wallet-meta>span{display:block;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);overflow-wrap:anywhere}
+.sats-sentinel-monitored-addresses{width:100%;max-width:100%;box-sizing:border-box}
+.sats-sentinel-monitored-addresses>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;overflow-wrap:anywhere}
+.sats-sentinel-monitored-addresses code{max-width:100%;overflow-wrap:anywhere;word-break:break-all}
+@media(max-width:760px){
+  .locked-wallet-meta{grid-template-columns:1fr}
+  .locked-wallet-card,.sats-sentinel-watch-card{min-width:0;width:100%;max-width:100%;overflow:hidden}
+  .locked-wallet-card-body,.sats-sentinel-watch-body{min-width:0;width:100%;max-width:100%;overflow:hidden}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list{padding-left:8px;padding-right:8px}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list>div{width:100%;max-width:100%;box-sizing:border-box}
+}
+
+
+/* rc12: truly compact collapsed wallet cards + hard mobile containment for address lists */
+.sats-sentinel-watch-compact{display:grid;gap:7px;min-width:0;max-width:100%}
+.sats-sentinel-watch-compact-top{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.sats-sentinel-watch-compact .sats-sentinel-watch-badges{min-width:0;display:flex;flex-wrap:wrap;gap:6px}
+.sats-sentinel-watch-compact .sats-sentinel-watch-actions{display:flex;flex:0 0 auto;gap:7px}
+.sats-sentinel-watch-compact-toggle{grid-template-columns:auto minmax(0,1fr)!important;padding:1px 0!important}
+.sats-sentinel-watch-compact-toggle .sats-sentinel-watch-toggle-kind,.sats-sentinel-watch-compact-toggle .sats-sentinel-watch-toggle-balance{display:none!important}
+.sats-sentinel-watch-compact-note{min-width:0;color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.sats-sentinel-watch-card.is-collapsed,.locked-wallet-card.is-collapsed{padding-top:13px;padding-bottom:13px}
+.sats-sentinel-monitored-addresses,.sats-sentinel-monitored-addresses[open],.sats-sentinel-monitored-addresses>summary,.sats-sentinel-monitored-addresses .sats-sentinel-address-list,.sats-sentinel-monitored-addresses .sats-sentinel-address-list>div,.sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>span{min-width:0;max-width:100%;box-sizing:border-box}
+.sats-sentinel-monitored-addresses>summary{display:block;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.sats-sentinel-monitored-addresses .sats-sentinel-address-list code{display:block;width:100%;min-width:0;max-width:100%;white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-all!important}
+@media(max-width:760px){
+  .sats-sentinel-watch-compact-top{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+  .sats-sentinel-watch-compact .sats-sentinel-watch-actions{display:grid!important;grid-template-columns:1fr 1fr;width:100%;min-width:0}
+  .sats-sentinel-watch-compact .sats-sentinel-watch-actions button{width:100%;min-width:0}
+  .sats-sentinel-monitored-addresses{width:100%!important;max-width:100%!important;overflow:hidden!important;contain:inline-size}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list{display:grid!important;grid-template-columns:minmax(0,1fr)!important;width:100%!important;max-width:100%!important;padding:0 6px 8px!important;overflow:hidden!important}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list>div{display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;padding:9px 8px!important}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>span,.sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>small,.sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>strong{display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;grid-column:auto!important;grid-row:auto!important;text-align:left!important;white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+  .sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>small,.sats-sentinel-monitored-addresses .sats-sentinel-address-list>div>strong{margin-top:4px}
+}
+
+/* rc14: explicit per-wallet accordion. Hidden really means hidden, even though
+   the expanded body normally uses display:grid. */
+.sats-sentinel-watch-body[hidden],.locked-wallet-card-body[hidden]{display:none!important}
+.sats-sentinel-watch-toggle-action{justify-self:end;color:var(--orange);font-size:11px;font-weight:850;white-space:nowrap}
+.sats-sentinel-watch-compact{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+.sats-sentinel-watch-compact>.sats-sentinel-watch-toggle{min-width:0;padding:0}
+.sats-sentinel-watch-compact-actions{display:flex!important;width:auto!important;gap:7px;flex-wrap:nowrap}
+@media(max-width:760px){
+  .sats-sentinel-watch-compact{grid-template-columns:minmax(0,1fr);align-items:stretch}
+  .sats-sentinel-watch-compact-actions{display:grid!important;grid-template-columns:1fr 1fr;width:100%!important}
+  .sats-sentinel-watch-toggle{grid-template-columns:auto minmax(0,1fr) auto!important}
+  .sats-sentinel-watch-toggle-kind{display:none!important}
+  .sats-sentinel-watch-toggle-action{font-size:10px}
+}
+@media(max-width:430px){
+  .sats-sentinel-watch-compact-actions{grid-template-columns:1fr!important}
+}
+
+/* rc15: every watch target is a name-only accordion by default on desktop and mobile. */
+.sats-sentinel-watch-card.is-collapsed,.locked-wallet-card.is-collapsed{padding:13px 16px!important;gap:0!important}
+.sats-sentinel-watch-card.is-collapsed>.sats-sentinel-watch-compact-toggle,.locked-wallet-card.is-collapsed>.sats-sentinel-watch-compact-toggle{width:100%!important;max-width:100%!important;grid-template-columns:auto minmax(0,1fr) auto!important;padding:2px 0!important}
+.sats-sentinel-watch-compact-toggle .sats-sentinel-watch-toggle-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:760px){
+  .sats-sentinel-watch-card.is-collapsed,.locked-wallet-card.is-collapsed{padding:12px 13px!important}
+  .sats-sentinel-watch-compact-toggle{grid-template-columns:auto minmax(0,1fr) auto!important;width:100%!important;max-width:100%!important}
+}
+
+/* rc16: local QR scanner for watch-only address/XPUB/descriptor entry. */
+.wallet-watch-scan-input{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:stretch;min-width:0}
+.wallet-watch-scan-input textarea{min-width:0;width:100%;resize:vertical}
+.wallet-watch-qr-scan{align-self:stretch;white-space:nowrap;min-width:118px}
+.wallet-watch-qr-modal{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.82);backdrop-filter:blur(6px)}
+.wallet-watch-qr-modal.hidden{display:none!important}
+.wallet-watch-qr-dialog{width:min(520px,100%);max-height:calc(100dvh - 36px);overflow:auto;border:1px solid var(--line);border-radius:22px;background:var(--panel);padding:16px;box-shadow:0 24px 90px rgba(0,0,0,.55)}
+.wallet-watch-qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.wallet-watch-qr-video-wrap{position:relative;overflow:hidden;aspect-ratio:1/1;border-radius:18px;background:#000;border:1px solid var(--line)}
+.wallet-watch-qr-video-wrap video{display:block;width:100%;height:100%;object-fit:cover;background:#000}
+.wallet-watch-qr-reticle{position:absolute;inset:18%;border:3px solid rgba(255,255,255,.9);border-radius:18px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}
+.wallet-watch-qr-reticle::before,.wallet-watch-qr-reticle::after{content:"";position:absolute;width:36px;height:36px;border-color:var(--accent);border-style:solid}
+.wallet-watch-qr-reticle::before{left:-3px;top:-3px;border-width:4px 0 0 4px;border-radius:12px 0 0 0}
+.wallet-watch-qr-reticle::after{right:-3px;bottom:-3px;border-width:0 4px 4px 0;border-radius:0 0 12px 0}
+@media(max-width:760px){
+  .wallet-watch-scan-input{grid-template-columns:1fr}
+  .wallet-watch-qr-scan{width:100%;min-width:0;min-height:48px}
+  .wallet-watch-qr-modal{padding:10px}
+  .wallet-watch-qr-dialog{max-height:calc(100dvh - 20px);border-radius:18px;padding:12px}
+}

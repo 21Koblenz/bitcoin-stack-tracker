@@ -1549,10 +1549,61 @@ def _main_score_series(dated: list[tuple[date, float]], normalized: Mapping[str,
     return scores
 
 
+def calculate_buy_opportunity_history_scores(
+    history: Mapping[str, Any], current_price: Any = None, *, currency: str = "EUR",
+    settings: Mapping[str, Any] | None = None, as_of_day: str | date | None = None,
+) -> dict[str, Any]:
+    """Calculate the expensive causal daily score series once for cache reuse.
+
+    Range selection, downsampling and marker decoration are intentionally left to
+    ``calculate_buy_opportunity_history``.  This makes changing chart ranges cheap
+    while preserving the exact same causal score values.
+    """
+    normalized = normalize_buy_opportunity_settings(settings, [currency])
+    if isinstance(as_of_day, date):
+        today = as_of_day
+    elif as_of_day:
+        try:
+            today = date.fromisoformat(str(as_of_day)[:10])
+        except ValueError:
+            today = date.today()
+    else:
+        today = date.today()
+    dated = [(day, price) for day, price in _parse_history(history) if day <= today]
+    current = _positive(current_price)
+    if current is not None:
+        if dated and dated[-1][0] == today:
+            dated[-1] = (today, current)
+        else:
+            dated.append((today, current))
+    if not dated:
+        return {
+            "currency": str(currency).upper(),
+            "scores": {},
+            "score_version": SCORE_VERSION,
+            "settings": normalized,
+            "source_points": 0,
+        }
+    scores = _main_score_series(dated, normalized)
+    score_map = {
+        dated[index][0].isoformat(): float(score)
+        for index, score in enumerate(scores)
+        if score is not None
+    }
+    return {
+        "currency": str(currency).upper(),
+        "scores": score_map,
+        "score_version": SCORE_VERSION,
+        "settings": normalized,
+        "source_points": len(dated),
+    }
+
+
 def calculate_buy_opportunity_history(
     history: Mapping[str, Any], current_price: Any, *, currency: str = "EUR",
     settings: Mapping[str, Any] | None = None, as_of_day: str | date | None = None,
     start_day: str | date | None = None, max_points: int = 360, marker_interval_years: int = 0,
+    precomputed_scores: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reconstruct the causal historical main score efficiently in one pass."""
     normalized = normalize_buy_opportunity_settings(settings, [currency])
@@ -1572,7 +1623,10 @@ def calculate_buy_opportunity_history(
         if dated and dated[-1][0] == today: dated[-1] = (today,current)
         else: dated.append((today,current))
     if not dated: return {"currency":str(currency).upper(),"points":[],"marker_points":[],"settings":normalized}
-    scores = _main_score_series(dated, normalized)
+    if isinstance(precomputed_scores, Mapping):
+        scores = [_finite(precomputed_scores.get(day.isoformat())) for day,_price in dated]
+    else:
+        scores = _main_score_series(dated, normalized)
     eligible = [i for i,score in enumerate(scores) if score is not None and (start is None or dated[i][0] >= start)]
     thresholds=normalized["thresholds"]
     marker_detail_cache: dict[int, dict[str, Any]] = {}

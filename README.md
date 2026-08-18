@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.12
+# Bitcoin Stack Tracker v0.21.0.13
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -73,6 +73,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - causal historical market-assessment chart with BTC-price overlay, crosshair values, configurable price opacity and linear/log price axis
 - optional **causal EMA smoothing** (Off / 3 / 5 / 7 / 14 / 30 points); display-only and shared with the overview-chart overlay
 - overview chart mode **Bitcoin price + market assessment** with an independent linear score axis that auto-scales to the visible score range
+- real short-range assessment snapshots without extra model work: **1 h on 1 day · 6 h on week-to-date/1 week · 12 h on month-to-date/30 days**; snapshots come from the existing five-minute current-score run, are not interpolated, and are retained for up to 45 days
 - bottom/top zone and confirmation diagnostics, configurable weights, thresholds and adaptive volatility/cycle windows
 - stack history
 - portfolio value
@@ -92,7 +93,8 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - explicit source selection is **fail closed**: if the selected own source is down, Sentinel reports offline/partial and never silently switches to a public provider
 - local/private Fulcrum/electrs/Mempool targets may be queried directly over LAN; `.onion` and public targets use Tor with remote DNS
 - Fulcrum/electrs support Electrum scripthash balance/history/UTXO queries; TLS and exact SHA-256 certificate pinning support self-signed Fulcrum certificates
-- encrypted device-bound runtime cache stores concrete derived addresses/scripts, not XPUB/descriptor secrets
+- separate device-bound AES-256-GCM Sentinel runtime vault stores the public watch-only material required for 24/7 locked monitoring (address/XPUB/descriptor, derived addresses and connection metadata); it never stores seeds, private keys, xprv or spend/signing keys
+- when the portfolio vault is locked, the entire Sentinel wallet/address/balance/source card is **hidden by default** and its data is not requested by the locked frontend; an unlocked per-browser/per-device option can explicitly show the watch-only card without changing background monitoring or notifications
 - movement journal with sender → direction → recipient flow, configurable categories, notes, thresholds and paging; TXIDs/addresses can link to the separately configured Mempool explorer
 - Home Assistant events, persistent notifications, multiple `notify.*` services, self-hosted ntfy and webhooks with discreet/normal/detailed payloads
 - removing a watch entry also permanently purges that monitor's journal history from the encrypted Sentinel cache
@@ -167,19 +169,22 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.12**. This maintenance release builds on **v0.21.0.11** and corrects Sats Sentinel XPUB/YPUB/ZPUB/descriptor address discovery plus the per-watch balance/status display.
+Current project version: **v0.21.0.13**. This release consolidates the post-v0.21.0.12 RC line through RC20 and fixes HD-wallet false-zero discovery, Home Assistant timer/CPU regressions, Companion QR scanning and stale wallet-card frontend state.
 
-#### Changes since v0.21.0.11
+#### Changes since v0.21.0.12
 
-- **Receive is a true gap limit:** Sentinel keeps every used receive address under monitoring and continues deriving until the configured number of consecutive unused receive addresses has been reached. Five used receive addresses with gap 2 therefore monitor indexes 0–6.
-- **Change uses the same independent logic:** the change branch is scanned separately with its own gap limit. Used change addresses never consume the configured reserve count.
-- **Automatic forward extension:** a device-bound encrypted standby pool contains concrete pre-derived addresses only. When a reserve address becomes used, Sentinel can extend the active range without storing the XPUB/descriptor in the runtime cache.
-- **Correct watch-card balance/status:** the lightweight 15-second status refresh keeps privacy-safe per-monitor aggregates. When the transaction overview is loaded, its authoritative Current wallet balance is reused by the watch card so both balance displays remain identical.
-- **Restart-safe Sentinel state:** Fulcrum/Electrum settings, saved watch targets and encrypted derived-address runtime coverage are restored across Home Assistant restarts.
-- **Non-blocking XPUB saves:** saving an HD watch target persists immediately; the long Fulcrum gap scan continues in a Home Assistant background task instead of timing out the UI request.
-- **Clearer watch cards:** XPUB/descriptor targets show the actual active split, for example `Receive 7 · Change 5`, alongside the total derived-address and UTXO counts.
-- **Stable frontend release layout retained:** v0.21.0.12 continues to overwrite only `index.html`, `panel.js`, `app.js`, `style.css` and `performance-math.js`; no version/hash-named frontend files are created and no recurring GitHub cleanup is required.
-- **Quality assurance:** **502 tests + 8 subtests passed**, plus Python compile, JavaScript syntax, JSON/SBOM parsing and performance-math checks.
+- **HD discovery bootstrap:** existing small Gap values remain user-controlled, but initial discovery checks a standard 20-address window before declaring a branch unused. New HD monitors default to Receive 20 / Change 20.
+- **xpub Auto script detection:** historical activity resolves native SegWit, nested SegWit, Taproot or legacy; plain xpub serialization is no longer treated as a definitive legacy script hint.
+- **Locked Sentinel privacy:** the encrypted runtime vault keeps Sentinel monitoring alive while the portfolio vault is locked, but the locked screen hides the entire Sentinel wallet/address/balance/source card by default and does not fetch that management payload. An unlocked local display option can opt back in; monitoring/alerts stay active either way.
+- **Lower Fulcrum/electrs load:** bounded batches/yields, hourly sliced reconciliation and coalesced runtime-store writes reduce Core/storage churn.
+- **Market-assessment performance:** one shared current-score executor cache plus a persistent causal history-score cache. The price chart remains live while the CPU-heavy current score is refreshed at most every five minutes from the newest quote. Those existing model runs also feed a lightweight public intraday snapshot store (1 h / 6 h / 12 h display buckets for short overview ranges) without any additional model calculation. A newly added or corrected durable daily history value changes the content signature, rebuilds the daily score series once and immediately stores the new generation persistently.
+- **Vault timer fix:** old callback registrations are cancelled/rebound and the expiry worker no longer accepts Home Assistant's datetime tick as the `hass` argument.
+- **Companion QR fix:** scan results/abort are handled by external-bus message type with a three-second startup handshake.
+- **Collapsed wallet cards:** cards default collapsed and the v5 local preference key resets stale production-browser state once.
+- **Bounded journal:** Sentinel retains the newest 5,000 activity rows.
+- **Validation:** dedicated release/security, functional/performance, current-score-cache and persistent history-cache regressions pass on the final build. The uploaded RC20 component archive did not contain the full repository test suite, so the previous 502+8 result is not represented as rerun.
+
+**After updating, fully restart Home Assistant Core and hard-reload the frontend.**
 
 The **Tor Gateway remains at v0.21.0.3**.
 
@@ -275,6 +280,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - kausaler historischer Markteinschätzungs-Chart mit BTC-Preis-Overlay, Fadenkreuzwerten, einstellbarer Preis-Deckkraft und linearer/logarithmischer Preisachse
 - optionale **kausale EMA-Glättung** (Aus / 3 / 5 / 7 / 14 / 30 Punkte); rein visuell und identisch für das Startseiten-Overlay
 - Startseiten-Chartmodus **Bitcoin-Kurs + Markteinschätzung** mit eigener linearer Scoreachse, die auf den sichtbaren Scorebereich skaliert
+- echte Kurzzeit-Score-Snapshots ohne zusätzliche Modelllast: **1 h bei Heute · 6 h bei Seit Wochenbeginn/1 Woche · 12 h bei Seit Monatsbeginn/30 Tage**; die Punkte stammen aus der bestehenden 5-Minuten-Current-Score-Berechnung, werden nicht interpoliert und bis zu 45 Tage gespeichert
 - Boden-/Top-Zonen und Bestätigungsdiagnostik, einstellbare Gewichte, Schwellen sowie adaptive Volatilitäts-/Zyklusfenster
 - Stack-Verlauf
 - Portfoliowert
@@ -294,7 +300,8 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - explizite Quellenwahl ist **Fail Closed**: fällt die gewählte eigene Quelle aus, meldet Sentinel offline/teilweise und wechselt niemals heimlich zu einem öffentlichen Provider
 - lokale/private Fulcrum-/electrs-/Mempool-Ziele dürfen direkt im LAN laufen; `.onion` und öffentliche Ziele gehen über Tor mit Remote-DNS
 - Fulcrum/electrs nutzen Electrum-Scripthash-Abfragen für Balance/History/UTXOs; TLS und exaktes SHA-256-Zertifikat-Pinning unterstützen selbstsignierte Fulcrum-Zertifikate
-- verschlüsselter gerätegebundener Runtime-Cache enthält konkrete abgeleitete Adressen/Scripts, nicht XPUB-/Descriptor-Geheimnisse
+- separater gerätegebunden AES-256-GCM-verschlüsselter Sentinel-Runtime-Tresor enthält das für die 24/7-Überwachung bei gesperrtem Tresor nötige öffentliche Watch-only-Material (Adresse/XPUB/Descriptor, abgeleitete Adressen und Verbindungsmetadaten); niemals Seeds, Private Keys, xprv oder Spend-/Signierschlüssel
+- bei gesperrtem Portfolio-Tresor ist die komplette Sentinel-Wallet-/Adress-/Bestands-/Quellenkarte **standardmäßig verborgen** und wird vom gesperrten Frontend gar nicht angefordert; im entsperrten Sentinel-Bereich kann die Anzeige lokal pro Browser/Gerät ausdrücklich aktiviert werden, ohne Überwachung oder Benachrichtigungen zu beeinflussen
 - Bewegungsjournal mit Sender → Richtung → Empfänger, Kategorien, Notizen, Schwellen und Pagination; TXIDs/Adressen können auf den getrennt konfigurierten Mempool-Explorer verlinken
 - Home-Assistant-Events, Persistent Notifications, mehrere `notify.*`-Dienste, self-hosted ntfy und Webhooks mit diskreter/normaler/detaillierter Darstellung
 - beim Entfernen eines Watch-Eintrags wird auch dessen komplette Journal-Historie dauerhaft aus dem verschlüsselten Sentinel-Cache gelöscht
@@ -369,19 +376,22 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.12**. Dieses Wartungsrelease baut auf **v0.21.0.11** auf und korrigiert die Adresssuche von Sats Sentinel für XPUB/YPUB/ZPUB und Descriptoren sowie die Bestands-/Statusanzeige pro Watch-Eintrag.
+Aktueller Projektstand: **v0.21.0.13**. Dieses Release bündelt die RC-Linie nach v0.21.0.12 bis RC20 und behebt HD-Wallet-False-Zero-Erkennung, Home-Assistant-Timer-/CPU-Regressions, Companion-QR-Scanning und veralteten Wallet-Card-Frontend-Zustand.
 
-#### Änderungen seit v0.21.0.11
+#### Änderungen seit v0.21.0.12
 
-- **Receive ist ein echtes Gap-Limit:** Sentinel überwacht weiterhin jede bereits benutzte Receive-Adresse und leitet so lange weiter ab, bis die eingestellte Zahl aufeinanderfolgender unbenutzter Receive-Adressen erreicht ist. Fünf benutzte Receive-Adressen mit Gap 2 ergeben damit die überwachten Indizes 0–6.
-- **Change verwendet dieselbe unabhängige Logik:** Der Change-Branch wird separat mit seinem eigenen Gap-Limit gescannt. Bereits benutzte Change-Adressen verbrauchen die eingestellte Reserve nicht.
-- **Automatisches Nachrücken:** Ein gerätegebunden verschlüsselter Standby-Pool enthält ausschließlich konkrete vorab abgeleitete Adressen. Wird eine Reserveadresse benutzt, kann Sentinel den aktiven Bereich erweitern, ohne XPUB/Descriptor im Runtime-Cache zu speichern.
-- **Korrekte Bestands-/Statusanzeige:** Der leichte 15-Sekunden-Statusrefresh behält datenschutzfreundliche Aggregate pro Watch-Eintrag. Sobald die Transaktionsübersicht geladen wurde, übernimmt die Watch-Karte deren maßgeblichen „Aktuellen Wallet-Bestand“, damit beide Bestandsanzeigen identisch bleiben.
-- **Neustartfester Sentinel-Zustand:** Fulcrum-/Electrum-Einstellungen, gespeicherte Watch-Ziele und die verschlüsselte Runtime-Abdeckung der abgeleiteten Adressen werden über Home-Assistant-Neustarts wiederhergestellt.
-- **Nicht-blockierendes XPUB-Speichern:** Ein HD-Watch-Ziel wird sofort dauerhaft gespeichert; der lange Fulcrum-Gap-Scan läuft danach als Home-Assistant-Hintergrundtask weiter, statt den UI-Request in einen Timeout laufen zu lassen.
-- **Eindeutigere Watch-Karten:** XPUB-/Descriptor-Ziele zeigen die tatsächlich aktive Aufteilung, zum Beispiel `Receive 7 · Change 5`, zusätzlich zur Gesamtzahl der abgeleiteten Adressen und UTXOs.
-- **Stabile Frontend-Release-Struktur bleibt erhalten:** v0.21.0.12 überschreibt weiterhin nur `index.html`, `panel.js`, `app.js`, `style.css` und `performance-math.js`; es entstehen keine versions-/hashbasierten Frontend-Dateien und bei GitHub ist kein wiederkehrendes Aufräumen nötig.
-- **Qualitätssicherung:** **502 Tests + 8 Subtests bestanden**, zusätzlich Python-Compile, JavaScript-Syntax, JSON-/SBOM-Parsing und Performance-Math-Prüfungen.
+- **HD-Discovery-Bootstrap:** bestehende kleine Gap-Werte bleiben benutzergesteuert, aber die Initialsuche prüft 20 Adressen, bevor ein Branch als unbenutzt gilt. Neue HD-Watches starten mit Receive 20 / Change 20.
+- **xpub-Auto-Script-Erkennung:** Historie entscheidet zwischen Native SegWit, Nested SegWit, Taproot und Legacy; das nackte xpub-Präfix gilt nicht mehr als eindeutiger Legacy-Hinweis.
+- **Locked-Sentinel-Privatsphäre:** Der verschlüsselte Runtime-Tresor hält die Sentinel-Überwachung bei gesperrtem Portfolio-Tresor aktiv, aber der Sperrbildschirm blendet die komplette Wallet-/Adress-/Bestands-/Quellenkarte standardmäßig aus und lädt dieses Management-Payload nicht. Eine lokale Anzeigeoption kann sie bewusst wieder einblenden; Überwachung/Alarme laufen in beiden Fällen weiter.
+- **Weniger Fulcrum/electrs-Last:** begrenzte Batches/Yields, stündlich geslictes Reconcile und zusammengefasste Runtime-Store-Writes reduzieren Core-/Storage-Churn.
+- **Markteinschätzungs-Performance:** Der Kurschart bleibt live, der rechenintensive aktuelle Score wird dagegen höchstens alle fünf Minuten gemeinsam im Executor mit dem dann neuesten Kurs berechnet. Diese ohnehin vorhandenen Modellläufe speisen zusätzlich einen kleinen öffentlichen Intraday-Snapshot-Store; die Übersicht verdichtet echte Werte auf 1 h / 6 h / 12 h, ohne zusätzliche Modellberechnung. Die kausale History-Score-Serie liegt persistent in Home Assistant und wird nur bei geänderten Modellparametern/Modellversion/Währung oder historischen Tageskursen neu aufgebaut. Overlay-Requests sind pro Zeitraum race-sicher dedupliziert; kurze Ansichten erhalten zusätzlich einen unsichtbaren historischen Vorlauf.
+- **Vault-Timer-Fix:** alte Callback-Registrierungen werden entfernt/neu gebunden; der Expiry-Worker kann den datetime-Tick nicht mehr als `hass` erhalten.
+- **Companion-QR-Fix:** Scan-Ergebnis/Abbruch werden nach External-Bus-Nachrichtentyp mit 3-Sekunden-Start-Handshake verarbeitet.
+- **Eingeklappte Wallet-Karten:** Standard eingeklappt; v5-Local-Preference setzt veralteten Produktiv-Browser-Zustand einmalig zurück.
+- **Begrenztes Journal:** Sentinel behält die neuesten 5.000 Aktivitätseinträge.
+- **Prüfung:** statische/Security-, Funktions-/Performance-, Current-Cache- sowie persistente History-Cache-/Overlay-Regressionen bestanden. Das hochgeladene RC20-Component-Archiv enthielt nicht die komplette Repository-Testsuite; das frühere 502+8-Ergebnis wird nicht als erneut ausgeführt dargestellt.
+
+**Nach dem Update Home Assistant Core vollständig neu starten und das Frontend hart neu laden.**
 
 Das **Tor Gateway bleibt v0.21.0.3**.
 

@@ -9,12 +9,12 @@ from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, VERSION
+from .const import DOMAIN, FRONTEND_BUILD, FRONTEND_CACHE_REVISION, VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL_PATH = "bitcoin-stack-tracker"
-PANEL_ELEMENT = "bitcoin-stack-tracker-panel"
+PANEL_ELEMENT = "bitcoin-stack-tracker-panel-" + "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_BUILD.lower()).strip("-")
 STATIC_URL = "/api/bitcoin_stack_tracker/frontend"
 
 
@@ -61,12 +61,14 @@ async def async_register_native_panel(hass: HomeAssistant) -> bool:
             frontend_url_path=PANEL_URL_PATH,
             sidebar_title="Bitcoin Stack",
             sidebar_icon="mdi:bitcoin",
-            module_url=f"{STATIC_URL}/panel.js?v={VERSION}",
+            module_url=f"{STATIC_URL}/panel.js?v={FRONTEND_BUILD}&r={FRONTEND_CACHE_REVISION}",
             embed_iframe=False,
             require_admin=False,
             config={
-                "frontend_url": f"{STATIC_URL}/index.html?native=1&v={VERSION}",
+                "frontend_url": f"{STATIC_URL}/index.html?native=1&v={FRONTEND_BUILD}&r={FRONTEND_CACHE_REVISION}",
                 "version": VERSION,
+                "frontend_build": FRONTEND_BUILD,
+                "frontend_cache_revision": FRONTEND_CACHE_REVISION,
                 "architecture": "native-core-panel",
             },
         )

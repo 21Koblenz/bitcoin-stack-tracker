@@ -1,10 +1,11 @@
 """Privacy-first watch-only Bitcoin wallet monitoring.
 
-The full watch configuration (address/xpub/descriptor and labels) is stored by the
-main encrypted ledger vault.  This module keeps only a device-bound encrypted
-runtime cache containing the concrete addresses that must remain observable while
-the user vault is locked.  Public mempool requests are routed through the existing
-fail-closed Tor policy; local private mempool instances may be contacted directly.
+The authoritative watch configuration is stored by the main encrypted ledger vault.
+A separate device-bound AES-GCM runtime vault keeps the public watch-only material
+(address/xpub/descriptor), derived concrete addresses and connection metadata needed
+for monitoring/owner management while the user vault is locked. It never stores
+seeds, private extended keys or spend keys. Public requests use the existing
+fail-closed Tor policy; local private nodes may be contacted directly.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
+from homeassistant.util.ssl import client_context, client_context_no_verify
 
 from .const import (
     CONF_BASE_URL,
@@ -62,8 +64,16 @@ WATCH_STATUS_EVENT = "bitcoin_stack_tracker_wallet_monitor_status"
 WATCH_STORAGE_VERSION = 1
 WATCH_STORAGE_KEY = "bitcoin_stack_tracker.wallet_watch_runtime"
 WATCH_CACHE_SCHEMA = 1
+WATCH_ENDPOINT_STORAGE_VERSION = 1
+WATCH_ENDPOINT_STORAGE_KEY = "bitcoin_stack_tracker.wallet_watch_endpoint"
+WATCH_ENDPOINT_SCHEMA = 1
 MAX_MONITORS = 32
 MAX_DERIVED_PER_BRANCH = 20  # maximum configurable gap limit per branch
+# BIP44-style restore discovery uses a 20-address gap. Older Sentinel builds
+# accidentally defaulted HD monitors to 2, so initial discovery must look far
+# enough to recover already-used addresses without silently rewriting a user's
+# saved custom gap setting.
+HD_DISCOVERY_BOOTSTRAP_ADDRESSES = 20
 MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH = 500
 GAP_STANDBY_ADDRESSES_PER_BRANCH = 20
 MAX_RUNTIME_ADDRESSES = 4096
@@ -77,16 +87,26 @@ _ALLOWED_WATCH_CATEGORIES = {"own", "exchange", "interesting", "incident", "othe
 _ALLOWED_LOG_DISPLAY_MODES = {"count", "days", "unlimited"}
 MAX_LOG_DISPLAY_COUNT = 500
 MAX_LOG_DISPLAY_DAYS = 36500
+# Bound the encrypted in-memory/persistent Sentinel journal. "Unlimited" means
+# no display filter, not unbounded Home Assistant RAM growth.
+MAX_STORED_ACTIVITY_LOG = 5000
 LOG_PAGE_SIZE = 25
 DEFAULT_LOG_PAGE_SIZE = 10
 ALLOWED_TX_OVERVIEW_LIMITS = {0, 5, 10, 25, 50, 100}
 DEFAULT_TX_OVERVIEW_LIMIT = 10
 TX_OVERVIEW_PAGE_SIZE = 25
+TX_OVERVIEW_MAX_PREVOUT_TXS_PER_TRANSACTION = 64
 SUMMARY_REQUEST_TIMEOUT_SECONDS = 20
 TX_REQUEST_TIMEOUT_SECONDS = 45
 ELECTRUM_REQUEST_TIMEOUT_SECONDS = 30
 ELECTRUM_MAX_LINE_BYTES = 16 * 1024 * 1024
-ELECTRUM_BALANCE_RECONCILE_SECONDS = 15 * 60
+ELECTRUM_BALANCE_RECONCILE_SECONDS = 60 * 60
+ELECTRUM_STATUS_BATCH_SIZE = 20
+ELECTRUM_BASELINE_BATCH_SIZE = 20
+ELECTRUM_RECONCILE_BATCH_SIZE = 8
+ELECTRUM_BATCH_YIELD_SECONDS = 0.02
+GAP_DISCOVERY_YIELD_SECONDS = 0.10
+RUNTIME_PERSIST_MIN_INTERVAL_SECONDS = 5 * 60
 _ALLOWED_QUERY_SOURCES = {"auto", "fulcrum", "electrs", "mempool_own", "mempool_public"}
 _ALLOWED_ELECTRUM_KINDS = {"fulcrum", "electrs"}
 _EXTENDED_PUBLIC_KEY_RE = re.compile(r"^(?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+$")
@@ -94,7 +114,7 @@ _EXTENDED_PUBLIC_KEY_WITH_ORIGIN_RE = re.compile(
     r"^(?:\[[0-9A-Fa-f]{8}(?:/[0-9]+(?:[hH\']?)?)*\])?((?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+)$",
     re.IGNORECASE,
 )
-_DESCRIPTOR_PREFIX_RE = re.compile(r"^(?:pkh\(|wpkh\(|sh\(wpkh\()", re.IGNORECASE)
+_DESCRIPTOR_PREFIX_RE = re.compile(r"^(?:pkh\(|wpkh\(|sh\(wpkh\(|tr\()", re.IGNORECASE)
 
 
 def _compact_watch_source(source: Any) -> str:
@@ -155,10 +175,12 @@ _G = (
     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
 )
 _XPUB_VERSIONS = {
-    0x0488B21E: "p2pkh",       # xpub
+    0x0488B21E: "p2pkh",        # xpub is script-ambiguous; this is only its legacy serialization hint
     0x049D7CB2: "p2sh-p2wpkh", # ypub
     0x04B24746: "p2wpkh",      # zpub
 }
+_ALLOWED_XPUB_ADDRESS_TYPES = {"auto", "p2pkh", "p2sh-p2wpkh", "p2wpkh", "p2tr"}
+_XPUB_AUTO_CANDIDATES = ("p2wpkh", "p2sh-p2wpkh", "p2tr", "p2pkh")
 
 
 def _sha256(data: bytes) -> bytes:
@@ -167,6 +189,11 @@ def _sha256(data: bytes) -> bytes:
 
 def _hash160(data: bytes) -> bytes:
     return hashlib.new("ripemd160", _sha256(data)).digest()
+
+
+def _tagged_hash(tag: str, payload: bytes) -> bytes:
+    tag_hash = _sha256(tag.encode("ascii"))
+    return _sha256(tag_hash + tag_hash + payload)
 
 
 def _b58decode(value: str) -> bytes:
@@ -387,6 +414,22 @@ def _derive_pub(parent: ExtPub, index: int) -> ExtPub:
     return ExtPub(chain_code=digest[32:], pubkey=_encode_pubkey(child), script_type=parent.script_type)
 
 
+def _taproot_output_program(pubkey: bytes) -> bytes:
+    """Return the BIP341/BIP86 key-path-only Taproot witness program."""
+    point = _decode_pubkey(pubkey)
+    x, y = point
+    # BIP340 x-only keys use the even-Y lift of the X coordinate.
+    internal = (x, y if y % 2 == 0 else (-y) % _P)
+    xonly = internal[0].to_bytes(32, "big")
+    tweak = int.from_bytes(_tagged_hash("TapTweak", xonly), "big")
+    if tweak >= _N:
+        raise ValueError("Invalid Taproot tweak")
+    output = _point_add(internal, _point_mul(tweak))
+    if output is None:
+        raise ValueError("Invalid Taproot output key")
+    return output[0].to_bytes(32, "big")
+
+
 def _pubkey_address(pubkey: bytes, script_type: str) -> str:
     keyhash = _hash160(pubkey)
     if script_type == "p2pkh":
@@ -396,11 +439,27 @@ def _pubkey_address(pubkey: bytes, script_type: str) -> str:
         return _b58check(b"\x05", _hash160(redeem))
     if script_type == "p2wpkh":
         return _bech32_address(keyhash, 0)
+    if script_type == "p2tr":
+        return _bech32_address(_taproot_output_program(pubkey), 1)
     raise ValueError("Unsupported address type")
 
 
-def derive_extpub_addresses(extpub: str, receive_count: int, change_count: int) -> list[dict[str, Any]]:
+def _extpub_root_for_address_type(extpub: str, address_type: str | None = None) -> ExtPub:
     root = _parse_extpub(extpub)
+    requested = str(address_type or "auto").strip().lower()
+    if requested not in _ALLOWED_XPUB_ADDRESS_TYPES:
+        raise ValueError("Invalid XPUB address format")
+    # ypub/zpub carry an unambiguous SLIP-132 script hint. A plain xpub does not:
+    # BIP44/49/84/86 account keys may all be serialized as xpub by wallet software.
+    if requested == "auto":
+        return root
+    return ExtPub(root.chain_code, root.pubkey, requested)
+
+
+def derive_extpub_addresses(
+    extpub: str, receive_count: int, change_count: int, *, address_type: str | None = None
+) -> list[dict[str, Any]]:
+    root = _extpub_root_for_address_type(extpub, address_type)
     result: list[dict[str, Any]] = []
     for branch, count, label in ((0, receive_count, "receive"), (1, change_count, "change")):
         if count <= 0:
@@ -416,11 +475,13 @@ def derive_extpub_addresses(extpub: str, receive_count: int, change_count: int) 
     return result
 
 
-def derive_extpub_branch_address(extpub: str, branch: int, index: int) -> dict[str, Any]:
+def derive_extpub_branch_address(
+    extpub: str, branch: int, index: int, *, address_type: str | None = None
+) -> dict[str, Any]:
     """Derive one concrete receive/change address without exposing private keys."""
     if branch not in {0, 1} or index < 0:
         raise ValueError("Invalid xpub branch/index")
-    root = _parse_extpub(extpub)
+    root = _extpub_root_for_address_type(extpub, address_type)
     branch_key = _derive_pub(root, branch)
     child = _derive_pub(branch_key, index)
     return {
@@ -444,8 +505,11 @@ def _descriptor_payload(value: str) -> tuple[str, int | None, str | None]:
     elif lowered.startswith("pkh(") and lowered.endswith(")"):
         script_type = "p2pkh"
         inner = descriptor[4:-1]
+    elif lowered.startswith("tr(") and lowered.endswith(")"):
+        script_type = "p2tr"
+        inner = descriptor[3:-1]
     else:
-        raise ValueError("Only pkh(), wpkh() and sh(wpkh()) single-key descriptors are supported")
+        raise ValueError("Only pkh(), wpkh(), sh(wpkh()) and tr() single-key descriptors are supported")
     inner = re.sub(r"^\[[^\]]+\]", "", inner.strip())
     match = re.search(r"((?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+)(/.*)?$", inner)
     if not match:
@@ -461,9 +525,14 @@ def _descriptor_payload(value: str) -> tuple[str, int | None, str | None]:
         if len(fixed) > 1:
             raise ValueError("Only one fixed branch before /* is supported")
         if fixed:
-            if fixed[0] not in {"0", "1"}:
-                raise ValueError("Descriptor branch must be /0/* or /1/*")
-            branch = int(fixed[0])
+            token = fixed[0].replace(" ", "")
+            if token == "<0;1>":
+                # Standard multipath descriptor: expand to receive /0/* and change /1/*.
+                branch = None
+            elif token in {"0", "1"}:
+                branch = int(token)
+            else:
+                raise ValueError("Descriptor branch must be /0/*, /1/* or /<0;1>/*")
     return extpub, branch, script_type
 
 
@@ -620,6 +689,11 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
             source = _compact_watch_source(source)
         receive_count = max(0, min(MAX_DERIVED_PER_BRANCH, int(item.get("receive_count") or 0)))
         change_count = max(0, min(MAX_DERIVED_PER_BRANCH, int(item.get("change_count") or 0)))
+        address_type = str(item.get("address_type") or "auto").strip().lower()
+        if address_type not in _ALLOWED_XPUB_ADDRESS_TYPES:
+            raise ValueError(f"Sats Sentinel monitor '{label}': invalid XPUB address format")
+        if kind != "xpub":
+            address_type = "auto"
         try:
             history_limit_raw = int(item.get("history_limit", DEFAULT_TX_OVERVIEW_LIMIT))
         except (TypeError, ValueError):
@@ -643,6 +717,9 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
             category = "other"
         note = str(item.get("note") or "").strip()[:500]
         min_notify_sats = max(0, min(2_100_000_000_000_000, int(item.get("min_notify_sats") or 0)))
+        monitor_detail = str(item.get("notification_detail") or detail).strip().lower()
+        if monitor_detail not in {"discreet", "normal", "detailed"}:
+            raise ValueError(f"Sats Sentinel monitor '{label}': invalid notification detail")
         monitors.append({
             "id": monitor_id,
             "label": label,
@@ -651,11 +728,16 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
             "enabled": bool(item.get("enabled", True)),
             "receive_count": receive_count,
             "change_count": change_count,
+            "address_type": address_type,
             "history_limit": history_limit,
             "created_at": created_at,
             "category": category,
             "note": note,
             "min_notify_sats": min_notify_sats,
+            # The server-level notification_detail is only the creation default.
+            # Once a watch target exists, its own mode is authoritative for all
+            # activity notifications from that wallet/address.
+            "notification_detail": monitor_detail,
             "notify_incoming": bool(item.get("notify_incoming", True)),
             "notify_outgoing": bool(item.get("notify_outgoing", True)),
             "notify_ha_event": bool(item.get("notify_ha_event", True)),
@@ -693,6 +775,14 @@ def normalize_watch_config(raw: Any) -> dict[str, Any]:
     electrum_pinned_cert_pem, electrum_pinned_cert_sha256 = _normalize_electrum_pinned_certificate(
         data.get("electrum_pinned_cert_pem")
     )
+    # The device-bound Sentinel runtime vault persists only the public certificate
+    # SHA-256 pin, not the PEM text. Accept that already-normalized pin when the
+    # PEM is absent so locked-vault monitor edits can retain the exact TLS trust
+    # boundary without requiring the portfolio vault to be open.
+    if not electrum_pinned_cert_sha256:
+        cached_pin = str(data.get("electrum_pinned_cert_sha256") or "").strip().lower()
+        if cached_pin and re.fullmatch(r"[0-9a-f]{64}", cached_pin):
+            electrum_pinned_cert_sha256 = cached_pin
     if electrum_pinned_cert_pem and not electrum_tls:
         raise ValueError("A pinned Fulcrum/Electrum certificate requires TLS / SSL")
     if electrum_host and not electrum_verify_ssl and not electrum_pinned_cert_sha256:
@@ -731,7 +821,16 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
         if kind == "address":
             derived = [{"address": monitor["value"], "branch": "fixed", "index": None}]
         elif kind == "xpub":
-            derived = derive_extpub_addresses(monitor["value"], monitor["receive_count"], monitor["change_count"])
+            seed_type = str(monitor.get("address_type") or "auto")
+            # For ambiguous plain xpubs the real script type is discovered against
+            # Fulcrum/electrs in the background. Native SegWit is the least-surprising
+            # temporary seed while discovery is pending.
+            if seed_type == "auto" and str(monitor["value"]).lower().startswith("xpub"):
+                seed_type = "p2wpkh"
+            derived = derive_extpub_addresses(
+                monitor["value"], monitor["receive_count"], monitor["change_count"],
+                address_type=seed_type,
+            )
         else:
             derived = derive_descriptor_addresses(monitor["value"], monitor["receive_count"], monitor["change_count"])
         for row in derived:
@@ -752,6 +851,7 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
                 "notify_outgoing": monitor["notify_outgoing"],
                 "category": monitor.get("category", "other"),
                 "min_notify_sats": int(monitor.get("min_notify_sats") or 0),
+                "notification_detail": str(monitor.get("notification_detail") or config.get("notification_detail") or "discreet"),
                 "notify_ha_event": bool(monitor.get("notify_ha_event", True)),
                 "notify_persistent": bool(monitor.get("notify_persistent", True)),
                 "notify_services": bool(monitor.get("notify_services", True)),
@@ -769,6 +869,38 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
             })
     if len(addresses) > MAX_RUNTIME_ADDRESSES:
         raise ValueError(f"Sats Sentinel runtime address limit is {MAX_RUNTIME_ADDRESSES}")
+    # Watch-only monitor catalog for the separately encrypted Sentinel vault.
+    # XPUB/YPUB/ZPUB/descriptor/address material contains no spending keys, but it
+    # is privacy-sensitive. It is therefore stored only inside the device-bound
+    # AES-256-GCM runtime vault so Sentinel can remain fully manageable while the
+    # password-protected portfolio vault is locked. Seeds/private extended keys
+    # are rejected by normalize_watch_config before this point.
+    monitor_catalog = [
+        {
+            "id": str(monitor.get("id") or ""),
+            "label": str(monitor.get("label") or ""),
+            "kind": str(monitor.get("kind") or "address"),
+            "watch_value": str(monitor.get("value") or ""),
+            "category": str(monitor.get("category") or "other"),
+            "enabled": bool(monitor.get("enabled", True)),
+            "receive_count": int(monitor.get("receive_count") or 0),
+            "change_count": int(monitor.get("change_count") or 0),
+            "address_type": str(monitor.get("address_type") or "auto"),
+            "history_limit": int(monitor.get("history_limit") if monitor.get("history_limit") is not None else 10),
+            "note": str(monitor.get("note") or "")[:500],
+            "min_notify_sats": int(monitor.get("min_notify_sats") or 0),
+            "notification_detail": str(monitor.get("notification_detail") or config.get("notification_detail") or "discreet"),
+            "notify_incoming": bool(monitor.get("notify_incoming", True)),
+            "notify_outgoing": bool(monitor.get("notify_outgoing", True)),
+            "notify_ha_event": bool(monitor.get("notify_ha_event", True)),
+            "notify_persistent": bool(monitor.get("notify_persistent", True)),
+            "notify_services": bool(monitor.get("notify_services", True)),
+            "notify_external": bool(monitor.get("notify_external", True)),
+            "created_at": str(monitor.get("created_at") or "")[:40],
+        }
+        for monitor in config.get("monitors", [])
+        if isinstance(monitor, dict) and str(monitor.get("id") or "")
+    ]
     return {
         "schema": WATCH_CACHE_SCHEMA,
         "enabled": bool(config.get("enabled")),
@@ -787,8 +919,11 @@ def runtime_cache_from_config(config: dict[str, Any]) -> dict[str, Any]:
         "notification_detail": str(config.get("notification_detail") or "discreet"),
         "notification_services": list(config.get("notification_services") or []),
         "notification_targets": deepcopy(config.get("notification_targets") or []),
+        "monitor_catalog": monitor_catalog,
+        "pending_vault_sync": False,
         "addresses": addresses,
         "activity_log": [],
+        "activity_log_trimmed_total": 0,
         "last_poll_at": None,
         "last_success_at": None,
         "last_error": None,
@@ -810,8 +945,17 @@ class WalletWatchRuntimeStore:
         self.hass = hass
         self.entry_id = entry_id
         self._store = Store[dict[str, Any]](hass, WATCH_STORAGE_VERSION, f"{WATCH_STORAGE_KEY}.{entry_id}")
+        # Connection settings live in a second device-bound encrypted store.
+        # It is intentionally independent from the runtime-cache schema so a
+        # custom-component update/reload cannot make a saved Fulcrum/electrs
+        # endpoint disappear just because runtime state is rebuilt/migrated.
+        self._endpoint_store = Store[dict[str, Any]](
+            hass, WATCH_ENDPOINT_STORAGE_VERSION, f"{WATCH_ENDPOINT_STORAGE_KEY}.{entry_id}"
+        )
         self._device_secret_loader = device_secret_loader
         self.data: dict[str, Any] = runtime_cache_from_config({})
+        self.endpoint_data: dict[str, Any] = {}
+        self._last_save_monotonic = 0.0
 
     async def _key(self) -> bytes:
         secret = await self._device_secret_loader(create=True)
@@ -821,21 +965,121 @@ class WalletWatchRuntimeStore:
             info=b"bitcoin-stack-tracker:wallet-watch-runtime:v1",
         ).derive(secret)
 
-    async def async_load(self) -> None:
-        raw = await self._store.async_load()
+    async def _endpoint_key(self) -> bytes:
+        secret = await self._device_secret_loader(create=True)
+        return HKDF(
+            algorithm=hashes.SHA256(), length=32,
+            salt=self.entry_id.encode("utf-8"),
+            info=b"bitcoin-stack-tracker:wallet-watch-endpoint:v1",
+        ).derive(secret)
+
+    @staticmethod
+    def _endpoint_payload(config: dict[str, Any]) -> dict[str, Any]:
+        """Return the durable Sentinel connection subset.
+
+        No seed/private-key material is ever part of this store.  The server
+        certificate is represented only by its public SHA-256 pin, not the PEM.
+        """
+        return {
+            "schema": WATCH_ENDPOINT_SCHEMA,
+            "query_source": str(config.get("query_source") or "auto"),
+            "electrum_kind": str(config.get("electrum_kind") or "fulcrum"),
+            "electrum_host": str(config.get("electrum_host") or ""),
+            "electrum_port": int(config.get("electrum_port") or 50001),
+            "electrum_tls": bool(config.get("electrum_tls")),
+            "electrum_verify_ssl": bool(config.get("electrum_verify_ssl", True)),
+            "electrum_pinned_cert_sha256": str(config.get("electrum_pinned_cert_sha256") or ""),
+            "allow_public_tor": bool(config.get("allow_public_tor")),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _async_load_endpoint_backup(self) -> dict[str, Any]:
+        raw = await self._endpoint_store.async_load()
         if not isinstance(raw, dict) or raw.get("encrypted") is not True:
-            return
+            self.endpoint_data = {}
+            return {}
         try:
-            key = await self._key()
+            key = await self._endpoint_key()
             nonce = base64.urlsafe_b64decode(str(raw["nonce"]).encode("ascii"))
             ciphertext = base64.urlsafe_b64decode(str(raw["ciphertext"]).encode("ascii"))
-            plain = AESGCM(key).decrypt(nonce, ciphertext, f"wallet-watch:{self.entry_id}".encode())
+            plain = AESGCM(key).decrypt(
+                nonce, ciphertext, f"wallet-watch-endpoint:{self.entry_id}".encode()
+            )
             loaded = json.loads(plain.decode("utf-8"))
-            if isinstance(loaded, dict) and int(loaded.get("schema") or 0) == WATCH_CACHE_SCHEMA:
-                self.data = loaded
-        except Exception as err:
-            self.data = runtime_cache_from_config({})
-            self.data["last_error"] = f"Encrypted Sats Sentinel cache could not be opened: {type(err).__name__}"
+            if isinstance(loaded, dict) and int(loaded.get("schema") or 0) == WATCH_ENDPOINT_SCHEMA:
+                self.endpoint_data = loaded
+                return loaded
+        except Exception:
+            # A damaged endpoint backup must never destroy the richer runtime
+            # cache or prevent Home Assistant from starting.
+            self.endpoint_data = {}
+        return {}
+
+    async def async_save_endpoint_from_config(self, config: dict[str, Any]) -> None:
+        payload = self._endpoint_payload(config)
+        key = await self._endpoint_key()
+        nonce = os.urandom(12)
+        plain = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ciphertext = AESGCM(key).encrypt(
+            nonce, plain, f"wallet-watch-endpoint:{self.entry_id}".encode()
+        )
+        await self._endpoint_store.async_save({
+            "encrypted": True,
+            "format": "AES-256-GCM-device-bound-endpoint-v1",
+            "nonce": base64.urlsafe_b64encode(nonce).decode("ascii"),
+            "ciphertext": base64.urlsafe_b64encode(ciphertext).decode("ascii"),
+        })
+        self.endpoint_data = payload
+
+    def _overlay_endpoint_backup(self) -> None:
+        if not self.endpoint_data:
+            return
+        for key in (
+            "query_source", "electrum_kind", "electrum_host", "electrum_port",
+            "electrum_tls", "electrum_verify_ssl", "electrum_pinned_cert_sha256",
+            "allow_public_tor",
+        ):
+            if key in self.endpoint_data:
+                self.data[key] = deepcopy(self.endpoint_data[key])
+
+    async def async_load(self) -> None:
+        raw = await self._store.async_load()
+        if isinstance(raw, dict) and raw.get("encrypted") is True:
+            try:
+                key = await self._key()
+                nonce = base64.urlsafe_b64decode(str(raw["nonce"]).encode("ascii"))
+                ciphertext = base64.urlsafe_b64decode(str(raw["ciphertext"]).encode("ascii"))
+                plain = AESGCM(key).decrypt(nonce, ciphertext, f"wallet-watch:{self.entry_id}".encode())
+                loaded = json.loads(plain.decode("utf-8"))
+                if isinstance(loaded, dict) and int(loaded.get("schema") or 0) == WATCH_CACHE_SCHEMA:
+                    self.data = loaded
+                    activity_log = [
+                        item for item in self.data.get("activity_log", []) if isinstance(item, dict)
+                    ]
+                    if len(activity_log) > MAX_STORED_ACTIVITY_LOG:
+                        # Existing busy-address installations may have accumulated
+                        # an unbounded journal in older builds. Keep the newest
+                        # records immediately so startup RAM is bounded as well.
+                        activity_log.sort(key=lambda item: str(item.get("detected_at") or ""))
+                        self.data["activity_log"] = activity_log[-MAX_STORED_ACTIVITY_LOG:]
+                        self.data["activity_log_trimmed_total"] = int(
+                            self.data.get("activity_log_trimmed_total") or 0
+                        ) + (len(activity_log) - MAX_STORED_ACTIVITY_LOG)
+                    self._last_save_monotonic = asyncio.get_running_loop().time()
+            except Exception as err:
+                self.data = runtime_cache_from_config({})
+                self.data["last_error"] = f"Encrypted Sats Sentinel cache could not be opened: {type(err).__name__}"
+
+        # Load the source endpoint independently from the larger runtime cache.
+        # This survives integration updates/reloads and also protects against a
+        # future runtime-cache schema migration resetting the node selection.
+        endpoint = await self._async_load_endpoint_backup()
+        if endpoint:
+            self._overlay_endpoint_backup()
+        elif str(self.data.get("electrum_host") or "").strip():
+            # One-time migration for existing installations: seed the durable
+            # endpoint store from an already valid rc14-or-earlier runtime cache.
+            await self.async_save_endpoint_from_config(self.data)
 
     async def async_save(self) -> None:
         key = await self._key()
@@ -848,10 +1092,26 @@ class WalletWatchRuntimeStore:
             "nonce": base64.urlsafe_b64encode(nonce).decode("ascii"),
             "ciphertext": base64.urlsafe_b64encode(ciphertext).decode("ascii"),
         })
+        self._last_save_monotonic = asyncio.get_running_loop().time()
+
+    async def async_save_if_due(self, *, force: bool = False, min_interval: int = RUNTIME_PERSIST_MIN_INTERVAL_SECONDS) -> bool:
+        """Persist runtime state at a bounded cadence to avoid HA storage churn.
+
+        Poll timestamps and unchanged balance snapshots do not need an encrypted
+        disk rewrite every 30/60 seconds. Activity/configuration paths still call
+        ``async_save`` directly; normal polling uses this coalesced path.
+        """
+        now = asyncio.get_running_loop().time()
+        if not force and self._last_save_monotonic > 0 and now - self._last_save_monotonic < max(1, int(min_interval)):
+            return False
+        await self.async_save()
+        return True
 
     async def async_remove(self) -> None:
         await self._store.async_remove()
+        await self._endpoint_store.async_remove()
         self.data = runtime_cache_from_config({})
+        self.endpoint_data = {}
 
     async def async_replace_from_full_config(self, config: dict[str, Any]) -> int:
         source_keys = (
@@ -863,6 +1123,16 @@ class WalletWatchRuntimeStore:
             (str(row.get("monitor_id")), str(row.get("address"))): row
             for row in self.data.get("addresses", []) if isinstance(row, dict)
         }
+        old_catalog = {
+            str(item.get("id") or ""): item
+            for item in self.data.get("monitor_catalog", [])
+            if isinstance(item, dict) and str(item.get("id") or "")
+        }
+        new_monitor_map = {
+            str(item.get("id") or ""): item
+            for item in config.get("monitors", [])
+            if isinstance(item, dict) and str(item.get("id") or "")
+        }
         old_monitor_ids = {
             str(row.get("monitor_id") or "")
             for row in self.data.get("addresses", []) if isinstance(row, dict) and str(row.get("monitor_id") or "")
@@ -873,6 +1143,57 @@ class WalletWatchRuntimeStore:
         new_monitor_ids = {str(item.get("id") or "") for item in config.get("monitors", []) if isinstance(item, dict)}
         removed_monitor_ids = old_monitor_ids - new_monitor_ids
         fresh = runtime_cache_from_config(config)
+        # If the watch-only key itself did not change, keep the complete already
+        # discovered HD range instead of collapsing the wallet to the initial gap
+        # seed addresses. This is especially important for locked edits and source
+        # changes: labels/alerts/server settings must never make used addresses
+        # disappear while a background reconciliation is still running.
+        fresh_keys = {
+            (str(row.get("monitor_id") or ""), str(row.get("address") or ""))
+            for row in fresh.get("addresses", []) if isinstance(row, dict)
+        }
+        for old_row in self.data.get("addresses", []):
+            if not isinstance(old_row, dict):
+                continue
+            monitor_id = str(old_row.get("monitor_id") or "")
+            monitor = new_monitor_map.get(monitor_id)
+            old_mon = old_catalog.get(monitor_id)
+            if not monitor or not old_mon or not monitor.get("enabled", True):
+                continue
+            if str(old_mon.get("kind") or "") != str(monitor.get("kind") or ""):
+                continue
+            if str(old_mon.get("watch_value") or "") != str(monitor.get("value") or ""):
+                continue
+            key = (monitor_id, str(old_row.get("address") or ""))
+            if not key[1] or key in fresh_keys:
+                continue
+            preserved = deepcopy(old_row)
+            branch = str(preserved.get("branch") or "")
+            preserved["gap_limit"] = (
+                int(monitor.get("receive_count") or 0) if branch == "receive"
+                else int(monitor.get("change_count") or 0) if branch == "change"
+                else 0
+            )
+            for setting_key in (
+                "notify_incoming", "notify_outgoing", "category", "min_notify_sats",
+                "notification_detail", "notify_ha_event", "notify_persistent",
+                "notify_services", "notify_external",
+            ):
+                if setting_key == "category":
+                    preserved[setting_key] = str(monitor.get(setting_key) or "other")
+                elif setting_key == "min_notify_sats":
+                    preserved[setting_key] = int(monitor.get(setting_key) or 0)
+                elif setting_key == "notification_detail":
+                    preserved[setting_key] = str(monitor.get(setting_key) or "discreet")
+                else:
+                    preserved[setting_key] = bool(monitor.get(setting_key, True))
+            fresh["addresses"].append(preserved)
+            fresh_keys.add(key)
+        fresh["addresses"].sort(key=lambda row: (
+            str(row.get("monitor_id") or ""),
+            {"fixed": -1, "receive": 0, "change": 1}.get(str(row.get("branch") or ""), 9),
+            -1 if row.get("index") is None else int(row.get("index") or 0),
+        ))
         # Preserve baseline/known tx state for addresses that remain monitored.
         for row in fresh["addresses"]:
             old = old_by_key.get((row["monitor_id"], row["address"]))
@@ -905,8 +1226,54 @@ class WalletWatchRuntimeStore:
             fresh["error_streak"] = 0
             fresh["outage_notified"] = False
         self.data = fresh
+        # A non-empty endpoint from the authoritative full config refreshes the
+        # durable endpoint backup. If the full config is temporarily empty/stale,
+        # keep and re-apply the previous endpoint instead of erasing it.
+        if str(fresh.get("electrum_host") or "").strip():
+            await self.async_save_endpoint_from_config(fresh)
+        elif self.endpoint_data and str(self.endpoint_data.get("electrum_host") or "").strip():
+            self._overlay_endpoint_backup()
         await self.async_save()
         return purged_activity_count
+
+    async def async_update_settings_from_config(self, config: dict[str, Any]) -> bool:
+        """Update server/global Sentinel settings without rebuilding watches.
+
+        Saving a Fulcrum/electrs endpoint, polling interval or global notification
+        default must never collapse an already discovered HD wallet back to the
+        raw gap seed addresses.  The monitor catalog, concrete runtime addresses,
+        baselines, balances, UTXOs and journal therefore remain byte-for-byte
+        intact; only server/global settings are replaced.
+        """
+        normalized = normalize_watch_config(config)
+        source_keys = (
+            "query_source", "electrum_kind", "electrum_host", "electrum_port",
+            "electrum_tls", "electrum_verify_ssl", "electrum_pinned_cert_sha256",
+            "allow_public_tor",
+        )
+        old_source_fingerprint = tuple(self.data.get(key) for key in source_keys)
+        old_enabled = bool(self.data.get("enabled"))
+        for key in (
+            "enabled", "poll_interval_seconds", "query_source", "electrum_kind",
+            "electrum_host", "electrum_port", "electrum_tls",
+            "electrum_verify_ssl", "electrum_pinned_cert_sha256",
+            "allow_public_tor", "persistent_notification", "notification_detail",
+            "notification_services", "notification_targets",
+        ):
+            self.data[key] = deepcopy(normalized.get(key))
+        new_source_fingerprint = tuple(self.data.get(key) for key in source_keys)
+        if new_source_fingerprint != old_source_fingerprint:
+            self.data["last_poll_at"] = None
+            self.data["last_success_at"] = None
+            self.data["last_error"] = None
+            self.data["last_warning"] = None
+            self.data["partial_failures"] = 0
+            self.data["last_partial_at"] = None
+            self.data["error_streak"] = 0
+            self.data["outage_notified"] = False
+        await self.async_save()
+        await self.async_save_endpoint_from_config(self.data)
+        return bool(new_source_fingerprint != old_source_fingerprint or (bool(normalized.get("enabled")) and not old_enabled))
 
 
 def _canonical_mempool_base_url(raw_url: Any) -> str:
@@ -1231,15 +1598,19 @@ class _ElectrumRPCClient:
                 raise ValueError("Direct Electrum connections are allowed only to local/private targets")
             self.reader, self.writer = await asyncio.open_connection(host, port, limit=ELECTRUM_MAX_LINE_BYTES)
         if bool(self.source.get("tls")):
-            context = ssl.create_default_context()
             pinned = str(self.source.get("pinned_cert_sha256") or "").lower()
             verify_ssl = bool(self.source.get("verify_ssl", True))
-            if pinned or not verify_ssl:
-                # Exact certificate pinning intentionally performs its own peer
-                # verification after the TLS handshake. This supports Fulcrum's
-                # common self-signed certificates without disabling authenticity.
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+            # Home Assistant pre-warms and caches these contexts outside the
+            # event loop. ssl.create_default_context() performs blocking disk I/O
+            # (loading CA certificates) and must never run in Sentinel's async poll.
+            # Certificate pinning still performs exact SHA-256 peer verification
+            # after the TLS handshake, so self-signed Fulcrum certificates remain
+            # supported without weakening authenticity.
+            context = (
+                client_context_no_verify()
+                if pinned or not verify_ssl
+                else client_context()
+            )
             assert self.writer is not None
             await self.writer.start_tls(context, server_hostname=host)
             if pinned:
@@ -1640,6 +2011,7 @@ class WalletWatchManager:
         self._lock = asyncio.Lock()
         self._refresh_task: asyncio.Task | None = None
         self._last_poll_monotonic = 0.0
+        self._last_runtime_persist_monotonic = 0.0
         # Some self-hosted mempool deployments expose Esplora-compatible
         # address routes under /api/, others proxy/reimplement the same routes
         # under /api/v1/.  Cache the working prefix per exact same-node base.
@@ -1647,10 +2019,17 @@ class WalletWatchManager:
         self._address_api_prefix_by_base: dict[str, str] = {}
 
     async def async_start(self) -> None:
+        # Defensive against an accidental double-start during entry reloads.
+        # Leaving the old interval callback alive would create duplicate polls.
+        if self._cancel:
+            self._cancel()
+            self._cancel = None
         await self.runtime_store.async_load()
+        # Do not hit Fulcrum while Home Assistant itself is still starting. The
+        # normal timer performs the first poll after the configured interval; a
+        # newly saved/recovered wallet can still schedule its own background scan.
+        self._last_poll_monotonic = asyncio.get_running_loop().time()
         self._cancel = async_track_time_interval(self.hass, self._timer, timedelta(seconds=30))
-        if self.runtime_store.data.get("enabled"):
-            self.hass.async_create_task(self.async_poll(force=True), "Bitcoin Stack Tracker Sats Sentinel startup")
 
     async def async_stop(self) -> None:
         if self._cancel:
@@ -1671,6 +2050,177 @@ class WalletWatchManager:
         if task is not None and not task.done():
             task.cancel()
         self._refresh_task = None
+
+    async def _async_save_runtime_if_due(self, *, force: bool = False) -> bool:
+        """Use coalesced persistence while remaining compatible with test stores."""
+        saver = getattr(self.runtime_store, "async_save_if_due", None)
+        if callable(saver):
+            return bool(await saver(force=force))
+        await self.runtime_store.async_save()
+        return True
+
+    def _runtime_management_config(self) -> dict[str, Any]:
+        """Reconstruct a full watch-only config from the encrypted runtime vault.
+
+        This is used only for owner-authorized Sentinel management while the main
+        portfolio vault is locked.  The runtime vault may contain public watch-only
+        keys (xpub/ypub/zpub/descriptors/addresses), but never seeds/private keys.
+        """
+        data = self.runtime_store.data
+        monitors: list[dict[str, Any]] = []
+        for item in data.get("monitor_catalog") or []:
+            if not isinstance(item, dict):
+                continue
+            watch_value = str(item.get("watch_value") or "")
+            if not watch_value:
+                # Caches created before rc8 did not keep raw watch-only material.
+                # One successful vault unlock repopulates it from the authoritative
+                # password vault before locked editing becomes available. Never
+                # silently drop such a wallet from a locked edit operation.
+                raise ValueError("Locked Sats Sentinel editing needs one successful vault unlock after this update")
+            monitors.append({
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("label") or ""),
+                "kind": str(item.get("kind") or "address"),
+                "value": watch_value,
+                "enabled": bool(item.get("enabled", True)),
+                "receive_count": int(item.get("receive_count") or 0),
+                "change_count": int(item.get("change_count") or 0),
+                "history_limit": int(item.get("history_limit") if item.get("history_limit") is not None else 10),
+                "created_at": str(item.get("created_at") or ""),
+                "category": str(item.get("category") or "other"),
+                "note": str(item.get("note") or ""),
+                "min_notify_sats": int(item.get("min_notify_sats") or 0),
+                "notification_detail": str(item.get("notification_detail") or data.get("notification_detail") or "discreet"),
+                "notify_incoming": bool(item.get("notify_incoming", True)),
+                "notify_outgoing": bool(item.get("notify_outgoing", True)),
+                "notify_ha_event": bool(item.get("notify_ha_event", True)),
+                "notify_persistent": bool(item.get("notify_persistent", True)),
+                "notify_services": bool(item.get("notify_services", True)),
+                "notify_external": bool(item.get("notify_external", True)),
+            })
+        return normalize_watch_config({
+            "enabled": bool(data.get("enabled")),
+            "poll_interval_seconds": int(data.get("poll_interval_seconds") or DEFAULT_POLL_SECONDS),
+            "query_source": str(data.get("query_source") or "auto"),
+            "electrum_kind": str(data.get("electrum_kind") or "fulcrum"),
+            "electrum_host": str(data.get("electrum_host") or ""),
+            "electrum_port": int(data.get("electrum_port") or 50001),
+            "electrum_tls": bool(data.get("electrum_tls")),
+            "electrum_verify_ssl": bool(data.get("electrum_verify_ssl", True)),
+            "electrum_pinned_cert_sha256": str(data.get("electrum_pinned_cert_sha256") or ""),
+            "allow_public_tor": bool(data.get("allow_public_tor")),
+            "persistent_notification": bool(data.get("persistent_notification", True)),
+            "notification_detail": str(data.get("notification_detail") or "discreet"),
+            "notification_services": list(data.get("notification_services") or []),
+            "notification_targets": deepcopy(data.get("notification_targets") or []),
+            "monitors": monitors,
+        })
+
+    def public_locked_management_config(self) -> dict[str, Any]:
+        """Return owner-safe editable monitor metadata without raw watch keys."""
+        data = self.runtime_store.data
+        rows: list[dict[str, Any]] = []
+        for item in data.get("monitor_catalog") or []:
+            if not isinstance(item, dict):
+                continue
+            raw = str(item.get("watch_value") or "")
+            masked = ""
+            if raw:
+                masked = raw if len(raw) <= 18 else f"{raw[:8]}…{raw[-6:]}"
+            rows.append({
+                key: deepcopy(value)
+                for key, value in item.items()
+                if key != "watch_value"
+            } | {
+                "watch_value_masked": masked,
+                "watch_value_available": bool(raw),
+            })
+        return {
+            "enabled": bool(data.get("enabled")),
+            "poll_interval_seconds": int(data.get("poll_interval_seconds") or DEFAULT_POLL_SECONDS),
+            "query_source": str(data.get("query_source") or "auto"),
+            "electrum_kind": str(data.get("electrum_kind") or "fulcrum"),
+            "electrum_host": str(data.get("electrum_host") or ""),
+            "electrum_port": int(data.get("electrum_port") or 50001),
+            "electrum_tls": bool(data.get("electrum_tls")),
+            "electrum_verify_ssl": bool(data.get("electrum_verify_ssl", True)),
+            # The PEM itself intentionally remains in the password vault. The
+            # owner-safe locked view may still show that an exact certificate
+            # pin is configured and which SHA-256 fingerprint is active.
+            "electrum_pinned_cert_sha256": str(data.get("electrum_pinned_cert_sha256") or ""),
+            "allow_public_tor": bool(data.get("allow_public_tor")),
+            "persistent_notification": bool(data.get("persistent_notification", True)),
+            "notification_detail": str(data.get("notification_detail") or "discreet"),
+            "notification_services": list(data.get("notification_services") or []),
+            "monitors": rows,
+            "pending_vault_sync": bool(data.get("pending_vault_sync")),
+        }
+
+    async def async_upsert_runtime_monitor(self, monitor: dict[str, Any]) -> dict[str, Any]:
+        """Edit a watch-only target while the main portfolio vault is locked."""
+        if not isinstance(monitor, dict):
+            raise ValueError("Sats Sentinel watch entry is missing")
+        monitor_id = str(monitor.get("id") or "").strip()
+        if not monitor_id:
+            raise ValueError("Sats Sentinel monitor ID is missing")
+        base = self._runtime_management_config()
+        rows = list(base.get("monitors") or [])
+        existing = next((row for row in rows if str(row.get("id") or "") == monitor_id), None)
+        if existing is None:
+            raise ValueError("Locked-vault editing requires an existing runtime watch target")
+        incoming = deepcopy(existing)
+        for key in (
+            "label", "category", "note", "kind", "receive_count", "change_count",
+            "history_limit", "min_notify_sats", "notification_detail", "notify_incoming",
+            "notify_outgoing", "notify_ha_event", "notify_persistent", "notify_services",
+            "notify_external", "enabled",
+        ):
+            if key in monitor:
+                incoming[key] = deepcopy(monitor[key])
+        replacement_value = str(monitor.get("value") or "").strip()
+        if replacement_value:
+            incoming["value"] = replacement_value
+        for index, row in enumerate(rows):
+            if str(row.get("id") or "") == monitor_id:
+                rows[index] = incoming
+                break
+        base["monitors"] = rows
+        normalized = normalize_watch_config(base)
+        self.cancel_background_refresh()
+        await self.runtime_store.async_replace_from_full_config(normalized)
+        self.runtime_store.data["pending_vault_sync"] = True
+        await self.runtime_store.async_save()
+        if normalized.get("enabled"):
+            self.schedule_background_refresh(normalized, monitor_ids={monitor_id}, poll=True)
+        return {
+            "saved": True,
+            "monitor_id": monitor_id,
+            "config": self.public_locked_management_config(),
+            "status": self.public_status(include_addresses=False),
+        }
+
+    async def async_remove_runtime_monitor(self, monitor_id: str) -> dict[str, Any]:
+        """Delete one watch-only target from the runtime vault while locked."""
+        monitor_id = str(monitor_id or "").strip()
+        if not monitor_id:
+            raise ValueError("Sats Sentinel monitor ID is missing")
+        base = self._runtime_management_config()
+        before = list(base.get("monitors") or [])
+        after = [row for row in before if str(row.get("id") or "") != monitor_id]
+        if len(after) == len(before):
+            raise ValueError("Sats Sentinel watch entry was not found")
+        base["monitors"] = after
+        self.cancel_background_refresh()
+        purged = await self.runtime_store.async_replace_from_full_config(normalize_watch_config(base))
+        self.runtime_store.data["pending_vault_sync"] = True
+        await self.runtime_store.async_save()
+        return {
+            "removed": True,
+            "monitor_id": monitor_id,
+            "config": self.public_locked_management_config(),
+            "status": self.public_status(include_addresses=False) | {"purged_activity_count": purged},
+        }
 
     def schedule_background_refresh(
         self,
@@ -1700,10 +2250,27 @@ class WalletWatchManager:
                     return
                 # Serialize discovery against the normal poller. The network work
                 # is background-only, so taking this lock can never delay saving.
-                async with self._lock:
-                    await self._discover_gap_addresses(
-                        normalized, source, monitor_ids=targets
-                    )
+                # Fulcrum can transiently time out while Core is busy. Retry the
+                # whole discovery with a *fresh* Electrum connection rather than
+                # leaving the wallet collapsed at the initial raw gap addresses.
+                last_error: Exception | None = None
+                for attempt in range(3):
+                    try:
+                        async with self._lock:
+                            await self._discover_gap_addresses(
+                                normalized, source, monitor_ids=targets
+                            )
+                        last_error = None
+                        break
+                    except (TimeoutError, asyncio.TimeoutError, ConnectionError) as err:
+                        last_error = err
+                        if attempt < 2:
+                            await asyncio.sleep(1.0 + attempt * 2.0)
+                if last_error is not None:
+                    raise last_error
+                self.runtime_store.data["last_warning"] = None
+                self.runtime_store.data["partial_failures"] = 0
+                await self.runtime_store.async_save()
                 if poll:
                     await self.async_poll(force=True)
             except asyncio.CancelledError:
@@ -1750,6 +2317,10 @@ class WalletWatchManager:
             "gap_limit": gap_limit,
             "active": bool(active),
             "used": used,
+            "resolved_address_type": (
+                str(monitor.get("_resolved_address_type") or monitor.get("address_type") or "auto")
+                if str(monitor.get("kind") or "") == "xpub" else ""
+            ),
             "notify_incoming": monitor["notify_incoming"],
             "notify_outgoing": monitor["notify_outgoing"],
             "category": monitor.get("category", "other"),
@@ -1783,10 +2354,80 @@ class WalletWatchManager:
     @staticmethod
     def _derive_monitor_address(monitor: dict[str, Any], branch: int, index: int) -> dict[str, Any] | None:
         if monitor.get("kind") == "xpub":
-            return derive_extpub_branch_address(str(monitor.get("value") or ""), branch, index)
+            return derive_extpub_branch_address(
+                str(monitor.get("value") or ""), branch, index,
+                address_type=str(monitor.get("_resolved_address_type") or monitor.get("address_type") or "auto"),
+            )
         if monitor.get("kind") == "descriptor":
             return derive_descriptor_branch_address(str(monitor.get("value") or ""), branch, index)
         return None
+
+    async def _resolve_xpub_address_type(
+        self, monitor: dict[str, Any], source: dict[str, Any], *, electrum_client: _ElectrumRPCClient | None
+    ) -> str:
+        """Resolve script type for an ambiguous plain xpub from actual wallet history.
+
+        ypub/zpub are unambiguous. A plain xpub is not: many descriptor wallets
+        serialize BIP49/BIP84/BIP86 account keys with the ordinary xpub version.
+        In Auto mode we probe at least the standard 20-address bootstrap window
+        on receive/change and pick the script family with real historical activity.
+        This also repairs monitors created by older builds whose UI defaulted the
+        configured gap to 2. Current balance is never used for this decision.
+        """
+        requested = str(monitor.get("address_type") or "auto").strip().lower()
+        extpub = str(monitor.get("value") or "")
+        root = _parse_extpub(extpub)
+        if requested != "auto":
+            return requested
+        if not extpub.lower().startswith("xpub"):
+            return root.script_type
+        candidates = list(_XPUB_AUTO_CANDIDATES)
+        scores = {item: 0 for item in candidates}
+        # Probe one script family at a time instead of bursting all four
+        # candidates at once. With the 20-address bootstrap this bounds each
+        # Electrum batch to 40 calls (receive + change), then yields back to HA.
+        for candidate_index, script_type in enumerate(candidates):
+            addresses: list[str] = []
+            for branch, gap_key in ((0, "receive_count"), (1, "change_count")):
+                configured = max(0, int(monitor.get(gap_key) or 0))
+                if configured <= 0:
+                    continue
+                count = min(
+                    MAX_DERIVED_PER_BRANCH,
+                    max(configured, HD_DISCOVERY_BOOTSTRAP_ADDRESSES),
+                )
+                for index in range(count):
+                    row = derive_extpub_branch_address(
+                        extpub, branch, index, address_type=script_type
+                    )
+                    addresses.append(str(row["address"]))
+
+            if electrum_client is not None:
+                calls = [
+                    ("blockchain.scripthash.get_history", [_electrum_scripthash(address)])
+                    for address in addresses
+                ]
+                results = await electrum_client.call_many(calls)
+                for history in results:
+                    if isinstance(history, list) and history:
+                        scores[script_type] += 1
+            else:
+                # HTTP/Esplora fallback is intentionally conservative and only
+                # used when no Electrum source is configured. Sentinel normally
+                # prefers Fulcrum/electrs for watch-only HD discovery.
+                for address in addresses:
+                    if await self._probe_gap_address_used(source, address):
+                        scores[script_type] += 1
+
+            if candidate_index + 1 < len(candidates):
+                await asyncio.sleep(GAP_DISCOVERY_YIELD_SECONDS)
+        best = max(candidates, key=lambda item: (scores[item], -candidates.index(item)))
+        if scores[best] <= 0:
+            # No history exists inside the configured gap. Native SegWit is the
+            # modern default; the UI exposes an explicit override for new/empty
+            # wallets where history cannot identify the script family.
+            return "p2wpkh"
+        return best
 
     async def _probe_gap_address_used(
         self, source: dict[str, Any], address: str, *, electrum_client: _ElectrumRPCClient | None = None
@@ -1808,9 +2449,10 @@ class WalletWatchManager:
 
         ``receive_count`` and ``change_count`` are gap limits, not total address
         counts.  Discovery is independent for receive (/0) and change (/1).
-        A small concrete-address standby pool is kept device-bound/encrypted so
-        the watcher can extend the gap while the password vault is locked without
-        storing the XPUB/descriptor itself in the runtime cache.
+        A concrete-address standby pool is kept device-bound/encrypted so the
+        watcher can extend the active gap while the password vault is locked.
+        Public watch-only material is already kept in that device-bound runtime
+        vault for owner-authorized locked editing; no spend keys are stored.
         """
         old_rows = [row for row in self.runtime_store.data.get("addresses", []) if isinstance(row, dict)]
         old_by_key = {
@@ -1839,6 +2481,12 @@ class WalletWatchManager:
                     rebuilt.append(self._merge_runtime_row_state(row, old_by_key.get((monitor_id, row["address"]))))
                     continue
 
+                monitor = deepcopy(monitor)
+                if monitor.get("kind") == "xpub":
+                    monitor["_resolved_address_type"] = await self._resolve_xpub_address_type(
+                        monitor, source, electrum_client=client
+                    )
+
                 for branch, branch_name, gap_limit in (
                     (0, "receive", int(monitor.get("receive_count") or 0)),
                     (1, "change", int(monitor.get("change_count") or 0)),
@@ -1846,15 +2494,35 @@ class WalletWatchManager:
                     if gap_limit <= 0:
                         continue
                     consecutive_unused = 0
+                    seen_used = False
                     stop_index: int | None = None
                     branch_rows: list[dict[str, Any]] = []
+                    bootstrap_floor = min(
+                        MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH,
+                        max(gap_limit, HD_DISCOVERY_BOOTSTRAP_ADDRESSES),
+                    )
                     for index in range(MAX_GAP_DISCOVERY_ADDRESSES_PER_BRANCH):
                         derived = self._derive_monitor_address(monitor, branch, index)
                         if derived is None:
                             break
-                        used = await self._probe_gap_address_used(
-                            source, str(derived["address"]), electrum_client=client
-                        )
+                        last_error: Exception | None = None
+                        for attempt in range(2):
+                            try:
+                                used = await self._probe_gap_address_used(
+                                    source, str(derived["address"]), electrum_client=client
+                                )
+                                last_error = None
+                                break
+                            except (TimeoutError, asyncio.TimeoutError, ConnectionError) as err:
+                                last_error = err
+                                if attempt == 0:
+                                    await asyncio.sleep(0.25)
+                        if last_error is not None:
+                            raise last_error
+                        # Discovery is background work, not a benchmark. Pace
+                        # local Fulcrum/electrs probes so a large historical XPUB
+                        # cannot monopolize a Proxmox host shared with Home Assistant.
+                        await asyncio.sleep(GAP_DISCOVERY_YIELD_SECONDS)
                         row = self._runtime_row_from_monitor(
                             monitor, monitor_slot, derived, active=True, used=used
                         )
@@ -1864,9 +2532,21 @@ class WalletWatchManager:
                         row["active"] = True
                         row["used"] = used
                         branch_rows.append(row)
-                        consecutive_unused = 0 if used else consecutive_unused + 1
-                        if consecutive_unused >= gap_limit:
+                        if used:
+                            seen_used = True
+                            consecutive_unused = 0
+                        else:
+                            consecutive_unused += 1
+                        if seen_used and consecutive_unused >= gap_limit:
                             stop_index = index
+                            break
+                        if not seen_used and index + 1 >= bootstrap_floor:
+                            # Nothing was used inside the recovery look-ahead.
+                            # Keep the configured active gap (not all 20 probes)
+                            # and turn the following concrete addresses into the
+                            # encrypted standby pool as before.
+                            branch_rows = branch_rows[:gap_limit]
+                            stop_index = max(0, gap_limit - 1)
                             break
                     if stop_index is None and branch_rows:
                         raise ValueError(
@@ -1877,8 +2557,9 @@ class WalletWatchManager:
                     rebuilt.extend(branch_rows)
                     if stop_index is None:
                         continue
-                    # Concrete-address-only standby: allows automatic gap extension
-                    # while the password vault is locked, without caching the XPUB.
+                    # Concrete-address standby: allows automatic gap extension
+                    # while the password vault is locked without further derivation
+                    # during ordinary polling.
                     for offset in range(1, GAP_STANDBY_ADDRESSES_PER_BRANCH + 1):
                         derived = self._derive_monitor_address(monitor, branch, stop_index + offset)
                         if derived is None:
@@ -1899,10 +2580,34 @@ class WalletWatchManager:
         if len(rebuilt) > MAX_RUNTIME_ADDRESSES:
             raise ValueError(f"Sats Sentinel runtime address limit is {MAX_RUNTIME_ADDRESSES}")
         self.runtime_store.data["addresses"] = rebuilt
+        # Remember the auto-detected script family without storing any additional
+        # private material. This also invalidates pre-rc20 naked-xpub caches that
+        # were derived as legacy merely because the serialization prefix was xpub.
+        resolved_by_monitor: dict[str, str] = {}
+        for row in rebuilt:
+            if not isinstance(row, dict):
+                continue
+            resolved = str(row.get("resolved_address_type") or "")
+            monitor_id = str(row.get("monitor_id") or "")
+            if monitor_id and resolved in _XPUB_AUTO_CANDIDATES:
+                resolved_by_monitor[monitor_id] = resolved
+        for item in self.runtime_store.data.get("monitor_catalog") or []:
+            if not isinstance(item, dict):
+                continue
+            monitor_id = str(item.get("id") or "")
+            if monitor_id in resolved_by_monitor:
+                item["resolved_address_type"] = resolved_by_monitor[monitor_id]
         await self.runtime_store.async_save()
 
     async def _maintain_gap_from_standby(self, source: dict[str, Any]) -> bool:
-        """Activate pre-derived concrete addresses until each branch regains its gap limit."""
+        """Activate standby addresses only when a branch actually lost its gap.
+
+        The previous implementation opened and handshook a new Electrum/Fulcrum
+        connection on every Sentinel poll even when every branch already had its
+        configured unused reserve. On a local node that produced needless CPU,
+        socket and TLS work. First determine whether any branch needs expansion;
+        only then touch the network.
+        """
         rows = [row for row in self.runtime_store.data.get("addresses", []) if isinstance(row, dict)]
         groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in rows:
@@ -1910,26 +2615,45 @@ class WalletWatchManager:
             if branch not in {"receive", "change"}:
                 continue
             groups.setdefault((str(row.get("monitor_id") or ""), branch), []).append(row)
+
+        pending: list[tuple[str, str, list[dict[str, Any]], int, int]] = []
+        exhausted: list[str] = []
+        for (monitor_id, branch), branch_rows in groups.items():
+            branch_rows.sort(key=lambda item: int(item.get("index") or 0))
+            active = [row for row in branch_rows if bool(row.get("active", True))]
+            if not active:
+                continue
+            gap_limit = max(0, int(active[-1].get("gap_limit") or 0))
+            if gap_limit <= 0:
+                continue
+            consecutive_unused = 0
+            for row in reversed(active):
+                if row.get("used") is False:
+                    consecutive_unused += 1
+                else:
+                    break
+            if consecutive_unused >= gap_limit:
+                continue
+            if not any(not bool(row.get("active", True)) for row in branch_rows):
+                exhausted.append(f"{monitor_id}:{branch}")
+                continue
+            pending.append((monitor_id, branch, branch_rows, gap_limit, consecutive_unused))
+
+        if not pending:
+            if exhausted:
+                self.runtime_store.data["last_warning"] = (
+                    "Sats Sentinel gap standby exhausted for " + ", ".join(exhausted[:8]) +
+                    ". Unlock the vault once to replenish pre-derived addresses."
+                )[:500]
+                await self._async_save_runtime_if_due(force=True)
+            return False
+
         source_type = str(source.get("watch_source_type") or "mempool")
         client_cm = _ElectrumRPCClient(self, source) if source_type == "electrum" else None
         client = await client_cm.__aenter__() if client_cm is not None else None
         changed = False
-        exhausted: list[str] = []
         try:
-            for (monitor_id, branch), branch_rows in groups.items():
-                branch_rows.sort(key=lambda item: int(item.get("index") or 0))
-                active = [row for row in branch_rows if bool(row.get("active", True))]
-                if not active:
-                    continue
-                gap_limit = max(0, int(active[-1].get("gap_limit") or 0))
-                if gap_limit <= 0:
-                    continue
-                consecutive_unused = 0
-                for row in reversed(active):
-                    if row.get("used") is False:
-                        consecutive_unused += 1
-                    else:
-                        break
+            for monitor_id, branch, branch_rows, gap_limit, consecutive_unused in pending:
                 while consecutive_unused < gap_limit:
                     candidate = next((row for row in branch_rows if not bool(row.get("active", True))), None)
                     if candidate is None:
@@ -1940,11 +2664,13 @@ class WalletWatchManager:
                     )
                     candidate["active"] = True
                     candidate["used"] = used
-                    # A newly activated historical address starts as a baseline so
-                    # its old transactions never generate false fresh alerts.
                     candidate["baseline_complete"] = False
                     changed = True
                     consecutive_unused = 0 if used else consecutive_unused + 1
+                    # Be a polite local-node client. A hot Fulcrum instance can
+                    # otherwise answer hundreds of gap probes per second and
+                    # create host-wide CPU/I/O pressure.
+                    await asyncio.sleep(GAP_DISCOVERY_YIELD_SECONDS)
         finally:
             if client_cm is not None:
                 await client_cm.__aexit__(None, None, None)
@@ -1954,8 +2680,232 @@ class WalletWatchManager:
                 ". Unlock the vault once to replenish pre-derived addresses."
             )[:500]
         if changed or exhausted:
-            await self.runtime_store.async_save()
+            await self._async_save_runtime_if_due(force=True)
         return changed
+
+    def _runtime_matches_full_config(self, config: dict[str, Any]) -> bool:
+        """Return True when the encrypted runtime cache already represents config.
+
+        This lets restart/unlock recovery reuse a fully discovered XPUB instead
+        of collapsing it to the raw gap counts and rescanning from index zero.
+        No XPUB is stored in the runtime cache: we validate HD monitors by
+        deriving only index 0 from the authoritative unlocked config and matching
+        that concrete address against the encrypted runtime rows.
+        """
+        data = self.runtime_store.data
+        if bool(data.get("enabled")) != bool(config.get("enabled")):
+            return False
+        source_keys = (
+            "query_source", "electrum_kind", "electrum_host", "electrum_port",
+            "electrum_tls", "electrum_verify_ssl", "electrum_pinned_cert_sha256",
+            "allow_public_tor",
+        )
+        for key in source_keys:
+            if data.get(key) != config.get(key):
+                return False
+        rows = [row for row in data.get("addresses", []) if isinstance(row, dict)]
+        enabled_monitors = [m for m in config.get("monitors", []) if isinstance(m, dict) and m.get("enabled", True)]
+        expected_ids = {str(m.get("id") or "") for m in enabled_monitors if str(m.get("id") or "")}
+        runtime_ids = {str(r.get("monitor_id") or "") for r in rows if str(r.get("monitor_id") or "")}
+        if expected_ids != runtime_ids:
+            return False
+        by_monitor: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_monitor.setdefault(str(row.get("monitor_id") or ""), []).append(row)
+        catalog_by_id = {
+            str(item.get("id") or ""): item
+            for item in (data.get("monitor_catalog") or [])
+            if isinstance(item, dict) and str(item.get("id") or "")
+        }
+        for monitor in enabled_monitors:
+            monitor_id = str(monitor.get("id") or "")
+            owned = by_monitor.get(monitor_id, [])
+            if not owned:
+                return False
+            kind = str(monitor.get("kind") or "")
+            if (
+                kind == "xpub"
+                and str(monitor.get("address_type") or "auto") == "auto"
+                and str(monitor.get("value") or "").lower().startswith("xpub")
+            ):
+                resolved = str((catalog_by_id.get(monitor_id) or {}).get("resolved_address_type") or "")
+                if resolved not in _XPUB_AUTO_CANDIDATES:
+                    # Pre-rc20 runtime caches did not record which script family
+                    # they used. Force one discovery pass so an old legacy-derived
+                    # xpub cannot be silently reused with 0 BTC / Receive 2 / Change 2.
+                    return False
+            if kind == "address":
+                if not any(str(row.get("address") or "") == str(monitor.get("value") or "") for row in owned):
+                    return False
+                continue
+            for branch, gap_key in ((0, "receive_count"), (1, "change_count")):
+                if int(monitor.get(gap_key) or 0) <= 0:
+                    continue
+                branch_name = "receive" if branch == 0 else "change"
+                candidate_addresses: set[str] = set()
+                if kind == "xpub" and str(monitor.get("address_type") or "auto") == "auto" and str(monitor.get("value") or "").lower().startswith("xpub"):
+                    for script_type in _XPUB_AUTO_CANDIDATES:
+                        candidate_addresses.add(str(derive_extpub_branch_address(
+                            str(monitor.get("value") or ""), branch, 0, address_type=script_type
+                        )["address"]))
+                else:
+                    derived = self._derive_monitor_address(monitor, branch, 0)
+                    if derived is None:
+                        return False
+                    candidate_addresses.add(str(derived.get("address") or ""))
+                if not any(
+                    str(row.get("branch") or "") == branch_name
+                    and int(row.get("index") or 0) == 0
+                    and str(row.get("address") or "") in candidate_addresses
+                    for row in owned
+                ):
+                    return False
+        return True
+
+    async def async_recover_unlocked_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Recover a richer watch-only runtime config before an unlocked read.
+
+        The separately encrypted Sentinel runtime vault is deliberately capable
+        of surviving portfolio auto-locks and Home Assistant restarts.  Older
+        release candidates could leave the password-vault copy incomplete while
+        the runtime vault still contained the real watch catalog, discovered HD
+        addresses and Fulcrum/electrs endpoint.  Never let that older/emptier
+        copy wipe the richer runtime state on the next unlock.
+
+        Recovery is intentionally conservative: runtime monitors replace the
+        password-vault list only for pending locked edits or when the password
+        vault has no monitors at all.  Fulcrum/electrs settings are recovered only
+        when the password-vault endpoint is empty and the runtime endpoint is
+        present.  Explicit non-empty password-vault settings remain authoritative.
+        """
+        normalized = normalize_watch_config(config)
+        data = self.runtime_store.data
+        changed = False
+        pending_sync = bool(data.get("pending_vault_sync"))
+
+        runtime_monitors: list[dict[str, Any]] = []
+        if data.get("monitor_catalog"):
+            try:
+                runtime_monitors = deepcopy(self._runtime_management_config().get("monitors") or [])
+            except ValueError:
+                # Pre-rc8 caches can have aggregate/address state without raw
+                # watch-only material.  Those caches remain useful for status but
+                # cannot safely reconstruct an editable XPUB/descriptor row.
+                runtime_monitors = []
+
+        if runtime_monitors and (pending_sync or not normalized.get("monitors")):
+            normalized["monitors"] = runtime_monitors
+            changed = True
+            if not normalized.get("enabled") and bool(data.get("enabled")):
+                normalized["enabled"] = True
+
+        runtime_host = str(data.get("electrum_host") or "").strip()
+        vault_host = str(normalized.get("electrum_host") or "").strip()
+
+        # Runtime enabled state is authoritative when it contains actual Sentinel
+        # watch/source material. This repairs the contradictory UI state where the
+        # header said AKTIV while the settings checkbox was reset after unlock.
+        if bool(data.get("enabled")) and not bool(normalized.get("enabled")) and (runtime_monitors or runtime_host or data.get("addresses")):
+            normalized["enabled"] = True
+            changed = True
+
+        if runtime_host and not vault_host:
+            for key in (
+                "query_source", "electrum_kind", "electrum_host", "electrum_port",
+                "electrum_tls", "electrum_verify_ssl", "electrum_pinned_cert_sha256",
+                "allow_public_tor",
+            ):
+                normalized[key] = deepcopy(data.get(key))
+            if not normalized.get("enabled") and bool(data.get("enabled")):
+                normalized["enabled"] = True
+            changed = True
+
+        normalized = normalize_watch_config(normalized)
+        if changed:
+            await self.ledger_store.async_set_wallet_watch_config(normalized)
+        if pending_sync and runtime_monitors:
+            self.runtime_store.data["pending_vault_sync"] = False
+            await self.runtime_store.async_save()
+        return normalized
+
+    async def async_restore_full_config(
+        self, config: dict[str, Any], *, poll: bool = False
+    ) -> dict[str, Any]:
+        """Recover Sentinel after restart/unlock without a synchronous XPUB rescan."""
+        try:
+            normalized = await self.async_recover_unlocked_config(config)
+        except Exception as err:
+            # Recovery must never make the portfolio vault unusable.  Preserve
+            # the runtime state and keep the warning visible instead of replacing
+            # the cache with an incomplete password-vault snapshot.
+            self.runtime_store.data["last_warning"] = (
+                f"Sats Sentinel runtime recovery pending: {type(err).__name__}: {err}"
+            )[:500]
+            await self.runtime_store.async_save()
+            return self.public_status(include_addresses=True)
+        self.cancel_background_refresh()
+        if self._runtime_matches_full_config(normalized):
+            return self.public_status(include_addresses=True)
+        purged_activity_count = await self.runtime_store.async_replace_from_full_config(normalized)
+        if normalized["enabled"]:
+            self.schedule_background_refresh(normalized, poll=poll)
+        status = self.public_status(include_addresses=True)
+        status["purged_activity_count"] = purged_activity_count
+        return status
+
+    async def async_update_settings(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Persist server/global Sentinel settings without touching watch targets.
+
+        The monitor list stored in the password vault is authoritative. Browser
+        drafts are allowed to change Fulcrum/electrs/Tor/poll/notification target
+        settings, but they can never delete or rewrite existing addresses/xpubs.
+        Existing per-wallet notification_detail values are preserved exactly; the
+        server-level value is only the default used when a new monitor is created.
+
+        Source persistence is deliberately defensive: an empty/stale browser Host
+        field must never erase an already saved Fulcrum/electrs endpoint. This can
+        otherwise happen after lock -> unlock when a reduced runtime form is still
+        visible for a moment. Explicitly selecting a mempool source still changes
+        the active source, but the saved Electrum endpoint is retained for a later
+        switch back to Auto/Fulcrum/electrs.
+        """
+        incoming = normalize_watch_config(config)
+        stored = await self.async_recover_unlocked_config(
+            normalize_watch_config(self.ledger_store.wallet_watch_config)
+        )
+        incoming["monitors"] = deepcopy(stored.get("monitors") or [])
+
+        # Never treat an empty host from a stale/partially rehydrated browser form
+        # as an instruction to delete the saved Electrum endpoint. Keeping the
+        # endpoint is harmless even when mempool_own/mempool_public is selected,
+        # because _select_watch_source honours that explicit mode. A dedicated
+        # server-delete action can be added later if intentional removal is needed.
+        if not str(incoming.get("electrum_host") or "").strip() and str(stored.get("electrum_host") or "").strip():
+            for key in (
+                "electrum_kind", "electrum_host", "electrum_port", "electrum_tls",
+                "electrum_verify_ssl", "electrum_pinned_cert_pem",
+                "electrum_pinned_cert_sha256",
+            ):
+                incoming[key] = deepcopy(stored.get(key))
+            # Preserve an explicit Fulcrum/electrs choice if the stale form fell
+            # back to Auto. Explicit mempool choices remain explicit.
+            if str(incoming.get("query_source") or "auto") == "auto" and str(stored.get("query_source") or "auto") in _ALLOWED_ELECTRUM_KINDS:
+                incoming["query_source"] = str(stored.get("query_source"))
+
+        normalized = normalize_watch_config(incoming)
+        await self.ledger_store.async_set_wallet_watch_config(normalized)
+        refresh_needed = await self.runtime_store.async_update_settings_from_config(normalized)
+        # Only a real source change (or enabling Sentinel) replaces a currently
+        # running discovery task. Pure UI/default/notification saves leave any
+        # in-progress HD scan untouched. Even when discovery restarts, the already
+        # found address set remains visible until the refreshed scan catches up.
+        if normalized.get("enabled") and refresh_needed:
+            self.schedule_background_refresh(normalized, poll=True)
+        return {
+            "saved": True,
+            "config": normalized,
+            "status": self.public_status(include_addresses=True),
+        }
 
     async def async_apply_full_config(
         self, config: dict[str, Any], *, poll: bool = True
@@ -1978,6 +2928,9 @@ class WalletWatchManager:
             if source is not None:
                 try:
                     await self._discover_gap_addresses(normalized, source)
+                    self.runtime_store.data["last_warning"] = None
+                    self.runtime_store.data["partial_failures"] = 0
+                    await self.runtime_store.async_save()
                 except Exception as err:
                     # Keep the encrypted configuration saved even if the node is
                     # temporarily unavailable. The next explicit save/startup can
@@ -2010,6 +2963,29 @@ class WalletWatchManager:
         # saved and overwrite the just-updated runtime address set.
         self.cancel_background_refresh()
         old_config = normalize_watch_config(self.ledger_store.wallet_watch_config)
+        monitor = deepcopy(monitor)
+        # Editing a runtime-recovered watch card may intentionally send an empty
+        # value so the raw XPUB/descriptor/address never has to be exposed to the
+        # browser.  Preserve the existing watch-only value from the password vault
+        # or, if that copy is incomplete, from the encrypted runtime catalog.
+        if not str(monitor.get("value") or "").strip():
+            existing_value = next((
+                str(item.get("value") or "")
+                for item in old_config.get("monitors", [])
+                if str(item.get("id") or "") == monitor_id
+            ), "")
+            if not existing_value:
+                try:
+                    existing_value = next((
+                        str(item.get("value") or "")
+                        for item in self._runtime_management_config().get("monitors", [])
+                        if str(item.get("id") or "") == monitor_id
+                    ), "")
+                except ValueError:
+                    existing_value = ""
+            if not existing_value:
+                raise ValueError("Sats Sentinel watch value is missing")
+            monitor["value"] = existing_value
         new_config = deepcopy(old_config)
         rows = list(new_config.get("monitors", []))
         replaced = False
@@ -2143,7 +3119,13 @@ class WalletWatchManager:
             if isinstance(row, dict) and bool(row.get("active", True))
         ]
         monitor_summaries: dict[str, dict[str, Any]] = {}
+        total_balance_sats = 0
+        total_utxo_count = 0
+        baseline_complete = bool(addresses)
         for row in addresses:
+            total_balance_sats += int(row.get("balance_sats") or 0)
+            total_utxo_count += int(row.get("utxo_count") or 0)
+            baseline_complete = baseline_complete and bool(row.get("baseline_complete"))
             monitor_id = str(row.get("monitor_id") or "")
             if not monitor_id:
                 continue
@@ -2178,11 +3160,14 @@ class WalletWatchManager:
 
         activity_rows = [item for item in data.get("activity_log", []) if isinstance(item, dict)]
         last_activity_by_monitor: dict[str, dict[str, Any]] = {}
+        last_activity_at: str | None = None
         for item in activity_rows:
             monitor_id = str(item.get("monitor_id") or "")
             detected_at = str(item.get("detected_at") or "")
             if not monitor_id or not detected_at:
                 continue
+            if last_activity_at is None or detected_at > last_activity_at:
+                last_activity_at = detected_at
             current = last_activity_by_monitor.get(monitor_id)
             if current is None or detected_at > str(current.get("detected_at") or ""):
                 last_activity_by_monitor[monitor_id] = {
@@ -2220,19 +3205,27 @@ class WalletWatchManager:
             "configured_public_mempool": bool(public_mempool),
             "public_tor_effective": bool(selected_type == "mempool" and selected_route == "tor" and not bool(own_mempool)),
             "address_count": len(addresses),
-            "baseline_complete": bool(addresses) and all(bool(row.get("baseline_complete")) for row in addresses),
-            "balance_sats": sum(int(row.get("balance_sats") or 0) for row in addresses),
-            "utxo_count": sum(int(row.get("utxo_count") or 0) for row in addresses),
+            "baseline_complete": baseline_complete,
+            "balance_sats": total_balance_sats,
+            "utxo_count": total_utxo_count,
             "last_poll_at": data.get("last_poll_at"),
             "last_success_at": data.get("last_success_at"),
             "activity_log_count": len(activity_rows),
-            "last_activity_at": max((str(item.get("detected_at") or "") for item in activity_rows), default="") or None,
+            "last_activity_at": last_activity_at,
             # Privacy-safe per-monitor aggregates are always returned, even when
             # concrete addresses are intentionally omitted from the lightweight
             # status endpoint. This keeps each watch card's balance/address/UTXO
             # counts correct without exposing address material while the vault is
             # locked or forcing the historical transaction view to be opened.
             "monitor_summaries": monitor_summaries,
+            # Labels/type/gap settings are copied from the password vault only
+            # into the device-bound encrypted runtime cache. The raw watch key
+            # (address/xpub/descriptor) is never included here. This lets the
+            # owner keep a read-only Sats Sentinel overview after auto-lock.
+            # Owner-safe management metadata stays available while the main
+            # portfolio vault is locked. Raw watch-only keys are never returned;
+            # only a short mask is exposed for orientation/editing.
+            "monitor_catalog": self.public_locked_management_config().get("monitors", []),
             "last_activity_by_monitor": last_activity_by_monitor,
             "last_error": data.get("last_error"),
             "last_warning": data.get("last_warning"),
@@ -2243,11 +3236,13 @@ class WalletWatchManager:
             "last_partial_at": data.get("last_partial_at"),
             "error_streak": int(data.get("error_streak") or 0),
             "route_policy": "explicit source is fail-closed; automatic selection is configuration-based only; own/local direct, onion/public through Tor; no runtime provider fallback",
-            "xpub_in_runtime": False,
-            "xpup_in_runtime": False,
-            "descriptor_in_runtime": False,
+            "xpub_in_runtime": any(str(item.get("kind") or "") == "xpub" and bool(item.get("watch_value")) for item in (data.get("monitor_catalog") or []) if isinstance(item, dict)),
+            "descriptor_in_runtime": any(str(item.get("kind") or "") == "descriptor" and bool(item.get("watch_value")) for item in (data.get("monitor_catalog") or []) if isinstance(item, dict)),
             "runtime_cache_encrypted": True,
+            "locked_runtime_summary_available": bool(data.get("monitor_catalog") or addresses),
             "watch_material_password_vault": True,
+            "watch_material_runtime_encrypted": True,
+            "pending_vault_sync": bool(data.get("pending_vault_sync")),
             "historical_tx_overview_persisted": False,
             "external_notification_targets": sum(1 for item in data.get("notification_targets", []) if isinstance(item, dict) and item.get("enabled", True)),
             "last_notification_success_at": data.get("last_notification_success_at"),
@@ -2370,13 +3365,12 @@ class WalletWatchManager:
     async def _poll_electrum_source(
         self, source: dict[str, Any], addresses: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """Poll one explicit Fulcrum/electrs endpoint efficiently.
+        """Poll one explicit Fulcrum/electrs endpoint without burst-loading HA.
 
-        The short poll uses only ``blockchain.scripthash.subscribe`` as the
-        change detector. Balance/UTXO/history RPCs are requested only when a
-        scripthash status changes or during a low-frequency reconciliation.
-        This keeps alerts responsive without hammering Fulcrum for unchanged
-        addresses every 30/60 seconds.
+        All concrete addresses still receive a lightweight subscription/status
+        check on every Sentinel cycle, but requests are split into small batches
+        with cooperative yields. Expensive baseline work is spread across cycles,
+        and routine balance reconciliation is low-frequency and staggered.
         """
         activities: list[dict[str, Any]] = []
         partial_errors: list[str] = []
@@ -2387,42 +3381,48 @@ class WalletWatchManager:
                 address = str(row.get("address") or "")
                 meta.append((row, _electrum_scripthash(address)))
 
-            # Fast path: one lightweight status RPC per concrete address.
-            status_results = await client.call_many([
-                ("blockchain.scripthash.subscribe", [scripthash])
-                for _row, scripthash in meta
-            ])
+            status_results = await self._electrum_calls_chunked(
+                client,
+                [("blockchain.scripthash.subscribe", [scripthash]) for _row, scripthash in meta],
+                chunk_size=ELECTRUM_STATUS_BATCH_SIZE,
+            )
 
+            baseline_rows: list[tuple[dict[str, Any], str, str]] = []
             changed_rows: list[tuple[dict[str, Any], str, str]] = []
-            reconcile_rows: list[tuple[dict[str, Any], str, str]] = []
+            reconcile_candidates: list[tuple[dict[str, Any], str, str]] = []
             for (row, scripthash), status in zip(meta, status_results):
                 row["used"] = status not in {None, ""}
                 signature = f"electrum:{status or ''}"
-                changed = (
-                    not row.get("baseline_complete")
-                    or signature != str(row.get("summary_signature") or "")
-                )
-                last_balance = int(row.get("last_balance_refresh_unix") or 0)
-                stale_balance = now_unix - last_balance >= ELECTRUM_BALANCE_RECONCILE_SECONDS
-                if changed:
+                if not row.get("baseline_complete"):
+                    baseline_rows.append((row, scripthash, signature))
+                    continue
+                if signature != str(row.get("summary_signature") or ""):
                     changed_rows.append((row, scripthash, signature))
-                elif stale_balance:
-                    reconcile_rows.append((row, scripthash, signature))
+                    continue
+                last_balance = int(row.get("last_balance_refresh_unix") or 0)
+                if now_unix - last_balance >= ELECTRUM_BALANCE_RECONCILE_SECONDS:
+                    reconcile_candidates.append((row, scripthash, signature))
 
-            refresh_rows = changed_rows + reconcile_rows
-            if refresh_rows:
-                balance_results = await client.call_many([
-                    ("blockchain.scripthash.get_balance", [scripthash])
-                    for _row, scripthash, _signature in refresh_rows
-                ])
-                unspent_results = await client.call_many([
-                    ("blockchain.scripthash.listunspent", [scripthash])
-                    for _row, scripthash, _signature in refresh_rows
-                ])
-                valid_refresh: set[tuple[str, str]] = set()
-                for (row, scripthash, _signature), balance, unspent in zip(
-                    refresh_rows, balance_results, unspent_results
-                ):
+            # A newly discovered large XPUB can contain hundreds of addresses.
+            # Baseline them over several poll cycles instead of issuing 3N+ RPCs
+            # immediately after discovery. Oldest/stalest rows are reconciled in
+            # the same staggered fashion.
+            baseline_batch = baseline_rows[:ELECTRUM_BASELINE_BATCH_SIZE]
+            reconcile_candidates.sort(key=lambda item: int(item[0].get("last_balance_refresh_unix") or 0))
+            reconcile_rows = reconcile_candidates[:ELECTRUM_RECONCILE_BATCH_SIZE]
+            detail_rows = changed_rows + baseline_batch
+
+            if detail_rows:
+                balance_results = await self._electrum_calls_chunked(
+                    client,
+                    [("blockchain.scripthash.get_balance", [scripthash]) for _row, scripthash, _sig in detail_rows],
+                )
+                unspent_results = await self._electrum_calls_chunked(
+                    client,
+                    [("blockchain.scripthash.listunspent", [scripthash]) for _row, scripthash, _sig in detail_rows],
+                )
+                valid_detail: list[tuple[dict[str, Any], str, str]] = []
+                for (row, scripthash, signature), balance, unspent in zip(detail_rows, balance_results, unspent_results):
                     if not isinstance(balance, dict) or not isinstance(unspent, list):
                         partial_errors.append(
                             f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum balance/UTXO response"
@@ -2431,22 +3431,42 @@ class WalletWatchManager:
                     row["balance_sats"] = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
                     row["utxo_count"] = len(unspent)
                     row["last_balance_refresh_unix"] = now_unix
-                    valid_refresh.add((str(row.get("monitor_id") or ""), scripthash))
+                    valid_detail.append((row, scripthash, signature))
+                detail_rows = valid_detail
 
-                changed_rows = [
-                    item for item in changed_rows
-                    if (str(item[0].get("monitor_id") or ""), item[1]) in valid_refresh
-                ]
+            # Safety reconciliation for unchanged subscriptions only needs the
+            # balance call. If it differs unexpectedly, promote that row to the
+            # detailed path on the next cycle rather than fetching UTXOs/history
+            # for every unchanged address every 15 minutes.
+            if reconcile_rows:
+                reconcile_balances = await self._electrum_calls_chunked(
+                    client,
+                    [("blockchain.scripthash.get_balance", [scripthash]) for _row, scripthash, _sig in reconcile_rows],
+                    chunk_size=ELECTRUM_RECONCILE_BATCH_SIZE,
+                )
+                for (row, _scripthash, _signature), balance in zip(reconcile_rows, reconcile_balances):
+                    if not isinstance(balance, dict):
+                        partial_errors.append(
+                            f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum reconcile response"
+                        )
+                        continue
+                    new_balance = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
+                    if new_balance != int(row.get("balance_sats") or 0):
+                        # Preserve the new balance immediately and force a full
+                        # detail refresh next cycle without fabricating a tx event.
+                        row["balance_sats"] = new_balance
+                        row["baseline_complete"] = False
+                    row["last_balance_refresh_unix"] = now_unix
 
-            if not changed_rows:
+            if not detail_rows:
                 return activities, partial_errors
 
-            history_results = await client.call_many([
-                ("blockchain.scripthash.get_history", [scripthash])
-                for _row, scripthash, _sig in changed_rows
-            ])
+            history_results = await self._electrum_calls_chunked(
+                client,
+                [("blockchain.scripthash.get_history", [scripthash]) for _row, scripthash, _sig in detail_rows],
+            )
             new_entries: list[tuple[dict[str, Any], str, int]] = []
-            for (row, _scripthash, signature), history in zip(changed_rows, history_results):
+            for (row, _scripthash, signature), history in zip(detail_rows, history_results):
                 if not isinstance(history, list):
                     partial_errors.append(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum history response")
                     continue
@@ -2470,9 +3490,9 @@ class WalletWatchManager:
                 return activities, partial_errors
 
             unique_txids = list(dict.fromkeys(txid for _row, txid, _height in new_entries))
-            raw_results = await client.call_many([
-                ("blockchain.transaction.get", [txid, False]) for txid in unique_txids
-            ])
+            raw_results = await self._electrum_calls_chunked(
+                client, [("blockchain.transaction.get", [txid, False]) for txid in unique_txids]
+            )
             parsed_by_txid: dict[str, dict[str, Any]] = {}
             for txid, raw in zip(unique_txids, raw_results):
                 if isinstance(raw, str):
@@ -2485,9 +3505,9 @@ class WalletWatchManager:
             ))
             prev_by_txid: dict[str, dict[str, Any]] = {}
             if prev_txids:
-                prev_raw = await client.call_many([
-                    ("blockchain.transaction.get", [txid, False]) for txid in prev_txids
-                ])
+                prev_raw = await self._electrum_calls_chunked(
+                    client, [("blockchain.transaction.get", [txid, False]) for txid in prev_txids]
+                )
                 for txid, raw in zip(prev_txids, prev_raw):
                     if isinstance(raw, str):
                         prev_by_txid[txid] = _parse_raw_transaction(raw)
@@ -2506,12 +3526,57 @@ class WalletWatchManager:
         return activities, partial_errors
 
     async def _electrum_calls_chunked(
-        self, client: _ElectrumRPCClient, calls: list[tuple[str, list[Any]]], *, chunk_size: int = 40
+        self, client: _ElectrumRPCClient, calls: list[tuple[str, list[Any]]], *,
+        chunk_size: int = ELECTRUM_STATUS_BATCH_SIZE,
+        yield_seconds: float = ELECTRUM_BATCH_YIELD_SECONDS,
     ) -> list[Any]:
+        """Run Electrum RPCs in bounded bursts and yield back to Home Assistant."""
         results: list[Any] = []
-        for offset in range(0, len(calls), chunk_size):
-            results.extend(await client.call_many(calls[offset:offset + chunk_size]))
+        size = max(1, int(chunk_size))
+        for offset in range(0, len(calls), size):
+            results.extend(await client.call_many(calls[offset:offset + size]))
+            if offset + size < len(calls):
+                await asyncio.sleep(max(0.0, float(yield_seconds)))
         return results
+
+
+    async def _electrum_overview_calls_resilient(
+        self, client: _ElectrumRPCClient, calls: list[tuple[str, list[Any]]], *, label: str
+    ) -> tuple[list[Any], list[str]]:
+        """Run user-requested overview RPCs without failing the whole wallet on a Core timeout.
+
+        Fulcrum/electrs can return JSON-RPC -32603 when its Bitcoin Core backend
+        times out while fetching an old/raw transaction.  Historical overview is
+        non-alerting, so retry the affected call once and then return a partial
+        result with a warning instead of turning one backend timeout into a hard
+        Home Assistant UI error.  Other RPC/network errors stay fail-closed.
+        """
+        results: list[Any] = []
+        warnings: list[str] = []
+        for method, params in calls:
+            value: Any = None
+            timed_out = False
+            for attempt in range(2):
+                try:
+                    value = await client.call(method, params)
+                    timed_out = False
+                    break
+                except RuntimeError as err:
+                    text = str(err).lower()
+                    if "bitcoind request timed out" not in text:
+                        raise
+                    timed_out = True
+                    if attempt == 0:
+                        await asyncio.sleep(0.35)
+            results.append(None if timed_out else value)
+            if timed_out:
+                warnings.append(
+                    f"{label}: Fulcrum/electrs Bitcoin Core backend timed out; partial overview shown"
+                )
+            # Historical overview is user-triggered; always yield so it cannot
+            # monopolize Home Assistant while walking older wallet history.
+            await asyncio.sleep(0)
+        return results, warnings
 
     def _sentinel_detected_txids(self, monitor_id: str) -> dict[str, str]:
         detected: dict[str, str] = {}
@@ -2621,28 +3686,43 @@ class WalletWatchManager:
         page: int = 1,
     ) -> dict[str, Any]:
         watched_addresses = {str(row.get("address") or "") for row in rows if str(row.get("address") or "")}
+        warnings: list[str] = []
+        # Balance/UTXO are already maintained by Sentinel's normal lightweight
+        # polling path.  Re-querying them when the user merely opens historical
+        # TX creates avoidable Fulcrum -> bitcoind pressure and used to make the
+        # overview fail even though the current wallet balance was already known.
+        balance_sats = sum(int(row.get("balance_sats") or 0) for row in rows)
         async with _ElectrumRPCClient(self, source) as client:
             meta = [(row, _electrum_scripthash(str(row.get("address") or ""))) for row in rows]
-            balance_results = await self._electrum_calls_chunked(client, [
-                ("blockchain.scripthash.get_balance", [scripthash]) for _row, scripthash in meta
-            ])
-            history_results = await self._electrum_calls_chunked(client, [
-                ("blockchain.scripthash.get_history", [scripthash]) for _row, scripthash in meta
-            ])
-            unspent_results = await self._electrum_calls_chunked(client, [
-                ("blockchain.scripthash.listunspent", [scripthash]) for _row, scripthash in meta
-            ])
-            balance_sats = 0
+            # Normally the current balance is already present from Sentinel's
+            # lightweight poll. Only fill it here when a fresh runtime row has
+            # not completed its baseline yet; never re-query every address just
+            # because the user opened historical TX.
+            missing_balance_meta = [(row, scripthash) for row, scripthash in meta if not bool(row.get("baseline_complete"))]
+            if missing_balance_meta:
+                missing_balances, balance_warnings = await self._electrum_overview_calls_resilient(
+                    client,
+                    [("blockchain.scripthash.get_balance", [scripthash]) for _row, scripthash in missing_balance_meta],
+                    label="Balance",
+                )
+                warnings.extend(balance_warnings)
+                for (row, _scripthash), balance in zip(missing_balance_meta, missing_balances):
+                    if isinstance(balance, dict):
+                        row["balance_sats"] = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
+                balance_sats = sum(int(row.get("balance_sats") or 0) for row in rows)
+            history_results, history_warnings = await self._electrum_overview_calls_resilient(
+                client,
+                [("blockchain.scripthash.get_history", [scripthash]) for _row, scripthash in meta],
+                label="History",
+            )
+            warnings.extend(history_warnings)
             history_by_txid: dict[str, int] = {}
-            for (row, _scripthash), balance, history, unspent in zip(meta, balance_results, history_results, unspent_results):
-                if not isinstance(balance, dict):
-                    raise ValueError(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum balance response")
-                current_balance = int(balance.get("confirmed") or 0) + int(balance.get("unconfirmed") or 0)
-                row["balance_sats"] = current_balance
-                row["utxo_count"] = len(unspent) if isinstance(unspent, list) else int(row.get("utxo_count") or 0)
-                balance_sats += current_balance
+            for (row, _scripthash), history in zip(meta, history_results):
+                if history is None:
+                    continue
                 if not isinstance(history, list):
-                    raise ValueError(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum history response")
+                    warnings.append(f"Wallet {row.get('monitor_slot', '?')}: invalid Electrum history response")
+                    continue
                 for item in history:
                     if not isinstance(item, dict):
                         continue
@@ -2667,25 +3747,42 @@ class WalletWatchManager:
             else:
                 ordered = ordered_all[:limit]
             txids = [txid for txid, _height in ordered]
-            raw_results = await self._electrum_calls_chunked(client, [
-                ("blockchain.transaction.get", [txid, False]) for txid in txids
-            ], chunk_size=20)
+            raw_results, raw_warnings = await self._electrum_overview_calls_resilient(
+                client,
+                [("blockchain.transaction.get", [txid, False]) for txid in txids],
+                label="Transaction",
+            )
+            warnings.extend(raw_warnings)
             parsed_by_txid: dict[str, dict[str, Any]] = {}
             for txid, raw in zip(txids, raw_results):
                 if isinstance(raw, str):
                     parsed_by_txid[txid] = _parse_raw_transaction(raw)
 
-            prev_txids = list(dict.fromkeys(
-                str(txin.get("txid") or "")
-                for tx in parsed_by_txid.values()
-                for txin in tx.get("inputs", [])
-                if str(txin.get("txid") or "") and str(txin.get("txid") or "") != "0" * 64
-            ))
+            watched_scripts = {_address_scriptpubkey(address) for address in watched_addresses}
+            prev_txids: list[str] = []
+            for txid, tx in parsed_by_txid.items():
+                tx_inputs = [
+                    str(txin.get("txid") or "")
+                    for txin in tx.get("inputs", [])
+                    if str(txin.get("txid") or "") and str(txin.get("txid") or "") != "0" * 64
+                ]
+                receives_to_wallet = any(output.get("script") in watched_scripts for output in tx.get("outputs", []))
+                if receives_to_wallet and len(tx_inputs) > TX_OVERVIEW_MAX_PREVOUT_TXS_PER_TRANSACTION:
+                    warnings.append(
+                        f"Transaction {txid[:12]}… has {len(tx_inputs)} inputs; prevout expansion skipped "
+                        "to protect Fulcrum/Bitcoin Core. Incoming amount remains available; sender/fee detail may be incomplete."
+                    )
+                    continue
+                prev_txids.extend(tx_inputs)
+            prev_txids = list(dict.fromkeys(prev_txids))
             prev_by_txid: dict[str, dict[str, Any]] = {}
             if prev_txids:
-                prev_raw = await self._electrum_calls_chunked(client, [
-                    ("blockchain.transaction.get", [txid, False]) for txid in prev_txids
-                ], chunk_size=20)
+                prev_raw, prev_warnings = await self._electrum_overview_calls_resilient(
+                    client,
+                    [("blockchain.transaction.get", [txid, False]) for txid in prev_txids],
+                    label="Previous transaction",
+                )
+                warnings.extend(prev_warnings)
                 for txid, raw in zip(prev_txids, prev_raw):
                     if isinstance(raw, str):
                         prev_by_txid[txid] = _parse_raw_transaction(raw)
@@ -2693,9 +3790,12 @@ class WalletWatchManager:
             heights = sorted({int(height) for _txid, height in ordered if int(height) > 0})
             block_times: dict[int, int] = {}
             if heights:
-                headers = await self._electrum_calls_chunked(client, [
-                    ("blockchain.block.header", [height]) for height in heights
-                ])
+                headers, header_warnings = await self._electrum_overview_calls_resilient(
+                    client,
+                    [("blockchain.block.header", [height]) for height in heights],
+                    label="Block header",
+                )
+                warnings.extend(header_warnings)
                 for height, header in zip(heights, headers):
                     stamp = _electrum_header_time(header)
                     if stamp:
@@ -2712,9 +3812,11 @@ class WalletWatchManager:
                 if event.get("spent_sats") or event.get("received_sats"):
                     transactions.append(event)
 
+        # Avoid flooding the UI with the same timeout text for many inputs.
+        warnings = list(dict.fromkeys(warnings))
         return self._finalize_monitor_overview(
             config=config, monitor=monitor, source=source, rows=rows, transactions=transactions,
-            balance_sats=balance_sats, known_transaction_count=len(history_by_txid),
+            balance_sats=balance_sats, known_transaction_count=len(history_by_txid), warnings=warnings,
             page=page, unlimited=unlimited,
             has_more=(page * TX_OVERVIEW_PAGE_SIZE < len(history_by_txid)) if unlimited else False,
         )
@@ -2904,6 +4006,13 @@ class WalletWatchManager:
             record["detected_at"] = existing.get("detected_at") or record["detected_at"]
             existing.clear()
             existing.update(record)
+        if len(log) > MAX_STORED_ACTIVITY_LOG:
+            log.sort(key=lambda item: str(item.get("detected_at") or ""))
+            dropped = len(log) - MAX_STORED_ACTIVITY_LOG
+            log = log[-MAX_STORED_ACTIVITY_LOG:]
+            self.runtime_store.data["activity_log_trimmed_total"] = int(
+                self.runtime_store.data.get("activity_log_trimmed_total") or 0
+            ) + dropped
         self.runtime_store.data["activity_log"] = log
 
     def public_activity_log(
@@ -2991,6 +4100,8 @@ class WalletWatchManager:
             "pages": pages,
             "total": total,
             "stored_total": len(self.runtime_store.data.get("activity_log", []) or []),
+            "stored_limit": MAX_STORED_ACTIVITY_LOG,
+            "trimmed_total": int(self.runtime_store.data.get("activity_log_trimmed_total") or 0),
             "display_mode": mode,
             "explorer_base_url": explorer_base_url,
         }
@@ -3064,7 +4175,7 @@ class WalletWatchManager:
         settings = effective_settings(self.entry)
         proxy = None if local_direct else tor_proxy_from_settings(settings)
         headers: dict[str, str] = {
-            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.12",
+            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.13",
         }
         token = str(target.get("token") or "")
         if token:
@@ -3124,9 +4235,14 @@ class WalletWatchManager:
         results: list[dict[str, Any]] = []
 
         async def send_one(target: dict[str, Any]) -> dict[str, Any]:
-            detail = str(target.get("detail") or "inherit")
-            if detail == "inherit":
-                detail = str(self.runtime_store.data.get("notification_detail") or "discreet")
+            # Wallet-level detail is authoritative for wallet activity. The
+            # server setting is only the default copied into newly created
+            # monitors. External targets never override an individual wallet.
+            detail = (
+                str(row.get("notification_detail") or self.runtime_store.data.get("notification_detail") or "discreet")
+                if row is not None and event is not None
+                else str(self.runtime_store.data.get("notification_detail") or "discreet")
+            )
             if test:
                 title = "✅ Sats Sentinel Test"
                 message = "Testbenachrichtigung erfolgreich ausgelöst. Es wurden keine Walletdaten übertragen."
@@ -3192,7 +4308,7 @@ class WalletWatchManager:
         if row.get("notify_ha_event", True):
             self.hass.bus.async_fire(WATCH_TEST_EVENT if event.get("simulated") else WATCH_EVENT, minimal)
 
-        detail = str(self.runtime_store.data.get("notification_detail") or "discreet")
+        detail = str(row.get("notification_detail") or self.runtime_store.data.get("notification_detail") or "discreet")
         title, message, _payload = self._notification_text(row, event, detail)
         if self.runtime_store.data.get("persistent_notification", True) and row.get("notify_persistent", True):
             await self.hass.services.async_call(
@@ -3408,7 +4524,7 @@ class WalletWatchManager:
                 data["last_error"] = "Sats Sentinel is enabled but no addresses are configured"
                 data["last_warning"] = None
                 data["partial_failures"] = 0
-                await self.runtime_store.async_save()
+                await self._async_save_runtime_if_due()
                 return self.public_status()
             source_used = _select_watch_source(self.entry, data)
             if source_used is None:
@@ -3424,7 +4540,7 @@ class WalletWatchManager:
                 if data["error_streak"] >= 3 and not data.get("outage_notified"):
                     data["outage_notified"] = True
                     await self._notify_outage(data["last_error"])
-                await self.runtime_store.async_save()
+                await self._async_save_runtime_if_due(force=data["error_streak"] in {1, 3})
                 return self.public_status()
 
             data["last_poll_at"] = datetime.now(timezone.utc).isoformat()
@@ -3444,11 +4560,12 @@ class WalletWatchManager:
                         await self._notify_outage(
                             f"Sats Sentinel kann die explizit ausgewählte Quelle {source_used.get('label', 'Electrum')} nicht erreichen. Es gibt absichtlich keinen Provider-Fallback."
                         )
-                    await self.runtime_store.async_save()
+                    await self._async_save_runtime_if_due(force=data["error_streak"] in {1, 3})
                     return self.public_status()
             else:
+                first_probe: dict[str, Any] | None = None
                 try:
-                    await self._address_snapshot(source_used, addresses[0]["address"], False)
+                    first_probe = await self._address_snapshot(source_used, addresses[0]["address"], False)
                 except Exception as err:
                     last_error: Exception = err
                     # Same-node diagnosis only. This does not change provider,
@@ -3468,14 +4585,14 @@ class WalletWatchManager:
                     if data["error_streak"] >= 3 and not data.get("outage_notified"):
                         data["outage_notified"] = True
                         await self._notify_outage("Sats Sentinel kann die explizit/automatisch ausgewählte Mempool-Datenquelle nicht erreichen. Es gibt absichtlich keinen Provider-Fallback.")
-                    await self.runtime_store.async_save()
+                    await self._async_save_runtime_if_due(force=data["error_streak"] in {1, 3})
                     return self.public_status()
 
-                for row in addresses:
+                for row_index, row in enumerate(addresses):
                     address = str(row.get("address") or "")
                     monitor_slot = row.get("monitor_slot", "?")
                     try:
-                        first = await self._address_snapshot(source_used, address, False)
+                        first = first_probe if row_index == 0 and first_probe is not None else await self._address_snapshot(source_used, address, False)
                     except Exception as err:
                         partial_errors.append(f"Wallet {monitor_slot}: summary {type(err).__name__}: {err}")
                         continue
@@ -3593,7 +4710,9 @@ class WalletWatchManager:
                 data["last_warning"] = None
                 data["partial_failures"] = 0
                 data["last_partial_at"] = None
-            await self.runtime_store.async_save()
+            await self._async_save_runtime_if_due(
+                force=bool(aggregated or gap_extended or recovered)
+            )
             if recovered:
                 self.hass.bus.async_fire(WATCH_STATUS_EVENT, {
                     "config_entry_id": self.entry.entry_id, "status": "online", "detected_at": data["last_success_at"]

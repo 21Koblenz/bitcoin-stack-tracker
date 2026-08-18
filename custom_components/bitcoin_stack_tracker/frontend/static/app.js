@@ -1,7 +1,8 @@
 "use strict";
 
-const BUILD_VERSION = "0.21.0.12";
-const FRONTEND_BUILD = "021010";
+const BUILD_VERSION = "0.21.0.13";
+const FRONTEND_BUILD = "0.21.0.13";
+window.__BITCOIN_STACK_TRACKER_FRONTEND_BUILD__ = FRONTEND_BUILD;
 const SATS_PER_BTC = 100_000_000;
 const state = {
   lang: localStorage.getItem("bst_lang") || (String(navigator.language || "de").toLowerCase().startsWith("de") ? "de" : "en"),
@@ -47,6 +48,9 @@ state.walletWatchActivityPageSize = (()=>{const v=Number(localStorage.getItem("b
 state.walletWatchTxOverviews = {};
 state.walletWatchOpenTxDetails = new Set();
 state.walletWatchSettingsDirty = false;
+state.walletWatchMonitorCollapsed = {};
+state.lockedWalletWatchEditId = "";
+state.lockedWalletWatchSaving = false;
 state.marketAssessmentHistory = null;
 state.marketAssessmentHistoryRange = localStorage.getItem("bst_market_assessment_history_range") || "3y";
 state.marketAssessmentHistoryPriceOverlay = localStorage.getItem("bst_market_assessment_history_price_overlay") !== "0";
@@ -55,6 +59,9 @@ state.marketAssessmentHistoryPriceOpacity = (()=>{const value=Number(localStorag
 state.marketAssessmentHistorySmoothing = (()=>{const value=Number(localStorage.getItem("bst_market_assessment_history_smoothing")||5);return [1,3,5,7,14,30].includes(value)?value:5;})();
 state.chartMarketAssessmentHistory = null;
 state.chartMarketAssessmentHistoryLoading = false;
+state.marketAssessmentHistoryCache = new Map();
+state.marketAssessmentHistorySourceRevision = "";
+const marketAssessmentHistoryInFlight = new Map();
 
 let walletWatchStatusPollTimer = null;
 let walletWatchStatusRefreshInFlight = false;
@@ -1004,13 +1011,13 @@ function startBitcoinNetworkTicker() {
   window.__bstBitcoinNetworkTicker = setInterval(() => {
     renderBitcoinNetworkStrip();
     if (!state.entryId || state.data?.locked || state.halvingsLoading) return;
-    if (Date.now() - bitcoinNetworkRefreshAt >= 60 * 1000) void loadHalvings({force:true});
+    if (Date.now() - bitcoinNetworkRefreshAt >= 60 * 1000) void loadHalvings({refresh:true});
   }, 15000);
 }
 
-async function loadHalvings({force=false}={}) {
+async function loadHalvings({force=false,refresh=false}={}) {
   if (!state.entryId || !state.data || state.data.locked || state.halvingsLoading) return false;
-  if (!force && state.halvingsEntryId === state.entryId && state.halvings.length) return true;
+  if (!force && !refresh && state.halvingsEntryId === state.entryId && state.halvings.length) return true;
   const requestedEntry = state.entryId;
   state.halvingsLoading = true;
   state.halvingsError = "";
@@ -1052,6 +1059,7 @@ async function loadData() {
   if (requestedEntry !== state.entryId || requestedRevision !== dashboardLoadRevision) return;
   state.data = summary;
   state.dashboardSections.summary = true;
+  syncMarketAssessmentHistorySourceRevision(summary);
   invalidateDerivedCaches();
   state.securityUsers = [];
   state.connectionInventory = state.data?.connection_inventory || null;
@@ -1064,20 +1072,32 @@ async function loadData() {
   void refreshNetworkStatus({silent:true});
   if (state.data.locked) {
     clearLazySensitiveViews();
-    state.walletWatch = null;
+    // Keep the privacy-safe Sats Sentinel runtime summary alive while the main
+    // password vault is locked. Historical TX details and raw watch material
+    // are still discarded/hidden and remain password-gated.
     state.walletWatchLoading = false;
     state.walletWatchTxOverviews = {};
-    const walletWatchList = $("#walletWatchMonitors"); if (walletWatchList) walletWatchList.innerHTML = "";
-    const walletWatchStatus = $("#walletWatchStatus"); if (walletWatchStatus) walletWatchStatus.innerHTML = "";
     $("#app").classList.add("hidden");
     $("#vaultGate").classList.remove("hidden");
     $("#lockButton").classList.add("hidden");
     updateVaultGateText();
     if(autoLockTimer){clearTimeout(autoLockTimer);autoLockTimer=null;}
     renderAutoLock();
+    state.lockedWalletWatchEditId="";
+    state.walletWatch=null;
+    const showLockedSentinel=Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked();
+    if(showLockedSentinel){
+      const managed=await loadLockedWalletWatchManagement();
+      if(!managed)await refreshWalletWatchStatus({silent:true});
+      renderLockedWalletWatch();
+    } else {
+      const lockedHost=$("#lockedWalletWatch");
+      if(lockedHost){lockedHost.classList.add("hidden");lockedHost.innerHTML="";}
+    }
     return;
   }
   $("#vaultGate").classList.add("hidden");
+  $("#lockedWalletWatch")?.classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#lockButton").classList.toggle("hidden", !state.data.security?.password_protected);
   if (state.activeTab === "security" && state.data.security?.owner) {
@@ -1280,7 +1300,7 @@ function renderActiveTabContent(selected = state.activeTab) {
   }
   else if (selected === "walletwatch") {
     renderWalletWatch();
-    if (!state.walletWatch && !state.walletWatchLoading) void loadWalletWatch();
+    if ((!state.walletWatch || state.walletWatch.locked_runtime_snapshot) && !state.walletWatchLoading) void loadWalletWatch();
   }
   else if (selected === "settings") { renderHistorySettings(); renderNetworkStatus(); renderConnections(); renderTorRotation(); renderLeakTestResult(); renderBackupHealth(); }
   else if (selected === "security") {
@@ -1770,9 +1790,91 @@ function smoothMarketAssessmentPoints(points,windowSize=state.marketAssessmentHi
 }
 function marketAssessmentPointTimestamp(point,payload,index,total,{capTime=null}={}){
   const day=String(point?.date||"").slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return NaN;
+  const explicit=chartTimestamp(point?._timestamp);
+  if(Number.isFinite(explicit))return Number.isFinite(capTime)?Math.min(explicit,capTime):explicit;
   const calculated=chartTimestamp(payload?.calculated_at),calculatedDay=Number.isFinite(calculated)?new Date(calculated).toISOString().slice(0,10):"";
   if(index===total-1&&day===calculatedDay&&Number.isFinite(calculated))return Number.isFinite(capTime)?Math.min(calculated,capTime):calculated;
   return Date.parse(`${day}T23:59:59.999Z`);
+}
+function marketAssessmentLiveTailPoints(payload,{includeIntraday=false}={}){
+  const intraday=includeIntraday&&Array.isArray(payload?.intraday_points)?payload.intraday_points.map(point=>({
+    date:String(point?.date||point?.timestamp||"").slice(0,10),
+    score:Number(point?.score),rating:point?.rating||"unavailable",price:point?.price==null?null:Number(point.price),
+    _timestamp:point?.timestamp,_intraday:true
+  })).filter(point=>/^\d{4}-\d{2}-\d{2}$/.test(point.date)&&Number.isFinite(point.score)):[];
+  // Keep the causal daily closes as anchors and add real observed intraday
+  // snapshots between them. No value is interpolated or fabricated.
+  const rows=(Array.isArray(payload?.points)?payload.points:[]).map(point=>({...point}));
+  rows.push(...intraday);
+  const current=state.data?.buy_opportunity||{},score=Number(current.score_raw??current.score),day=String(current.as_of_day||"").slice(0,10);
+  const payloadCurrency=String(payload?.currency||"").toUpperCase(),currentCurrencyCode=String(current.currency||payloadCurrency).toUpperCase();
+  if(Number.isFinite(score)&&/^\d{4}-\d{2}-\d{2}$/.test(day)&&payloadCurrency&&payloadCurrency===currentCurrencyCode){
+    const price=Number(state.data?.prices?.[payloadCurrency]??current.current_price);
+    rows.push({date:day,score,rating:current.rating||"unavailable",price:Number.isFinite(price)&&price>0?price:null,_timestamp:state.data?.buy_opportunity_calculated_at||new Date().toISOString(),_live:true});
+  }
+  const timeOf=point=>{const explicit=chartTimestamp(point?._timestamp);if(Number.isFinite(explicit))return explicit;const date=String(point?.date||"").slice(0,10);return /^\d{4}-\d{2}-\d{2}$/.test(date)?Date.parse(`${date}T23:59:59.999Z`):Number.POSITIVE_INFINITY;};
+  rows.sort((left,right)=>timeOf(left)-timeOf(right));
+  return rows;
+}
+function marketAssessmentOverlayIntervalMinutesForRange(){
+  if(state.historyRange==="1")return 60;
+  if(state.historyRange==="7"||state.historyRange==="week_start")return 360;
+  if(state.historyRange==="30"||state.historyRange==="month_start")return 720;
+  return 1440;
+}
+function resampleMarketAssessmentScorePoints(points,intervalMinutes){
+  const interval=Math.max(1,Number(intervalMinutes)||1440);
+  if(interval>=1440)return points;
+  const bucketMs=interval*60000,buckets=new Map();
+  for(const point of points){
+    if(!Number.isFinite(point?.time)||!Number.isFinite(point?.score))continue;
+    const bucket=Math.floor(point.time/bucketMs)*bucketMs,previous=buckets.get(bucket);
+    if(!previous||point.time>=previous.time)buckets.set(bucket,point);
+  }
+  return [...buckets.values()].sort((left,right)=>left.time-right.time);
+}
+function smoothMarketAssessmentScoreRows(rows,windowSize=state.marketAssessmentHistorySmoothing){
+  const window=Math.max(1,Number(windowSize)||1);
+  if(window<=1)return rows.map(row=>({...row}));
+  const alpha=2/(window+1);let ema=null;
+  return rows.map(row=>{const raw=Number(row?.score);if(Number.isFinite(raw))ema=ema==null?raw:(alpha*raw+(1-alpha)*ema);return {...row,score:ema==null?raw:ema};});
+}
+function marketAssessmentHistorySourceRevision(data=state.data){
+  const entry=String(data?.portfolio?.config_entry_id||state.entryId||""),lastSync=String(data?.history?.last_sync||""),settings=JSON.stringify(data?.buy_opportunity_settings||{});
+  return `${entry}|${lastSync}|${settings}`;
+}
+function clearMarketAssessmentHistoryClientCache(){
+  state.marketAssessmentHistoryCache.clear();
+  state.marketAssessmentHistory=null;
+  state.chartMarketAssessmentHistory=null;
+}
+function syncMarketAssessmentHistorySourceRevision(data=state.data){
+  const next=marketAssessmentHistorySourceRevision(data);
+  if(state.marketAssessmentHistorySourceRevision&&state.marketAssessmentHistorySourceRevision!==next)clearMarketAssessmentHistoryClientCache();
+  state.marketAssessmentHistorySourceRevision=next;
+}
+function marketAssessmentHistoryCacheKey(range,entryId=state.entryId,revision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision()){
+  const shortOverlay=state.activeTab==="overview"&&state.chartMode==="price_market"&&marketAssessmentOverlayIntervalMinutesForRange()<1440;
+  // Refresh the lightweight intraday tail at most once per hour. The expensive
+  // causal daily score cache keeps its own stable server-side content signature.
+  const intradayRevision=shortOverlay?Math.floor(Date.now()/3600000):"daily";
+  return `${entryId}|${revision}|${range}|${intradayRevision}`;
+}
+async function fetchMarketAssessmentHistoryRange(range,{force=false}={}){
+  if(!state.entryId||!state.data)return null;
+  syncMarketAssessmentHistorySourceRevision();
+  const entryId=state.entryId,revision=state.marketAssessmentHistorySourceRevision,key=marketAssessmentHistoryCacheKey(range,entryId,revision);
+  if(!force&&state.marketAssessmentHistoryCache.has(key))return state.marketAssessmentHistoryCache.get(key);
+  if(marketAssessmentHistoryInFlight.has(key))return await marketAssessmentHistoryInFlight.get(key);
+  const request=(async()=>{
+    const payload=await api(`api/market-assessment/history?entry_id=${encodeURIComponent(entryId)}&range=${encodeURIComponent(range)}`,{timeoutMs:180000});
+    if(!payload||entryId!==state.entryId||revision!==state.marketAssessmentHistorySourceRevision)return null;
+    const enriched={...payload,_entry_id:entryId,_requested_range:range,_source_revision:revision};
+    state.marketAssessmentHistoryCache.set(key,enriched);
+    return enriched;
+  })();
+  marketAssessmentHistoryInFlight.set(key,request);
+  try{return await request;}finally{if(marketAssessmentHistoryInFlight.get(key)===request)marketAssessmentHistoryInFlight.delete(key);}
 }
 function marketAssessmentSmoothingLabel(){
   const window=Number(state.marketAssessmentHistorySmoothing||1);
@@ -1796,20 +1898,30 @@ function resetMarketAssessmentChartDisplayDefaults(){
 }
 
 function chartMarketAssessmentRangeKey(){
-  const map={"1":"1d","week_start":"week_start","7":"7d","month_start":"month_start","30":"30d","90":"90d","ytd":"ytd","365":"1y","1095":"3y","1825":"5y","3650":"10y","first_purchase":"max","max":"max"};
+  // Daily market scores are sparse compared with the 5/30-minute price chart.
+  // Fetch one wider causal window for the very short views so the overlay has
+  // a score sample *before* the visible left edge. chartMarketAssessmentOverlayValues()
+  // still clips everything to the selected price range, so no extra time is
+  // shown; the extra point merely anchors the line instead of making 1 day /
+  // week-to-date look as if the market assessment had failed to load.
+  const map={"1":"7d","week_start":"7d","7":"30d","month_start":"30d","30":"90d","90":"90d","ytd":"ytd","365":"1y","1095":"3y","1825":"5y","3650":"10y","first_purchase":"max","max":"max"};
   return map[String(state.historyRange||"365")]||"1y";
 }
 function chartMarketAssessmentPayloadReady(){
+  const range=chartMarketAssessmentRangeKey(),key=marketAssessmentHistoryCacheKey(range),cached=state.marketAssessmentHistoryCache.get(key);
+  if(cached)state.chartMarketAssessmentHistory=cached;
   const payload=state.chartMarketAssessmentHistory;
-  return Boolean(payload&&payload._entry_id===state.entryId&&payload._requested_range===chartMarketAssessmentRangeKey());
+  return Boolean(payload&&payload._entry_id===state.entryId&&payload._requested_range===range&&payload._source_revision===(state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision()));
 }
 function chartMarketAssessmentOverlayValues(priceValues){
   if(!chartMarketAssessmentPayloadReady())return {};
-  const payload=state.chartMarketAssessmentHistory,points=smoothMarketAssessmentPoints(Array.isArray(payload?.points)?payload.points:[]);
+  const payload=state.chartMarketAssessmentHistory,points=marketAssessmentLiveTailPoints(payload,{includeIntraday:true});
   const priceRows=Object.keys(priceValues||{}).map(key=>({key,time:chartTimestamp(key)})).filter(row=>Number.isFinite(row.time)).sort((a,b)=>a.time-b.time);
   if(!points.length||!priceRows.length)return {};
   const firstPriceTime=priceRows[0].time,lastPriceTime=priceRows.at(-1).time;
-  const scorePoints=points.map((point,index)=>({time:marketAssessmentPointTimestamp(point,payload,index,points.length,{capTime:lastPriceTime}),score:Number(point?.display_score)})).filter(point=>Number.isFinite(point.time)&&Number.isFinite(point.score)).sort((a,b)=>a.time-b.time);
+  const rawScorePoints=points.map((point,index)=>({time:marketAssessmentPointTimestamp(point,payload,index,points.length,{capTime:lastPriceTime}),score:Number(point?.score)})).filter(point=>Number.isFinite(point.time)&&Number.isFinite(point.score)).sort((a,b)=>a.time-b.time);
+  const sampledScorePoints=resampleMarketAssessmentScorePoints(rawScorePoints,marketAssessmentOverlayIntervalMinutesForRange());
+  const scorePoints=smoothMarketAssessmentScoreRows(sampledScorePoints);
   if(!scorePoints.length)return {};
   const nearestPriceRow=target=>{let lo=0,hi=priceRows.length-1;while(lo<hi){const mid=Math.floor((lo+hi)/2);if(priceRows[mid].time<target)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(priceRows[lo-1].time-target)<=Math.abs(priceRows[lo].time-target))return priceRows[lo-1];return priceRows[lo];};
   const visible=scorePoints.filter(point=>point.time>=firstPriceTime&&point.time<=lastPriceTime);
@@ -1828,19 +1940,25 @@ function chartMarketAssessmentOverlayValues(priceValues){
   return result;
 }
 async function ensureChartMarketAssessmentHistory({force=false}={}){
-  if(state.chartMarketAssessmentHistoryLoading||!state.entryId||!state.data)return false;
-  const range=chartMarketAssessmentRangeKey(),entryId=state.entryId;
+  if(!state.entryId||!state.data)return false;
+  syncMarketAssessmentHistorySourceRevision();
+  const range=chartMarketAssessmentRangeKey();
   if(!force&&chartMarketAssessmentPayloadReady())return true;
+  let retryForRangeChange=false;
   state.chartMarketAssessmentHistoryLoading=true;
   try{
-    const payload=await api(`api/market-assessment/history?entry_id=${encodeURIComponent(entryId)}&range=${encodeURIComponent(range)}`,{timeoutMs:180000});
-    if(entryId!==state.entryId||!payload)return false;
-    state.chartMarketAssessmentHistory={...payload,_entry_id:entryId,_requested_range:range};
+    const payload=await fetchMarketAssessmentHistoryRange(range,{force});
+    if(!payload)return false;
+    if(range!==chartMarketAssessmentRangeKey()){retryForRangeChange=true;return false;}
+    state.chartMarketAssessmentHistory=payload;
     invalidateDerivedCaches();
     if(state.activeTab==="overview"&&(state.chartMode==="price_market"||$("#chartMode")?.value==="price_market"))renderChart();
     return true;
   }catch(error){console.warn("Bitcoin Stack market-assessment chart overlay failed",errorText(error));return false;}
-  finally{state.chartMarketAssessmentHistoryLoading=false;}
+  finally{
+    state.chartMarketAssessmentHistoryLoading=false;
+    if(retryForRangeChange&&state.activeTab==="overview"&&(state.chartMode==="price_market"||$("#chartMode")?.value==="price_market"))void ensureChartMarketAssessmentHistory();
+  }
 }
 
 function renderChart() {
@@ -1911,7 +2029,7 @@ function renderChart() {
   const extents = series.map(getExtent);
   const y = (value,index) => { const [min,max]=extents[index], mapped=transform(value,index); return pad.t + (1-(mapped-min)/(max-min))*plotHeight; };
   const nearestMarketDateIndex=target=>{let lo=0,hi=times.length-1;while(lo<hi){const mid=Math.floor((lo+hi)/2);if(times[mid]<target)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(times[lo-1]-target)<Math.abs(times[lo]-target))return lo-1;return lo;};
-  const marketBestRows=marketRawMarkers.map((marker,markerIndex)=>{const target=chartTimestamp(marker?.date);if(!Number.isFinite(target))return null;const dateIndex=nearestMarketDateIndex(target),day=dates[dateIndex],displayValue=Number(series[marketSeriesIndex]?.values?.[day]);if(!usable(displayValue,marketSeriesIndex))return null;return {marker,markerIndex,day,x:xDay(day),y:y(displayValue,marketSeriesIndex),bottomConfirmed:Boolean(marker?.bottom_confirmation_met)};}).filter(Boolean);
+  const marketBestRows=marketRawMarkers.map((marker,markerIndex)=>{const target=chartTimestamp(marker?.date);if(!Number.isFinite(target)||target<minTime||target>maxTime)return null;const dateIndex=nearestMarketDateIndex(target),day=dates[dateIndex],displayValue=Number(series[marketSeriesIndex]?.values?.[day]);if(!usable(displayValue,marketSeriesIndex))return null;return {marker,markerIndex,day,x:xDay(day),y:y(displayValue,marketSeriesIndex),bottomConfirmed:Boolean(marker?.bottom_confirmation_met)};}).filter(Boolean);
 
   // Final render guard only. The durable fine-price cache is already adaptive:
   // today/very recent = dense, then 30m -> 2h -> 12h -> daily for long ranges.
@@ -2507,13 +2625,13 @@ async function saveBuyOpportunitySettings(event){
   try{
     const response=await service("set_buy_opportunity_settings",{config_entry_id:state.entryId,profile:form.elements.profile.value,currency:form.elements.currency.value,weights,signal_weights,turning_point_weights,model,thresholds});
     state.data.buy_opportunity_settings=response.settings||state.data.buy_opportunity_settings;
-    preview.textContent=t("buyOpportunitySaved");preview.className="result positive";toast(t("buyOpportunitySaved"));state.marketAssessmentHistory=null;state.chartMarketAssessmentHistory=null;await loadData();if(state.activeTab==="market")void loadMarketAssessmentHistory({force:true});if(state.activeTab==="overview"&&state.chartMode==="price_market")void ensureChartMarketAssessmentHistory({force:true});
+    preview.textContent=t("buyOpportunitySaved");preview.className="result positive";toast(t("buyOpportunitySaved"));clearMarketAssessmentHistoryClientCache();await loadData();if(state.activeTab==="market")void loadMarketAssessmentHistory({force:true});if(state.activeTab==="overview"&&state.chartMode==="price_market")void ensureChartMarketAssessmentHistory({force:true});
   }catch(error){preview.textContent=error.message||String(error);preview.className="result negative";toast(error.message||String(error));}
   finally{button.disabled=!state.data?.security?.owner;}
 }
 async function resetBuyOpportunitySettings(){
   const button=$("#resetBuyOpportunitySettingsButton"),preview=$("#buyOpportunitySettingsPreview");if(!button)return;button.disabled=true;
-  try{const response=await service("set_buy_opportunity_settings",{config_entry_id:state.entryId,currency:$("#buyOpportunityCurrency")?.value||"EUR",reset_defaults:true});state.data.buy_opportunity_settings=response.settings;state.marketAssessmentHistory=null;state.chartMarketAssessmentHistory=null;preview.textContent=t("marketAssessmentReset");preview.className="result positive";toast(t("marketAssessmentReset"));await loadData();if(state.activeTab==="market")void loadMarketAssessmentHistory({force:true});if(state.activeTab==="overview"&&state.chartMode==="price_market")void ensureChartMarketAssessmentHistory({force:true});}
+  try{const response=await service("set_buy_opportunity_settings",{config_entry_id:state.entryId,currency:$("#buyOpportunityCurrency")?.value||"EUR",reset_defaults:true});state.data.buy_opportunity_settings=response.settings;clearMarketAssessmentHistoryClientCache();preview.textContent=t("marketAssessmentReset");preview.className="result positive";toast(t("marketAssessmentReset"));await loadData();if(state.activeTab==="market")void loadMarketAssessmentHistory({force:true});if(state.activeTab==="overview"&&state.chartMode==="price_market")void ensureChartMarketAssessmentHistory({force:true});}
   catch(error){preview.textContent=error.message||String(error);preview.className="result negative";toast(error.message||String(error));}
   finally{button.disabled=!state.data?.security?.owner;}
 }
@@ -2831,13 +2949,17 @@ async function refreshLivePrice({silent=true}={}){
     state.data.live_price_intervals={
       local:Number(result?.local_interval_seconds||300),
       public:Number(result?.public_interval_seconds||60),
-      dashboard:Number(result?.dashboard_poll_seconds||15)
+      dashboard:Number(result?.dashboard_poll_seconds||30)
     };
     livePriceUpdatedAt=nextUpdatedAt;
     if(changed){
       invalidateDerivedCaches();
       renderBitcoinNetworkStrip();
       renderActiveTabContent(state.activeTab);
+      // Price rendering stays live, but the CPU-heavy market score is allowed
+      // to lag by up to five minutes. startMarketAssessmentPolling() shares one
+      // server-side snapshot with the HA sensor and all panel clients. This
+      // avoids turning every 30-second UI price tick into a model/API wake-up.
       if(state.activeTab==="settings")void refreshConnectionInventory({silent:true,refreshLive:false});
     }
     return true;
@@ -2848,7 +2970,7 @@ async function refreshLivePrice({silent=true}={}){
 }
 function startLivePricePolling(){
   if(livePricePollTimer)clearInterval(livePricePollTimer);
-  // This 15-second UI loop is local-only: it reads the coordinator cache from
+  // This 30-second UI loop is local-only: it reads the coordinator cache from
   // Home Assistant and never triggers an external request itself. Public Tor
   // sources refresh independently (default 60 s), own/local sources default to
   // 300 s. This makes a newly cached quote visible quickly without hammering
@@ -2856,13 +2978,13 @@ function startLivePricePolling(){
   livePricePollTimer=setInterval(()=>{
     if(document.hidden)return;
     void refreshLivePrice({silent:true});
-  },15000);
+  },30000);
 }
 
 function renderMarketAssessmentHistory(){
   const host=$("#marketAssessmentHistoryChart"),hint=$("#marketAssessmentHistoryHint"),bestLegend=$("#marketAssessmentHistoryBestLegend"),markerTooltip=$("#marketAssessmentHistoryMarkerTooltip"),select=$("#marketAssessmentHistoryRange"),overlayToggle=$("#marketAssessmentHistoryPriceOverlay"),priceScaleSelect=$("#marketAssessmentHistoryPriceScale"),opacityInput=$("#marketAssessmentHistoryPriceOpacity"),opacityValue=$("#marketAssessmentHistoryPriceOpacityValue"),opacityControl=$("#marketAssessmentHistoryPriceOpacityControl"),smoothingSelect=$("#marketAssessmentHistorySmoothing");
   if(!host)return;if(select)select.value=state.marketAssessmentHistoryRange||"3y";if(overlayToggle)overlayToggle.checked=Boolean(state.marketAssessmentHistoryPriceOverlay);if(priceScaleSelect){priceScaleSelect.value=state.marketAssessmentHistoryPriceScale||"log";priceScaleSelect.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityInput){opacityInput.value=String(state.marketAssessmentHistoryPriceOpacity);opacityInput.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityValue)opacityValue.textContent=`${Math.round(state.marketAssessmentHistoryPriceOpacity)} %`;if(opacityControl)opacityControl.classList.toggle("is-inactive",!state.marketAssessmentHistoryPriceOverlay);if(smoothingSelect)smoothingSelect.value=String(state.marketAssessmentHistorySmoothing||5);
-  const payload=state.marketAssessmentHistory,rawPoints=Array.isArray(payload?.points)?payload.points:[],points=smoothMarketAssessmentPoints(rawPoints);
+  const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload),points=smoothMarketAssessmentPoints(rawPoints);
   if(!points.length){host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Noch keine rekonstruierte Score-Historie geladen.","No reconstructed score history loaded yet."))}</p>`;if(bestLegend)bestLegend.innerHTML="";if(markerTooltip)markerTooltip.classList.add("hidden");if(hint)hint.textContent="";return;}
   const overlay=Boolean(state.marketAssessmentHistoryPriceOverlay),priceLog=state.marketAssessmentHistoryPriceScale!=="linear",priceOpacity=Math.max(0,Math.min(1,Number(state.marketAssessmentHistoryPriceOpacity||0)/100)),currency=String(payload?.currency||state.data?.summary?.reference_currency||"EUR").toUpperCase();
   const mobile=window.matchMedia("(max-width: 760px)").matches,width=Math.max(mobile?320:760,Math.round(host.clientWidth||(mobile?360:1100))),height=Math.max(mobile?600:560,Math.round(host.clientHeight||(mobile?620:590))),pad={l:58,r:overlay?(mobile?72:88):18,t:32,b:54},pw=width-pad.l-pad.r,ph=height-pad.t-pad.b;
@@ -2885,9 +3007,11 @@ function renderMarketAssessmentHistory(){
 
 async function loadMarketAssessmentHistory({force=false}={}){
   if(!state.entryId||!state.data)return false;const range=state.marketAssessmentHistoryRange||"3y";
-  if(!force&&state.marketAssessmentHistory?.range===range)return true;
-  const host=$("#marketAssessmentHistoryChart");if(host)host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Historischer Score wird rekonstruiert …","Reconstructing historical score …"))}</p>`;
-  try{const payload=await api(`api/market-assessment/history?entry_id=${encodeURIComponent(state.entryId)}&range=${encodeURIComponent(range)}`,{timeoutMs:180000});if(payload){state.marketAssessmentHistory=payload;renderMarketAssessmentHistory();return true;}}catch(error){if(host)host.innerHTML=`<p class="storage-note">${esc(errorText(error))}</p>`;}return false;
+  syncMarketAssessmentHistorySourceRevision();
+  const cached=state.marketAssessmentHistoryCache.get(marketAssessmentHistoryCacheKey(range));
+  if(!force&&cached){state.marketAssessmentHistory=cached;renderMarketAssessmentHistory();return true;}
+  const host=$("#marketAssessmentHistoryChart");if(host)host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Historischer Score wird einmalig rekonstruiert; danach kommt er aus dem persistenten Cache …","Historical score is reconstructed once; subsequent loads use the persistent cache …"))}</p>`;
+  try{const payload=await fetchMarketAssessmentHistoryRange(range,{force});if(payload&&range===state.marketAssessmentHistoryRange){state.marketAssessmentHistory=payload;renderMarketAssessmentHistory();return true;}}catch(error){if(host)host.innerHTML=`<p class="storage-note">${esc(errorText(error))}</p>`;}return false;
 }
 
 async function refreshMarketAssessment({silent=true}={}){
@@ -2897,12 +3021,27 @@ async function refreshMarketAssessment({silent=true}={}){
   try{
     const result=await api(`api/market-assessment?entry_id=${encodeURIComponent(requestedEntry)}`,{timeoutMs:15000});
     if(requestedEntry!==state.entryId||!state.data)return false;
+    const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();
     if(result?.buy_opportunity)state.data.buy_opportunity=result.buy_opportunity;
     if(result?.buy_opportunity_settings)state.data.buy_opportunity_settings=result.buy_opportunity_settings;
-    // The endpoint only recalculates from already cached history + the latest
-    // coordinator price. It never triggers an additional external market call.
+    if(result?.calculated_at)state.data.buy_opportunity_calculated_at=result.calculated_at;
+    if(state.data?.history&&Object.prototype.hasOwnProperty.call(result||{},"history_last_sync"))state.data.history.last_sync=result.history_last_sync||null;
+    syncMarketAssessmentHistorySourceRevision();
+    const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;
+    // The endpoint never triggers an additional external market call. The
+    // current score is shared for five minutes; a background daily-history sync
+    // is signaled via history_last_sync so an already-open panel drops only its
+    // stale client-side range cache and reads the freshly persisted score series.
     renderBuyOpportunity();
-    if(state.activeTab==="market")renderBuyOpportunitySettings();
+    invalidateDerivedCaches();
+    if(state.activeTab==="market"){
+      renderBuyOpportunitySettings();renderMarketAssessmentHistory();
+      if(historyRevisionChanged)void loadMarketAssessmentHistory();
+    }
+    if(state.activeTab==="overview"&&state.chartMode==="price_market"){
+      renderChart();
+      if(historyRevisionChanged)void ensureChartMarketAssessmentHistory();
+    }
     return true;
   }catch(error){
     if(!silent)toast(errorText(error));
@@ -2911,14 +3050,13 @@ async function refreshMarketAssessment({silent=true}={}){
 }
 function startMarketAssessmentPolling(){
   if(marketAssessmentPollTimer)clearInterval(marketAssessmentPollTimer);
-  // The live-price coordinator refreshes independently (default 5 min).
-  // Recalculate the visible public assessment from the latest cached price
-  // once a minute so no manual button is required and no extra network traffic
-  // is created by this UI timer.
+  // Core shares one executor-backed 5-minute assessment cache between the
+  // sensor and every panel client. Poll only where the score is visible; other
+  // tabs must not keep waking the model/API in the background.
   marketAssessmentPollTimer=setInterval(()=>{
-    if(document.hidden)return;
+    if(document.hidden||!(state.activeTab==="overview"||state.activeTab==="market"))return;
     void refreshMarketAssessment({silent:true});
-  },60000);
+  },300000);
 }
 
 function startNetworkPolling(){
@@ -2937,7 +3075,7 @@ function startNetworkPolling(){
       if(ticks % 2 === 0) refreshConnectionInventory({silent:true});
       if(ticks % 2 === 0) loadTorRotationSettings();
     }
-  },30000);
+  },60000);
 }
 
 
@@ -3757,7 +3895,7 @@ $("#saveTorRotationButton").onclick=async()=>{
 };
 $("#discreetMode").onchange=event=>applyDiscreetMode(event.target.checked);
 $("#privacyButton").onclick=()=>applyDiscreetMode(!state.discreet);
-$("#portfolioSelect").onchange=async event=>{state.entryId=event.target.value;state.halvings=[];state.halvingInfo=null;state.halvingsEntryId="";state.halvingsError="";state.walletWatch=null;state.walletWatchLoading=false;state.walletWatchTxOverviews={};state.walletWatchOpenTxDetails.clear();bitcoinNetworkRefreshAt=0;localStorage.setItem("bst_entry",state.entryId);initWalletWatchPanelToggles();await loadData();await loadTorRotationSettings();if(state.activeTab==="walletwatch"&&!state.data?.locked)await loadWalletWatch();};
+$("#portfolioSelect").onchange=async event=>{state.entryId=event.target.value;state.halvings=[];state.halvingInfo=null;state.halvingsEntryId="";state.halvingsError="";state.walletWatch=null;state.walletWatchLoading=false;state.walletWatchTxOverviews={};state.walletWatchOpenTxDetails.clear();clearMarketAssessmentHistoryClientCache();state.marketAssessmentHistorySourceRevision="";bitcoinNetworkRefreshAt=0;localStorage.setItem("bst_entry",state.entryId);initWalletWatchPanelToggles();await loadData();await loadTorRotationSettings();if(state.activeTab==="walletwatch"&&!state.data?.locked)await loadWalletWatch();};
 async function reloadSelectedChartRange(){
   // Every range selection performs a real source refresh for the selected
   // resolution. The local cache accelerates rendering but never prevents the
@@ -4560,6 +4698,28 @@ async function markRestoreTest(){const button=$("#markRestoreTest"),result=$("#b
 
 
 function walletWatchLang(de,en){return state.lang==="de"?de:en;}
+function walletWatchMonitorStorageKey(){return `bst_walletwatch_monitor_state:v5:${state.entryId||"default"}`;}
+function walletWatchMonitorPreferences(){try{const parsed=JSON.parse(localStorage.getItem(walletWatchMonitorStorageKey())||"{}");return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{};}catch(_error){return {};}}
+function walletWatchMonitorIsCollapsed(id){const key=String(id||"");const prefs=walletWatchMonitorPreferences();if(Object.prototype.hasOwnProperty.call(prefs,key))return Boolean(prefs[key]);return true;}
+function setWalletWatchMonitorCollapsed(id,collapsed,{persist=true}={}){const key=String(id||"");state.walletWatchMonitorCollapsed[key]=Boolean(collapsed);if(collapsed)state.walletWatchOpenTxDetails.delete(key);if(persist){const prefs=walletWatchMonitorPreferences();prefs[key]=Boolean(collapsed);localStorage.setItem(walletWatchMonitorStorageKey(),JSON.stringify(prefs));}}
+function walletWatchMonitorToggleHtml(id,label,kind,_balanceText,collapsed){const action=collapsed?walletWatchLang("Einblenden","Show"):walletWatchLang("Ausblenden","Hide");return `<button class="sats-sentinel-watch-toggle" type="button" data-id="${esc(id)}" aria-expanded="${String(!collapsed)}"><span class="sats-sentinel-watch-toggle-chevron" aria-hidden="true">${collapsed?"▸":"▾"}</span><span class="sats-sentinel-watch-toggle-name">${esc(label)}</span><span class="sats-sentinel-watch-toggle-kind">${esc(kind)}</span><span class="sats-sentinel-watch-toggle-action">${esc(action)}</span></button>`;}
+function walletWatchCompactSummaryHtml(mon,{locked=false,index=0}={}){
+  const id=String(mon?.id||""),label=state.discreet?(locked?`Wallet #${index+1}`:"••••"):(String(mon?.label||"").trim()||walletWatchLang("Unbenannte Wallet","Unnamed wallet"));
+  return `<button class="sats-sentinel-watch-toggle sats-sentinel-watch-compact-toggle" type="button" data-id="${esc(id)}" aria-expanded="false"><span class="sats-sentinel-watch-toggle-chevron" aria-hidden="true">▸</span><span class="sats-sentinel-watch-toggle-name">${esc(label)}</span><span class="sats-sentinel-watch-toggle-action">${esc(walletWatchLang("Einblenden","Show"))}</span></button>`;
+}
+function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v1:${state.entryId||"default"}`;}
+function walletWatchShowWhenLocked(){return localStorage.getItem(walletWatchLockedDisplayStorageKey())==="1";}
+function setWalletWatchShowWhenLocked(show){
+  const enabled=Boolean(show);
+  localStorage.setItem(walletWatchLockedDisplayStorageKey(),enabled?"1":"0");
+  const input=$("#walletWatchShowWhenLocked");if(input)input.checked=enabled;
+  if(state.data?.locked){
+    state.lockedWalletWatchEditId="";
+    state.walletWatchTxOverviews={};
+    if(!enabled){state.walletWatch=null;const host=$("#lockedWalletWatch");if(host){host.classList.add("hidden");host.innerHTML="";}}
+    else void loadLockedWalletWatchManagement().then(ok=>{if(ok)renderLockedWalletWatch();else void refreshWalletWatchStatus({silent:true});});
+  }
+}
 function walletWatchPanelStorageKey(){return `bst_walletwatch_panel_state:${state.entryId||"default"}`;}
 function walletWatchPanelPreferences(){try{const parsed=JSON.parse(localStorage.getItem(walletWatchPanelStorageKey())||"{}");return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{};}catch(_error){return {};}}
 function setWalletWatchPanelCollapsed(panel,collapsed,{persist=false}={}){
@@ -4577,12 +4737,49 @@ function initWalletWatchPanelToggles(){
     const key=String(panel.dataset.sentinelPanel||""),fallback=panel.dataset.sentinelDefault==="collapsed",collapsed=Object.prototype.hasOwnProperty.call(prefs,key)?Boolean(prefs[key]):fallback;setWalletWatchPanelCollapsed(panel,collapsed);
   }
 }
+function walletWatchNotificationDetailLabel(value){const mode=String(value||"discreet");return mode==="detailed"?walletWatchLang("Detailliert","Detailed"):mode==="normal"?walletWatchLang("Normal","Normal"):walletWatchLang("Diskret","Discreet");}
+function lockedWalletWatchEditorHtml(mon){
+  const id=String(mon.id||""),kind=String(mon.kind||"address"),detail=String(mon.notification_detail||"discreet"),history=[0,5,10,25,50,100].includes(Number(mon.history_limit))?Number(mon.history_limit):10,masked=String(mon.watch_value_masked||"")||walletWatchLang("verschlüsselt gespeichert","stored encrypted");
+  const category=String(mon.category||"other"),catOptions=[["own",walletWatchLang("Eigene Adresse / Wallet","Own address / wallet")],["exchange","Exchange"],["interesting",walletWatchLang("Interessant","Interesting")],["incident","Hacker / Incident"],["other",walletWatchLang("Sonstige","Other")]].map(([value,label])=>`<option value="${value}" ${category===value?"selected":""}>${esc(label)}</option>`).join("");
+  const kindOptions=[["address",walletWatchLang("Einzelne Adresse","Single address")],["xpub","XPUB / YPUB / ZPUB"],["descriptor","Output Descriptor"]].map(([value,label])=>`<option value="${value}" ${kind===value?"selected":""}>${esc(label)}</option>`).join("");
+  const historyOptions=[5,10,25,50,100,0].map(value=>`<option value="${value}" ${history===value?"selected":""}>${value===0?esc(walletWatchLang("Unbegrenzt · 25/Seite","Unlimited · 25/page")):`${value} TX`}</option>`).join("");
+  const addressType=String(mon.address_type||"auto"),addressTypeOptions=[["auto",walletWatchLang("Automatisch aus Historie erkennen","Detect automatically from history")],["p2wpkh","Native SegWit · bc1q · BIP84"],["p2sh-p2wpkh","Nested SegWit · 3… · BIP49"],["p2tr","Taproot · bc1p · BIP86"],["p2pkh","Legacy · 1… · BIP44"]].map(([value,label])=>`<option value="${value}" ${addressType===value?"selected":""}>${esc(label)}</option>`).join("");
+  const detailOptions=[["discreet",walletWatchLang("Diskret","Discreet")],["normal","Normal"],["detailed",walletWatchLang("Detailliert","Detailed")]].map(([value,label])=>`<option value="${value}" ${detail===value?"selected":""}>${esc(label)}</option>`).join("");
+  return `<form class="locked-wallet-edit-form" data-id="${esc(id)}"><div class="analysis-head"><span class="kicker">${esc(walletWatchLang("WATCH-ONLY BEARBEITEN","EDIT WATCH-ONLY"))}</span><h3>${esc(state.discreet?walletWatchLang("Wallet bearbeiten","Edit wallet"):(mon.label||id))}</h3></div><div class="form-grid"><label><span>${esc(walletWatchLang("Name","Name"))}</span><input name="label" maxlength="120" value="${esc(String(mon.label||""))}"></label><label><span>${esc(walletWatchLang("Kategorie","Category"))}</span><select name="category">${catOptions}</select></label><label><span>${esc(walletWatchLang("Typ","Type"))}</span><select name="kind">${kindOptions}</select></label><label class="span-2"><span>${esc(walletWatchLang("Gespeicherte Adresse / XPUB / Descriptor","Stored address / XPUB / descriptor"))}</span><code>${esc(state.discreet?"••••":masked)}</code><small>${esc(walletWatchLang("Der vollständige Wert bleibt im device-bound verschlüsselten Sentinel-Tresor und wird hier nicht an den Browser ausgegeben.","The full value remains in the device-bound encrypted Sentinel vault and is not exposed to the browser here."))}</small></label><label class="span-2"><span>${esc(walletWatchLang("Neuer Wert · optional","New value · optional"))}</span><textarea name="value" rows="3" spellcheck="false" placeholder="${esc(walletWatchLang("Leer lassen = vorhandene Adresse/XPUB/Descriptor behalten","Leave empty = keep existing address/XPUB/descriptor"))}"></textarea></label><label><span>Receive Gap-Limit</span><input name="receive_count" type="number" min="0" max="20" value="${esc(String(mon.receive_count||0))}"></label><label><span>Change Gap-Limit</span><input name="change_count" type="number" min="0" max="20" value="${esc(String(mon.change_count||0))}"></label>${kind==="xpub"?`<label><span>${esc(walletWatchLang("Adressformat bei XPUB","XPUB address format"))}</span><select name="address_type">${addressTypeOptions}</select></label>`:""}<label><span>${esc(walletWatchLang("TX-Übersicht","TX overview"))}</span><select name="history_limit">${historyOptions}</select></label><label><span>${esc(walletWatchLang("Mindestbetrag für Alarm · sats","Alert threshold · sats"))}</span><input name="min_notify_sats" type="number" min="0" step="1" value="${esc(String(mon.min_notify_sats||0))}"></label><label><span>${esc(walletWatchLang("Benachrichtigungsdetails dieser Wallet","Notification detail for this wallet"))}</span><select name="notification_detail">${detailOptions}</select></label><label><span>${esc(walletWatchLang("Überwachung aktiv","Monitoring enabled"))}</span><input name="enabled" type="checkbox" ${mon.enabled!==false?"checked":""}></label><label class="span-2"><span>${esc(walletWatchLang("Notiz","Note"))}</span><textarea name="note" rows="2" maxlength="500">${esc(String(mon.note||""))}</textarea></label><label><span>${esc(walletWatchLang("Eingänge alarmieren","Alert incoming"))}</span><input name="notify_incoming" type="checkbox" ${mon.notify_incoming!==false?"checked":""}></label><label><span>${esc(walletWatchLang("Ausgänge alarmieren","Alert outgoing"))}</span><input name="notify_outgoing" type="checkbox" ${mon.notify_outgoing!==false?"checked":""}></label><label><span>HA Event</span><input name="notify_ha_event" type="checkbox" ${mon.notify_ha_event!==false?"checked":""}></label><label><span>${esc(walletWatchLang("HA-Meldung","HA notification"))}</span><input name="notify_persistent" type="checkbox" ${mon.notify_persistent!==false?"checked":""}></label><label><span>${esc(walletWatchLang("Handy-Pushs","Mobile pushes"))}</span><input name="notify_services" type="checkbox" ${mon.notify_services!==false?"checked":""}></label><label><span>ntfy / Webhooks</span><input name="notify_external" type="checkbox" ${mon.notify_external!==false?"checked":""}></label></div><div class="panel-actions"><button class="primary locked-wallet-save" type="submit">${esc(walletWatchLang("Änderungen verschlüsselt speichern","Save changes encrypted"))}</button><button class="ghost locked-wallet-cancel" type="button">${esc(walletWatchLang("Abbrechen","Cancel"))}</button></div><div class="result locked-wallet-edit-result" aria-live="polite"></div></form>`;
+}
+async function saveLockedWalletWatchMonitor(event){
+  event.preventDefault();if(state.lockedWalletWatchSaving)return;const form=event.currentTarget,id=String(form.dataset.id||""),st=state.walletWatch?.status||{},mon=(Array.isArray(st.monitor_catalog)?st.monitor_catalog:[]).find(item=>String(item?.id||"")===id);if(!mon)return;const fd=new FormData(form),kind=String(fd.get("kind")||mon.kind||"address"),replacement=String(fd.get("value")||"").trim();if(kind!==String(mon.kind||"address")&&!replacement){const box=form.querySelector(".locked-wallet-edit-result");if(box){box.textContent=walletWatchLang("Wenn du den Typ änderst, musst du auch eine neue Adresse/XPUB/Descriptor eintragen.","When changing the type, also enter a new address/XPUB/descriptor.");box.className="result negative locked-wallet-edit-result";}return;}const monitor={id,label:String(fd.get("label")||"").trim()||String(mon.label||id),category:String(fd.get("category")||"other"),kind,value:replacement,enabled:Boolean(form.elements.enabled?.checked),receive_count:kind==="address"?0:Number(fd.get("receive_count")||0),change_count:kind==="address"?0:Number(fd.get("change_count")||0),address_type:kind==="xpub"?String(fd.get("address_type")||mon.address_type||"auto"):"auto",history_limit:Number(fd.get("history_limit")||10),note:String(fd.get("note")||"").trim(),min_notify_sats:Math.max(0,Number(fd.get("min_notify_sats")||0)),notification_detail:String(fd.get("notification_detail")||mon.notification_detail||"discreet"),notify_incoming:Boolean(form.elements.notify_incoming?.checked),notify_outgoing:Boolean(form.elements.notify_outgoing?.checked),notify_ha_event:Boolean(form.elements.notify_ha_event?.checked),notify_persistent:Boolean(form.elements.notify_persistent?.checked),notify_services:Boolean(form.elements.notify_services?.checked),notify_external:Boolean(form.elements.notify_external?.checked)};const button=form.querySelector(".locked-wallet-save"),box=form.querySelector(".locked-wallet-edit-result");state.lockedWalletWatchSaving=true;if(button)button.disabled=true;if(box){box.textContent=walletWatchLang("Speichere im verschlüsselten Sentinel-Tresor …","Saving to encrypted Sentinel vault …");box.className="result locked-wallet-edit-result";}try{const response=await api("api/wallet-watch/upsert-monitor",{method:"POST",body:JSON.stringify({entry_id:state.entryId,monitor}),timeoutMs:30000});if(state.walletWatch)state.walletWatch.status=response.status;state.lockedWalletWatchEditId="";renderLockedWalletWatch();toast(walletWatchLang("Watch-Wallet gespeichert. Änderungen werden beim nächsten Entsperren mit dem Haupttresor synchronisiert.","Watch wallet saved. Changes will sync to the main vault on the next unlock."));}catch(error){if(box){box.textContent=errorText(error);box.className="result negative locked-wallet-edit-result";}else toast(errorText(error));}finally{state.lockedWalletWatchSaving=false;if(button)button.disabled=false;}}
+async function removeLockedWalletWatchMonitor(id){
+  const st=state.walletWatch?.status||{},mon=(Array.isArray(st.monitor_catalog)?st.monitor_catalog:[]).find(item=>String(item?.id||"")===String(id||""));if(!mon)return;const label=state.discreet?walletWatchLang("diese Wallet","this wallet"):(mon.label||mon.id);if(!window.confirm(walletWatchLang(`„${label}“ wirklich aus Sats Sentinel entfernen?`,`Really remove “${label}” from Sats Sentinel?`)))return;try{const response=await api("api/wallet-watch/remove-monitor",{method:"POST",body:JSON.stringify({entry_id:state.entryId,monitor_id:String(id||"")}),timeoutMs:30000});if(state.walletWatch)state.walletWatch.status=response.status;state.lockedWalletWatchEditId="";renderLockedWalletWatch();toast(walletWatchLang("Watch-Wallet entfernt. Die Änderung wird beim nächsten Entsperren mit dem Haupttresor synchronisiert.","Watch wallet removed. The change will sync to the main vault on the next unlock."));}catch(error){toast(errorText(error));}}
+async function loadLockedWalletWatchManagement(){
+  if(!state.entryId||!state.data?.security?.owner)return false;
+  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};return true;}catch(_error){return false;}
+}
+function renderLockedWalletWatch(){
+  const host=$("#lockedWalletWatch");if(!host)return;
+  if(!state.data?.locked||!state.data?.security?.owner||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}
+  const st=state.walletWatch.status||{},catalog=Array.isArray(st.monitor_catalog)?st.monitor_catalog.filter(item=>item):[];
+  if(!catalog.length){host.classList.remove("hidden");host.innerHTML=`<div class="locked-wallet-watch-head"><div><span class="kicker">SATS SENTINEL · RUNTIME VAULT</span><h2>${esc(walletWatchLang("Überwachte Wallets & Adressen","Watched wallets & addresses"))}</h2><p>${esc(walletWatchLang("Der Portfolio-Tresor ist gesperrt. Im verschlüsselten Sentinel-Runtime-Tresor ist aktuell keine Watch-Wallet verfügbar. Einmal entsperren, damit der Runtime-Stand aufgebaut wird.","The portfolio vault is locked. No watch wallet is currently available in the encrypted Sentinel runtime vault. Unlock once to build the runtime state."))}</p></div></div>`;return;}
+  const cards=catalog.map((mon,index)=>{const id=String(mon.id||""),runtime=walletWatchMonitorRuntimeSummary(id),label=state.discreet?`Wallet #${index+1}`:(String(mon.label||"").trim()||`Wallet ${index+1}`),kind=String(mon.kind||"address").toUpperCase(),balance=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,counts=state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("Adresse(n)","address(es)")}${String(mon.kind||"address")!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`,last=runtime.last_activity?.detected_at?fmtDateTime(runtime.last_activity.detected_at):walletWatchLang("keine neue Bewegung","no new movement"),masked=state.discreet?"••••":String(mon.watch_value_masked||walletWatchLang("verschlüsselt","encrypted")),detail=walletWatchNotificationDetailLabel(mon.notification_detail),editor=state.lockedWalletWatchEditId===id?lockedWalletWatchEditorHtml(mon):"",collapsed=state.lockedWalletWatchEditId===id?false:walletWatchMonitorIsCollapsed(id);return `<article class="locked-wallet-card ${collapsed?"is-collapsed":""}" data-monitor-id="${esc(id)}">${collapsed?walletWatchCompactSummaryHtml(mon,{locked:true,index}):walletWatchMonitorToggleHtml(id,label,kind,balance,false)}<div class="locked-wallet-card-body" ${collapsed?"hidden":""}><div class="locked-wallet-card-head"><code class="locked-wallet-watch-value">${esc(masked)}</code><div class="sats-sentinel-watch-actions"><button class="secondary compact locked-wallet-edit" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact locked-wallet-delete" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="locked-wallet-balance">${esc(balance)}</div><div class="locked-wallet-meta"><span>${esc(counts)}</span><span>${esc(walletWatchLang("Benachrichtigung","Notification"))}: ${esc(detail)}</span><span>${esc(walletWatchLang("Letzte Bewegung","Last movement"))}: ${esc(last)}</span></div>${walletWatchMonitorAddressesHtml(id)}${editor}</div></article>`;}).join("");
+  const total=state.discreet?"••••":`${fmtNumber(Number(st.balance_sats||0)/SATsFix(),8)} BTC`,source=String(st.selected_source_label||"")||walletWatchLang("Quelle noch nicht aktiv","source not active yet"),scan=st.scan_in_progress?walletWatchLang(" · Scan läuft"," · scan running"):"",sync=st.pending_vault_sync?walletWatchLang(" · Änderungen warten auf Haupttresor-Sync"," · changes pending main-vault sync"):"",lockedCfg=walletWatchConfig(),hostValue=String(lockedCfg.electrum_host||""),endpoint=hostValue?`${hostValue}:${Number(lockedCfg.electrum_port||50001)}`:walletWatchLang("Kein eigener Electrum-Server eingetragen","No custom Electrum server configured"),sourceMode=String(lockedCfg.query_source||"auto"),tlsText=lockedCfg.electrum_tls?`TLS · ${lockedCfg.electrum_verify_ssl===false?walletWatchLang("Prüfung AUS","verification OFF"):walletWatchLang("Prüfung AN","verification ON")}`:walletWatchLang("ohne TLS","without TLS"),pin=String(lockedCfg.electrum_pinned_cert_sha256||"");
+  const lockedSource=`<div class="locked-wallet-source"><span class="kicker">${esc(walletWatchLang("GESPEICHERTE ABFRAGEQUELLE","SAVED QUERY SOURCE"))}</span><strong>${esc(endpoint)}</strong><small>${esc(walletWatchLang("Modus","Mode"))}: ${esc(sourceMode)} · ${esc(String(lockedCfg.electrum_kind||"fulcrum"))} · ${esc(tlsText)}${pin?` · SHA-256 ${esc(pin.slice(0,12))}…`:""}</small></div>`;
+  host.classList.remove("hidden");host.innerHTML=`<div class="locked-wallet-watch-head"><div><span class="kicker">SATS SENTINEL · ENCRYPTED WATCH-ONLY VAULT</span><h2>${esc(walletWatchLang("Überwachte Wallets & Adressen","Watched wallets & addresses"))}</h2><p>${esc(walletWatchLang("Der Haupttresor ist gesperrt. Die Sentinel-Anzeige bei gesperrtem Tresor wurde auf diesem Gerät ausdrücklich aktiviert. Wallets und die gespeicherte Abfragequelle werden watch-only angezeigt; XPUB/Descriptor bleiben maskiert.","The main vault is locked. Locked-vault Sentinel display was explicitly enabled on this device. Wallets and the saved query source are shown watch-only; XPUB/descriptor values remain masked."))}</p></div><span class="badge ${st.enabled&&!st.last_error?"positive":st.last_error?"negative":""}">${esc(total)}</span></div>${lockedSource}<div class="locked-wallet-watch-grid">${cards}</div><p class="locked-wallet-watch-note">${esc(source)}${esc(scan)}${esc(sync)} · ${esc(walletWatchLang("Letzter erfolgreicher Check","Last successful check"))}: ${esc(fmtDateTime(st.last_success_at))}</p>`;
+  host.querySelectorAll(".sats-sentinel-watch-toggle").forEach(button=>button.onclick=()=>{const id=String(button.dataset.id||"");setWalletWatchMonitorCollapsed(id,!walletWatchMonitorIsCollapsed(id));renderLockedWalletWatch();});
+  host.querySelectorAll(".locked-wallet-edit").forEach(button=>button.onclick=()=>{const id=String(button.dataset.id||"");state.lockedWalletWatchEditId=state.lockedWalletWatchEditId===id?"":id;if(state.lockedWalletWatchEditId)setWalletWatchMonitorCollapsed(id,false);renderLockedWalletWatch();});host.querySelectorAll(".locked-wallet-delete").forEach(button=>button.onclick=()=>{void removeLockedWalletWatchMonitor(button.dataset.id);});host.querySelectorAll(".locked-wallet-edit-form").forEach(form=>{form.onsubmit=saveLockedWalletWatchMonitor;form.querySelector(".locked-wallet-cancel")?.addEventListener("click",()=>{state.lockedWalletWatchEditId="";renderLockedWalletWatch();});});
+}
 function walletWatchConfig(){return state.walletWatch?.config || {enabled:false,poll_interval_seconds:60,query_source:"auto",electrum_kind:"fulcrum",electrum_host:"",electrum_port:50001,electrum_tls:false,electrum_verify_ssl:true,electrum_pinned_cert_pem:"",allow_public_tor:false,persistent_notification:true,notification_detail:"discreet",notification_services:[],notification_targets:[],log_display_mode:"days",log_display_count:100,log_display_days:30,monitors:[]};}
+function walletWatchDisplayMonitors(){
+  const cfg=walletWatchConfig(),full=Array.isArray(cfg.monitors)?cfg.monitors.filter(Boolean):[];if(full.length)return full;
+  const catalog=Array.isArray(state.walletWatch?.status?.monitor_catalog)?state.walletWatch.status.monitor_catalog.filter(Boolean):[];
+  return catalog.map(item=>({...item,value:"",_runtime_catalog:true}));
+}
 function maskWalletWatchValue(value){const raw=String(value||"");if(state.discreet)return "••••";if(raw.length<=22)return raw;return `${raw.slice(0,10)}…${raw.slice(-8)}`;}
 function walletWatchCard(label,value,hint="",css=""){return `<article class="sats-sentinel-card"><div class="sats-sentinel-card-label">${esc(label)}</div><div class="sats-sentinel-card-value ${esc(css)}">${esc(value)}</div>${hint?`<div class="sats-sentinel-card-hint">${esc(hint)}</div>`:""}</article>`;}
-function walletWatchErrorText(raw){const value=String(raw||"");if(!value)return "";if(value.includes("No Sats Sentinel mempool source is available"))return walletWatchLang("Keine Sats-Sentinel-Datenquelle verfügbar. Konfiguriere eine eigene/custom Mempool-Node oder – nur wenn keine eigene Node existiert – eine öffentliche Mempool-Quelle und erlaube deren Nutzung über Tor.","No Sats Sentinel data source is available. Configure an own/custom mempool node or, only when no own node exists, configure a public mempool source and allow its use through Tor.");if(value.includes("enabled but no addresses"))return walletWatchLang("Sats Sentinel ist aktiv, aber es ist noch keine Adresse zur Überwachung eingerichtet.","Sats Sentinel is active, but no address is configured for monitoring yet.");if(value.includes("source unavailable")||value.includes("poll failed"))return walletWatchLang("Die konfigurierte Sats-Sentinel-Datenquelle ist nicht erreichbar. Bei einer eigenen/custom Node gibt es absichtlich keinen Provider-Fallback.","The configured Sats Sentinel data source is unavailable. With an own/custom node there is intentionally no provider fallback.");if(value.includes("Encrypted Sats Sentinel cache could not be opened"))return walletWatchLang("Der verschlüsselte Sats-Sentinel-Cache konnte nicht geöffnet werden.","The encrypted Sats Sentinel cache could not be opened.");return value;}
+function walletWatchErrorText(raw){const value=String(raw||"");if(!value)return "";if(value.toLowerCase().includes("bitcoind request timed out"))return walletWatchLang("Fulcrum/electrs ist erreichbar, aber dessen Bitcoin-Core-Backend hat bei einer historischen TX-Abfrage nicht rechtzeitig geantwortet. Sentinel bleibt aktiv; die Übersicht kann erneut geladen werden.","Fulcrum/electrs is reachable, but its Bitcoin Core backend did not answer a historical transaction request in time. Sentinel remains active; the overview can be retried.");if(value.includes("No Sats Sentinel mempool source is available"))return walletWatchLang("Keine Sats-Sentinel-Datenquelle verfügbar. Konfiguriere eine eigene/custom Mempool-Node oder – nur wenn keine eigene Node existiert – eine öffentliche Mempool-Quelle und erlaube deren Nutzung über Tor.","No Sats Sentinel data source is available. Configure an own/custom mempool node or, only when no own node exists, configure a public mempool source and allow its use through Tor.");if(value.includes("enabled but no addresses"))return walletWatchLang("Sats Sentinel ist aktiv, aber es ist noch keine Adresse zur Überwachung eingerichtet.","Sats Sentinel is active, but no address is configured for monitoring yet.");if(value.includes("source unavailable")||value.includes("poll failed"))return walletWatchLang("Die konfigurierte Sats-Sentinel-Datenquelle ist nicht erreichbar. Bei einer eigenen/custom Node gibt es absichtlich keinen Provider-Fallback.","The configured Sats Sentinel data source is unavailable. With an own/custom node there is intentionally no provider fallback.");if(value.includes("Encrypted Sats Sentinel cache could not be opened"))return walletWatchLang("Der verschlüsselte Sats-Sentinel-Cache konnte nicht geöffnet werden.","The encrypted Sats Sentinel cache could not be opened.");return value;}
 function walletWatchCategoryLabel(value){const labels={own:walletWatchLang("Eigene Adresse","Own address"),exchange:"Exchange",interesting:walletWatchLang("Interessant","Interesting"),incident:walletWatchLang("Hacker / Incident","Hacker / incident"),other:walletWatchLang("Sonstige","Other")};return labels[String(value||"other")]||labels.other;}
 function walletWatchShortAddress(value){const raw=String(value||"");if(state.discreet)return "••••";if(raw.length<=24)return raw;return `${raw.slice(0,10)}…${raw.slice(-8)}`;}
+function walletWatchMonitorAddressRows(monitorId){const id=String(monitorId||"");const rows=Array.isArray(state.walletWatch?.status?.addresses)?state.walletWatch.status.addresses:[];return rows.filter(row=>String(row?.monitor_id||"")===id);}
+function walletWatchMonitorAddressesHtml(monitorId){const rows=walletWatchMonitorAddressRows(monitorId);if(!rows.length)return "";const branchLabel=row=>{const branch=String(row?.branch||"fixed");if(branch==="receive")return `Receive${row?.index!==null&&row?.index!==undefined?` #${Number(row.index)}`:""}`;if(branch==="change")return `Change${row?.index!==null&&row?.index!==undefined?` #${Number(row.index)}`:""}`;return walletWatchLang("Adresse","Address");};const stateLabel=row=>row?.used===true?walletWatchLang("benutzt","used"):row?.used===false?walletWatchLang("Gap-Reserve","gap reserve"):walletWatchLang("Status offen","status pending");const items=rows.map(row=>{const address=state.discreet?"••••":String(row?.address||"");const balance=state.discreet?"••••":`${fmtNumber(Number(row?.balance_sats||0)/SATsFix(),8)} BTC`;return `<div><span><code title="${esc(address)}">${esc(state.discreet?address:walletWatchShortAddress(address))}</code></span><small>${esc(branchLabel(row))} · ${esc(stateLabel(row))}</small><strong>${esc(balance)}${state.discreet?"":` · ${esc(String(Number(row?.utxo_count||0)))} UTXO`}</strong></div>`;}).join("");return `<details class="sats-sentinel-address-detail sats-sentinel-monitored-addresses"><summary>${esc(walletWatchLang(`${rows.length} überwachte Adresse(n) ein-/ausblenden`,`${rows.length} watched address(es) show/hide`))}</summary><div class="sats-sentinel-address-list">${items}</div></details>`;}
 function walletWatchRouteText(st){
   const label=String(st.selected_source_label||"");
   if(label){const tor=st.selected_source_route==="tor",pin=Boolean(st.electrum_certificate_pinned);return {value:`${label}${tor?" · Tor":" · Direkt"}${pin?" · TLS-Pin":""}`,hint:walletWatchLang(pin?"Das präsentierte Fulcrum-/Electrum-Zertifikat wird exakt per SHA-256-Pin geprüft. Die explizite Quelle bleibt Fail Closed; es gibt keinen heimlichen Provider-Wechsel.":"Die Abfragequelle wurde aus der Sentinel-Konfiguration gewählt. Eine explizite Auswahl bleibt bei Fehlern Fail Closed; es gibt keinen heimlichen Provider-Wechsel.",pin?"The presented Fulcrum/Electrum certificate is verified by an exact SHA-256 pin. The explicit source remains fail-closed; there is no hidden provider switch.":"The query source was selected from Sentinel configuration. An explicit selection stays fail-closed on errors; there is no hidden provider switch.")};}
@@ -4607,8 +4804,8 @@ function renderWalletWatchStatusOnly(){
   if(errorBox){const isOffline=Boolean(st.last_error),raw=isOffline?st.last_error:st.last_warning,message=isOffline?walletWatchErrorText(raw):walletWatchLang("Die Node ist erreichbar, aber mindestens eine Adress-/TX-Prüfung war unvollständig. Andere Watch-Einträge werden weiter geprüft; die betroffene Adresse wird beim nächsten Poll erneut versucht.","The node is reachable, but at least one address/transaction check was incomplete. Other watch targets continue to be checked; the affected address is retried on the next poll."),technical=(!state.discreet&&raw)?`<small>${esc(walletWatchLang("Technik","Technical"))}: ${esc(String(raw))}</small>`:"";errorBox.classList.toggle("hidden",!raw);errorBox.classList.toggle("warning",Boolean(raw&&!isOffline));errorBox.innerHTML=raw?`<strong>${esc(isOffline?walletWatchLang("Sats Sentinel offline","Sats Sentinel offline"):walletWatchLang("Teilprüfung · Node online","Partial check · node online"))}</strong><span>${esc(message)}</span>${technical}`:"";}
   const route=walletWatchRouteText(st);
   privacy.innerHTML=[
-    walletWatchCard("XPUB im Hintergrund",(st.xpub_in_runtime??st.xpup_in_runtime)?"JA":"Nein",walletWatchLang("XPUB bleibt im Tresor.","XPUB remains in the vault."),(st.xpub_in_runtime??st.xpup_in_runtime)?"negative":"positive"),
-    walletWatchCard("Descriptor im Hintergrund",st.descriptor_in_runtime?"JA":"Nein",walletWatchLang("Nur konkret abgeleitete Adressen werden überwacht.","Only concretely derived addresses are monitored."),st.descriptor_in_runtime?"negative":"positive"),
+    walletWatchCard(walletWatchLang("XPUB im Sentinel-Tresor","XPUB in Sentinel vault"),(st.xpub_in_runtime??st.xpup_in_runtime)?walletWatchLang("Verschlüsselt verfügbar","Encrypted and available"):walletWatchLang("Nicht vorhanden","Not present"),walletWatchLang("Watch-only XPUB/YPUB/ZPUB liegt device-bound AES-256-GCM-verschlüsselt vor; niemals Private Keys.","Watch-only XPUB/YPUB/ZPUB is stored device-bound with AES-256-GCM; never private keys."),(st.xpub_in_runtime??st.xpup_in_runtime)?"positive":""),
+    walletWatchCard(walletWatchLang("Descriptor im Sentinel-Tresor","Descriptor in Sentinel vault"),st.descriptor_in_runtime?walletWatchLang("Verschlüsselt verfügbar","Encrypted and available"):walletWatchLang("Nicht vorhanden","Not present"),walletWatchLang("Output Descriptor kann verschlüsselt für Sentinel-Management verfügbar bleiben; Seeds/xprv sind verboten.","An output descriptor may remain encrypted for Sentinel management; seeds/xprv are forbidden."),st.descriptor_in_runtime?"positive":""),
     walletWatchCard(walletWatchLang("Monitor-Cache","Monitor cache"),st.runtime_cache_encrypted?walletWatchLang("Verschlüsselt","Encrypted"):walletWatchLang("Unverschlüsselt","Unencrypted"),"AES-256-GCM · device-bound",st.runtime_cache_encrypted?"positive":"negative"),
     walletWatchCard(walletWatchLang("Historische TX-Übersicht","Historical TX overview"),st.historical_tx_overview_persisted?walletWatchLang("Gespeichert","Stored"):walletWatchLang("Nur RAM","RAM only"),walletWatchLang("Wird nicht in HA-Storage oder LocalStorage persistiert.","Not persisted to HA storage or LocalStorage."),st.historical_tx_overview_persisted?"negative":"positive"),
     walletWatchCard(walletWatchLang("Netzwerkregel","Network policy"),route.value,route.hint,st.selected_source_label?"positive":""),
@@ -4636,19 +4833,21 @@ function renderWalletWatchTxOverview(monitorId){
   if(stateRow.loading){host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Transaktionen werden geladen …","Loading transactions …"))}</p>`;return;}
   if(stateRow.error){host.innerHTML=`<div class="result negative">${esc(stateRow.error)}</div><button type="button" class="secondary compact wallet-watch-tx-reload" data-id="${esc(id)}">${esc(walletWatchLang("Erneut laden","Retry"))}</button>`;host.querySelector('.wallet-watch-tx-reload')?.addEventListener('click',()=>void loadWalletWatchTransactions(id,{force:true}));return;}
   const overview=stateRow.data||{},items=Array.isArray(overview.transactions)?overview.transactions:[];
-  const summary=`<div class="sats-sentinel-tx-summary"><div><span>${esc(walletWatchLang("Aktueller Wallet-Bestand","Current wallet balance"))}</span><strong>${esc(walletWatchTxAmount(overview.balance_sats))}</strong><small>${esc(walletWatchLang(`${Number(overview.derived_address_count||0)} Adresse(n) erfasst`,`${Number(overview.derived_address_count||0)} address(es) covered`))}</small></div><div><span>${esc(walletWatchLang("Geladene TX","Loaded TX"))}</span><strong>${esc(String(overview.loaded_transaction_count||0))}${Number(overview.known_transaction_count||0)>Number(overview.loaded_transaction_count||0)?` / ${esc(String(overview.known_transaction_count))}`:""}</strong></div><div><span>${esc(walletWatchLang("Wallet-Eingänge · geladen","Wallet incoming · loaded"))}</span><strong>${esc(walletWatchTxAmount(overview.loaded_in_sats))}</strong></div><div><span>${esc(walletWatchLang("Wallet-Ausgänge · geladen","Wallet outgoing · loaded"))}</span><strong>${esc(walletWatchTxAmount(overview.loaded_out_sats))}</strong></div><div><span>${esc(walletWatchLang("TX-Inputs · geladen","TX inputs · loaded"))}</span><strong>${esc(overview.loaded_tx_total_input_sats===null||overview.loaded_tx_total_input_sats===undefined?walletWatchLang("nicht vollständig","incomplete"):walletWatchTxAmount(overview.loaded_tx_total_input_sats))}</strong></div><div><span>${esc(walletWatchLang("TX-Outputs · geladen","TX outputs · loaded"))}</span><strong>${esc(walletWatchTxAmount(overview.loaded_tx_total_output_sats))}</strong></div><div><span>${esc(walletWatchLang("Fees · geladen","Fees · loaded"))}</span><strong>${esc(walletWatchTxAmount(overview.loaded_fee_sats))}</strong></div></div>`;
+  const summary=`<div class="sats-sentinel-tx-summary"><div><span>${esc(walletWatchLang("Aktueller Wallet-Bestand","Current wallet balance"))}</span><strong>${esc(walletWatchTxAmount(overview.balance_sats))}</strong></div><div><span>${esc(walletWatchLang("Geladene TX","Loaded TX"))}</span><strong>${esc(String(overview.loaded_transaction_count||0))}${Number(overview.known_transaction_count||0)>Number(overview.loaded_transaction_count||0)?` / ${esc(String(overview.known_transaction_count))}`:""}</strong></div><div><span>${esc(walletWatchLang("Überwachte Adressen","Watched addresses"))}</span><strong>${esc(String(Number(overview.derived_address_count||0)))}</strong></div><div><span>UTXOs</span><strong>${esc(String(Number(overview.utxo_count||0)))}</strong></div></div>`;
   const addressRows=Array.isArray(overview.address_balances)?overview.address_balances:[];const addressDetail=addressRows.length?`<details class="sats-sentinel-address-detail"><summary>${esc(walletWatchLang("Adressen & Einzelbestände","Addresses & individual balances"))} · ${esc(String(addressRows.length))}</summary><div class="sats-sentinel-address-list">${addressRows.map(row=>`<div><span>${state.discreet?"••••":walletWatchAddressLink(String(row.address||""),overview)}</span><small>${esc(row.branch||"")}${row.index===null||row.index===undefined?"":` #${esc(String(row.index))}`} · ${esc(String(row.utxo_count||0))} UTXO</small><strong>${esc(walletWatchTxAmount(row.balance_sats))}</strong></div>`).join("")}</div></details>`:"";
-  const privacyNote=`<p class="storage-note sats-sentinel-tx-privacy">🔒 ${esc(walletWatchLang("Privat: XPUB/ZPUB/Descriptor liegen nur im Passwort-Tresor. Abgeleitete Adressen und Sentinel-Journal liegen AES-256-GCM-verschlüsselt im device-bound Cache. Diese historische TX-Übersicht wird nicht dauerhaft gespeichert.","Private: XPUB/ZPUB/descriptors live only in the password vault. Derived addresses and the Sentinel journal are AES-256-GCM encrypted in the device-bound cache. This historical TX overview is not persisted."))}</p>`;
-  const rows=items.map(item=>{const outgoing=item.direction==="outgoing",direction=outgoing?walletWatchLang("Ausgang","Outgoing"):walletWatchLang("Eingang","Incoming"),sentinel=Boolean(item.sentinel_detected),when=item.confirmed?(item.block_time?fmtDateTime(new Date(Number(item.block_time)*1000).toISOString()):item.block_height?`Block ${item.block_height}`:walletWatchLang("Bestätigt","Confirmed")):walletWatchLang("Mempool","Mempool"),input=item.tx_total_input_sats===null||item.tx_total_input_sats===undefined?walletWatchLang("nicht vollständig","incomplete"):walletWatchTxAmount(item.tx_total_input_sats),output=walletWatchTxAmount(item.tx_total_output_sats),fee=item.fee_sats===null||item.fee_sats===undefined?"—":walletWatchTxAmount(item.fee_sats);return `<tr class="sats-sentinel-movement-row ${outgoing?"outgoing":"incoming"} ${sentinel?"sats-sentinel-tx-detected":""}"><td>${sentinel?`<span class="sats-sentinel-detected-badge">★ ${esc(walletWatchLang("SENTINEL ERKANNT","SENTINEL DETECTED"))}</span><small class="sats-sentinel-detected-time">${esc(walletWatchLang("Erkannt","Detected"))}: ${esc(fmtDateTime(item.sentinel_detected_at))}</small>`:""}<span>${esc(when)}</span></td><td class="sats-sentinel-tx-direction-cell">${walletWatchDirectionBadge(item.direction)}<small>${esc(walletWatchTxAmount(item.amount_sats))}</small></td><td>${walletWatchTxOverviewCounterparties(item,overview)}</td><td><span>${esc(walletWatchLang("Inputs","Inputs"))}: ${esc(input)}</span><br><span>${esc(walletWatchLang("Outputs","Outputs"))}: ${esc(output)}</span><br><small>Fee: ${esc(fee)}</small></td><td>${item.confirmed?esc(walletWatchLang("Bestätigt","Confirmed")):esc(walletWatchLang("Unbestätigt","Unconfirmed"))}${item.rbf?" · RBF":""}</td><td>${walletWatchTxOverviewLinkTx(item,overview)}</td></tr>`;}).join("");
+  const privacyNote=`<p class="storage-note sats-sentinel-tx-privacy">🔒 ${esc(walletWatchLang("Privat: Watch-only XPUB/ZPUB/Descriptor, abgeleitete Adressen und Sentinel-Journal liegen AES-256-GCM-verschlüsselt im device-bound Sentinel-Tresor. Seeds, xprv/yprv/zprv und Private Keys werden nicht akzeptiert. Diese historische TX-Übersicht wird nicht dauerhaft gespeichert.","Private: watch-only XPUB/ZPUB/descriptors, derived addresses and the Sentinel journal are AES-256-GCM encrypted in the device-bound Sentinel vault. Seeds, xprv/yprv/zprv and private keys are not accepted. This historical TX overview is not persisted."))}</p>`;
+  const rowHtml=item=>{const outgoing=item.direction==="outgoing",sentinel=Boolean(item.sentinel_detected),when=item.confirmed?(item.block_time?fmtDateTime(new Date(Number(item.block_time)*1000).toISOString()):item.block_height?`Block ${item.block_height}`:walletWatchLang("Bestätigt","Confirmed")):walletWatchLang("Mempool","Mempool"),fee=item.fee_sats===null||item.fee_sats===undefined?null:walletWatchTxAmount(item.fee_sats);return `<tr class="sats-sentinel-movement-row ${outgoing?"outgoing":"incoming"} ${sentinel?"sats-sentinel-tx-detected":""}"><td>${sentinel?`<span class="sats-sentinel-detected-badge">★ ${esc(walletWatchLang("SENTINEL ERKANNT","SENTINEL DETECTED"))}</span><small class="sats-sentinel-detected-time">${esc(walletWatchLang("Erkannt","Detected"))}: ${esc(fmtDateTime(item.sentinel_detected_at))}</small>`:""}<span>${esc(when)}</span></td><td class="sats-sentinel-tx-direction-cell">${walletWatchDirectionBadge(item.direction)}<small>${esc(walletWatchTxAmount(item.amount_sats))}</small>${outgoing&&fee?`<small>${esc(walletWatchLang("Netzwerkgebühr","Network fee"))}: ${esc(fee)}</small>`:""}</td><td>${walletWatchTxOverviewCounterparties(item,overview)}</td><td>${item.confirmed?esc(walletWatchLang("Bestätigt","Confirmed")):esc(walletWatchLang("Unbestätigt","Unconfirmed"))}${item.rbf?" · RBF":""}</td><td>${walletWatchTxOverviewLinkTx(item,overview)}</td></tr>`;};
+  const mobileHtml=item=>{const outgoing=item.direction==="outgoing",sentinel=Boolean(item.sentinel_detected),when=item.confirmed?(item.block_time?fmtDateTime(new Date(Number(item.block_time)*1000).toISOString()):item.block_height?`Block ${item.block_height}`:walletWatchLang("Bestätigt","Confirmed")):walletWatchLang("Mempool","Mempool"),fee=item.fee_sats===null||item.fee_sats===undefined?null:walletWatchTxAmount(item.fee_sats);return `<article class="sats-sentinel-tx-mobile-card ${outgoing?"outgoing":"incoming"} ${sentinel?"sats-sentinel-tx-detected":""}"><div class="sats-sentinel-tx-mobile-head"><div>${walletWatchDirectionBadge(item.direction,{compact:true})}<strong>${esc(walletWatchTxAmount(item.amount_sats))}</strong></div><span>${esc(when)}</span></div>${sentinel?`<small class="sats-sentinel-detected-badge">★ ${esc(walletWatchLang("Von Sentinel erkannt","Detected by Sentinel"))} · ${esc(fmtDateTime(item.sentinel_detected_at))}</small>`:""}<section><span>${esc(walletWatchLang("Gegenadresse","Counterparty"))}</span>${walletWatchTxOverviewCounterparties(item,overview)}</section>${outgoing&&fee?`<section><span>${esc(walletWatchLang("Eigene Netzwerkgebühr","Your network fee"))}</span><strong>${esc(fee)}</strong></section>`:""}<section class="sats-sentinel-tx-mobile-footer"><span>${item.confirmed?esc(walletWatchLang("Bestätigt","Confirmed")):esc(walletWatchLang("Unbestätigt","Unconfirmed"))}${item.rbf?" · RBF":""}</span>${walletWatchTxOverviewLinkTx(item,overview)}</section></article>`;};
+  const rows=items.map(rowHtml).join(""),mobileRows=items.map(mobileHtml).join("");
   const warnings=Array.isArray(overview.warnings)&&overview.warnings.length?`<div class="result warning">${esc(overview.warnings.slice(0,3).join(" · "))}</div>`:"";
   const currentPage=Math.max(1,Number(overview.page||1)),pages=Math.max(1,Number(overview.pages||1)),unlimited=Boolean(overview.history_unlimited),hasMore=Boolean(overview.has_more);const pageNav=unlimited?`<div class="sats-sentinel-tx-pagination"><button type="button" class="secondary compact wallet-watch-tx-page-prev" ${currentPage<=1?"disabled":""}>‹ ${esc(walletWatchLang("Zurück","Previous"))}</button><span>${esc(pages>1?walletWatchLang(`Seite ${currentPage} von ${pages}`,`Page ${currentPage} of ${pages}`):walletWatchLang(`Seite ${currentPage}`,`Page ${currentPage}`))}</span><button type="button" class="secondary compact wallet-watch-tx-page-next" ${(!hasMore&&currentPage>=pages)?"disabled":""}>${esc(walletWatchLang("Weiter","Next"))} ›</button></div>`:"";
-  host.innerHTML=`${summary}${addressDetail}${privacyNote}<div class="sats-sentinel-tx-overview-head"><small>${esc(walletWatchLang(`Quelle: ${overview.source_label||"?"} · ${overview.source_route==="tor"?"Tor":"Direkt"} · reine Übersicht, keine rückwirkenden Alarme`,`Source: ${overview.source_label||"?"} · ${overview.source_route==="tor"?"Tor":"Direct"} · overview only, no retroactive alerts`))}</small><button type="button" class="secondary compact wallet-watch-tx-reload" data-id="${esc(id)}">${esc(walletWatchLang("Aktualisieren","Refresh"))}</button></div>${warnings}${pageNav}<div class="table-scroll"><table class="sats-sentinel-tx-table"><thead><tr><th>${esc(walletWatchLang("Zeit","Time"))}</th><th>${esc(walletWatchLang("Richtung / Betrag","Direction / amount"))}</th><th>${esc(walletWatchLang("Gegenadresse","Counterparty"))}</th><th>${esc(walletWatchLang("Gesamte Transaktion","Whole transaction"))}</th><th>Status</th><th>TXID</th></tr></thead><tbody>${rows||`<tr><td colspan="6" class="storage-note">${esc(walletWatchLang("Keine Transaktionen für die aktuell abgeleiteten Adressen gefunden.","No transactions found for the currently derived addresses."))}</td></tr>`}</tbody></table></div>${pageNav}`;
+  host.innerHTML=`${summary}${addressDetail}${privacyNote}<div class="sats-sentinel-tx-overview-head"><small>${esc(walletWatchLang(`Quelle: ${overview.source_label||"?"} · ${overview.source_route==="tor"?"Tor":"Direkt"} · reine Übersicht, keine rückwirkenden Alarme`,`Source: ${overview.source_label||"?"} · ${overview.source_route==="tor"?"Tor":"Direct"} · overview only, no retroactive alerts`))}</small><button type="button" class="secondary compact wallet-watch-tx-reload" data-id="${esc(id)}">${esc(walletWatchLang("Aktualisieren","Refresh"))}</button></div>${warnings}${pageNav}<div class="table-scroll sats-sentinel-tx-desktop"><table class="sats-sentinel-tx-table"><thead><tr><th>${esc(walletWatchLang("Zeit","Time"))}</th><th>${esc(walletWatchLang("Richtung / Betrag","Direction / amount"))}</th><th>${esc(walletWatchLang("Gegenadresse","Counterparty"))}</th><th>Status</th><th>TXID</th></tr></thead><tbody>${rows||`<tr><td colspan="5" class="storage-note">${esc(walletWatchLang("Keine Transaktionen für die aktuell abgeleiteten Adressen gefunden.","No transactions found for the currently derived addresses."))}</td></tr>`}</tbody></table></div><div class="sats-sentinel-tx-mobile-list">${mobileRows||`<p class="storage-note">${esc(walletWatchLang("Keine Transaktionen für die aktuell abgeleiteten Adressen gefunden.","No transactions found for the currently derived addresses."))}</p>`}</div>${pageNav}`;
   host.querySelector('.wallet-watch-tx-reload')?.addEventListener('click',()=>void loadWalletWatchTransactions(id,{force:true,page:currentPage}));
   host.querySelectorAll('.wallet-watch-tx-page-prev').forEach(btn=>btn.addEventListener('click',()=>void loadWalletWatchTransactions(id,{force:true,page:Math.max(1,currentPage-1)})));
   host.querySelectorAll('.wallet-watch-tx-page-next').forEach(btn=>btn.addEventListener('click',()=>void loadWalletWatchTransactions(id,{force:true,page:currentPage+1})));
 }
 async function loadWalletWatchTransactions(monitorId,{force=false,page=1}={}){
-  const id=String(monitorId||"");if(!id||!state.entryId||state.data?.locked)return;const monitor=(walletWatchConfig().monitors||[]).find(item=>String(item.id||"")===id);if(!monitor)return;if(monitor._pending_save){toast(walletWatchLang("Watch-Eintrag zuerst speichern.","Save the watch entry first."));return;}const existing=walletWatchTxOverviewState(id);if(existing?.loading||(!force&&existing?.data&&Number(existing?.data?.page||1)===Number(page||1)))return;state.walletWatchTxOverviews[id]={loading:true,error:"",data:existing?.data||null};renderWalletWatchTxOverview(id);try{const rawLimit=Number(monitor.history_limit);const limit=[0,5,10,25,50,100].includes(rawLimit)?rawLimit:10;const safePage=limit===0?Math.max(1,Number(page||1)):1;const result=await api(`api/wallet-watch/transactions?entry_id=${encodeURIComponent(state.entryId)}&monitor_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(safePage)}`,{timeoutMs:180000});state.walletWatchTxOverviews[id]={loading:false,error:"",data:result};if(state.walletWatch?.status?.monitor_summaries?.[id]&&Number.isFinite(Number(result.balance_sats)))state.walletWatch.status.monitor_summaries[id].balance_sats=Number(result.balance_sats||0);if(state.walletWatch?.status?.addresses&&Number.isFinite(Number(result.balance_sats))){const rows=state.walletWatch.status.addresses.filter(row=>String(row.monitor_id||"")===id);if(rows.length===1)rows[0].balance_sats=Number(result.balance_sats||0);}renderWalletWatch();}catch(error){state.walletWatchTxOverviews[id]={loading:false,error:errorText(error),data:null};renderWalletWatchTxOverview(id);}}
+  const id=String(monitorId||"");if(!id||!state.entryId||state.data?.locked)return;const monitor=(walletWatchConfig().monitors||[]).find(item=>String(item.id||"")===id)||walletWatchDisplayMonitors().find(item=>String(item.id||"")===id);if(!monitor)return;if(monitor._pending_save){toast(walletWatchLang("Watch-Eintrag zuerst speichern.","Save the watch entry first."));return;}const existing=walletWatchTxOverviewState(id);if(existing?.loading||(!force&&existing?.data&&Number(existing?.data?.page||1)===Number(page||1)))return;state.walletWatchTxOverviews[id]={loading:true,error:"",data:existing?.data||null};renderWalletWatchTxOverview(id);try{const rawLimit=Number(monitor.history_limit);const limit=[0,5,10,25,50,100].includes(rawLimit)?rawLimit:10;const safePage=limit===0?Math.max(1,Number(page||1)):1;const result=await api(`api/wallet-watch/transactions?entry_id=${encodeURIComponent(state.entryId)}&monitor_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(safePage)}`,{timeoutMs:180000});state.walletWatchTxOverviews[id]={loading:false,error:"",data:result};if(state.walletWatch?.status?.monitor_summaries?.[id]&&Number.isFinite(Number(result.balance_sats)))state.walletWatch.status.monitor_summaries[id].balance_sats=Number(result.balance_sats||0);if(state.walletWatch?.status?.addresses&&Number.isFinite(Number(result.balance_sats))){const rows=state.walletWatch.status.addresses.filter(row=>String(row.monitor_id||"")===id);if(rows.length===1)rows[0].balance_sats=Number(result.balance_sats||0);}renderWalletWatch();}catch(error){state.walletWatchTxOverviews[id]={loading:false,error:walletWatchErrorText(errorText(error)),data:null};renderWalletWatchTxOverview(id);}}
 function renderWalletWatch(){
   initWalletWatchPanelToggles();
   const statusBox=$("#walletWatchStatus"),privacy=$("#walletWatchPrivacy"),list=$("#walletWatchMonitors"),targetList=$("#walletWatchNotificationTargets"),simMonitor=$("#walletWatchSimMonitor");
@@ -4656,8 +4855,10 @@ function renderWalletWatch(){
   renderWalletWatchStatusOnly();
   if(!state.walletWatch)return;
   const cfg=walletWatchConfig(),st=state.walletWatch.status||{};
-  if(simMonitor){const current=simMonitor.value;const monitors=(cfg.monitors||[]).filter(item=>item&&item.enabled!==false);simMonitor.innerHTML=monitors.length?monitors.map((mon,index)=>`<option value="${esc(mon.id)}">${esc(state.discreet?`Wallet #${index+1}`:(mon.label||`Wallet ${index+1}`))}</option>`).join(""):`<option value="">${esc(walletWatchLang("Test-Wallet (keine echte Adresse)","Test wallet (no real address)"))}</option>`;if([...simMonitor.options].some(option=>option.value===current))simMonitor.value=current;}
+  const displayMonitors=walletWatchDisplayMonitors();
+  if(simMonitor){const current=simMonitor.value;const monitors=displayMonitors.filter(item=>item&&item.enabled!==false);simMonitor.innerHTML=monitors.length?monitors.map((mon,index)=>`<option value="${esc(mon.id)}">${esc(state.discreet?`Wallet #${index+1}`:(mon.label||`Wallet ${index+1}`))}</option>`).join(""):`<option value="">${esc(walletWatchLang("Test-Wallet (keine echte Adresse)","Test wallet (no real address)"))}</option>`;if([...simMonitor.options].some(option=>option.value===current))simMonitor.value=current;}
   if(!state.walletWatchSettingsDirty){
+    const lockedDisplay=$("#walletWatchShowWhenLocked");if(lockedDisplay)lockedDisplay.checked=walletWatchShowWhenLocked();
     $("#walletWatchEnabled").checked=Boolean(cfg.enabled);$("#walletWatchInterval").value=String(cfg.poll_interval_seconds||60);const querySource=$("#walletWatchQuerySource");if(querySource)querySource.value=cfg.query_source||"auto";const electrumKind=$("#walletWatchElectrumKind");if(electrumKind)electrumKind.value=cfg.electrum_kind||"fulcrum";const electrumHost=$("#walletWatchElectrumHost");if(electrumHost)electrumHost.value=cfg.electrum_host||"";const electrumPort=$("#walletWatchElectrumPort");if(electrumPort)electrumPort.value=String(cfg.electrum_port||50001);const electrumTls=$("#walletWatchElectrumTls");if(electrumTls)electrumTls.checked=Boolean(cfg.electrum_tls);const electrumVerify=$("#walletWatchElectrumVerifySsl");if(electrumVerify)electrumVerify.checked=cfg.electrum_verify_ssl!==false;const electrumPinned=$("#walletWatchElectrumPinnedCertPem");if(electrumPinned)electrumPinned.value=cfg.electrum_pinned_cert_pem||"";const publicTor=$("#walletWatchPublicTor");if(publicTor){publicTor.checked=Boolean(cfg.allow_public_tor);publicTor.disabled=false;publicTor.title="";}$("#walletWatchPersistent").checked=Boolean(cfg.persistent_notification);$("#walletWatchDetail").value=cfg.notification_detail||"discreet";
     const logMode=$("#walletWatchLogMode"),logDays=$("#walletWatchLogDays"),logCount=$("#walletWatchLogCount");if(logMode)logMode.value=cfg.log_display_mode||"days";if(logDays)logDays.value=String(cfg.log_display_days||30);if(logCount)logCount.value=String(cfg.log_display_count||100);
     const services=$("#walletWatchNotifyServices"),selected=new Set(cfg.notification_services||[]),available=state.walletWatch.notify_services||[];
@@ -4665,19 +4866,19 @@ function renderWalletWatch(){
   }
   syncWalletWatchSourceUi();syncWalletWatchLogModeUi();
   targetList.innerHTML=(cfg.notification_targets||[]).length?(cfg.notification_targets||[]).map(target=>{
-    const detail=target.detail==="inherit"?walletWatchLang("Globale Einstellung","Global setting"):target.detail;
     const targetValue=maskWalletWatchValue(target.url);
-    return `<article class="goal-card"><div><span class="kicker">${esc(String(target.kind||"").toUpperCase())}</span><h3>${esc(target.label||target.id)}</h3><p class="storage-note wallet-watch-secret">${esc(targetValue)}</p><small>${esc(detail)} · ${target.verify_ssl===false?"TLS verify AUS":"TLS verify AN"} · ${target.token?walletWatchLang("Token verschlüsselt","Token encrypted"):walletWatchLang("ohne Token","no token")}</small></div><button class="danger wallet-watch-notify-delete" type="button" data-id="${esc(target.id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></article>`;
+    return `<article class="goal-card"><div><span class="kicker">${esc(String(target.kind||"").toUpperCase())}</span><h3>${esc(target.label||target.id)}</h3><p class="storage-note wallet-watch-secret">${esc(targetValue)}</p><small>${esc(walletWatchLang("Inhalt folgt der jeweiligen Wallet-Einstellung","Content follows each wallet setting"))} · ${target.verify_ssl===false?"TLS verify AUS":"TLS verify AN"} · ${target.token?walletWatchLang("Token verschlüsselt","Token encrypted"):walletWatchLang("ohne Token","no token")}</small></div><button class="danger wallet-watch-notify-delete" type="button" data-id="${esc(target.id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></article>`;
   }).join(""):`<p class="storage-note">${esc(walletWatchLang("Noch kein zusätzliches ntfy-/Webhook-Ziel eingetragen.","No additional ntfy/webhook target configured yet."))}</p>`;
   $$(".wallet-watch-notify-delete").forEach(btn=>btn.onclick=()=>{const id=btn.dataset.id;cfg.notification_targets=(cfg.notification_targets||[]).filter(item=>item.id!==id);state.walletWatch.config=cfg;renderWalletWatch();});
   list.querySelectorAll(".sats-sentinel-tx-details[open]").forEach(details=>{const id=String(details.dataset.monitorId||"");if(id)state.walletWatchOpenTxDetails.add(id);});
-  list.innerHTML=(cfg.monitors||[]).length?(cfg.monitors||[]).map(mon=>{
-    const safeValue=maskWalletWatchValue(mon.value);const reserve=mon.kind==="address"?walletWatchLang("Exakte Adresse dauerhaft überwachen","Monitor this exact address permanently"):`Receive Gap ${mon.receive_count||0} · Change Gap ${mon.change_count||0}`;
+  list.innerHTML=displayMonitors.length?displayMonitors.map(mon=>{
+    const safeValue=String(mon.value||"").trim()?maskWalletWatchValue(mon.value):(state.discreet?"••••":String(mon.watch_value_masked||walletWatchLang("verschlüsselt gespeichert","stored encrypted")));const reserve=mon.kind==="address"?walletWatchLang("Exakte Adresse dauerhaft überwachen","Monitor this exact address permanently"):`Receive Gap ${mon.receive_count||0} · Change Gap ${mon.change_count||0}`;
     const threshold=Number(mon.min_notify_sats||0);const thresholdText=threshold>0?`${fmtNumber(threshold,0)} sats`:walletWatchLang("Keine Alarmgrenze","No alert threshold");
     const channels=[mon.notify_ha_event!==false?"HA Event":null,mon.notify_persistent!==false?"HA":null,mon.notify_services!==false?"Push":null,mon.notify_external!==false?"ntfy/Webhook":null].filter(Boolean).join(" · ")||walletWatchLang("Nur Journal","Journal only");
-    const incoming=mon.notify_incoming!==false,outgoing=mon.notify_outgoing!==false,kindLabel=String(mon.kind||"address").toUpperCase(),runtime=walletWatchMonitorRuntimeSummary(mon.id),historyLimit=[0,5,10,25,50,100].includes(Number(mon.history_limit))?Number(mon.history_limit):10,balanceText=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,pending=Boolean(mon._pending_save),historyLabel=historyLimit===0?walletWatchLang("Unbegrenzt · 25/Seite","Unlimited · 25/page"):`${historyLimit} TX`;
-    return `<article class="sats-sentinel-watch-card ${pending?"pending-save":""}"><div class="sats-sentinel-watch-head"><div class="sats-sentinel-watch-badges"><span class="sats-sentinel-category ${esc(walletWatchCategoryClass(mon.category))}">${esc(walletWatchCategoryLabel(mon.category))}</span><span class="sats-sentinel-kind-badge">${esc(kindLabel)}</span>${pending?`<span class="sats-sentinel-pending-badge">${esc(walletWatchLang("NOCH SPEICHERN","SAVE REQUIRED"))}</span>`:""}</div><div class="sats-sentinel-watch-actions"><button class="secondary compact wallet-watch-edit" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact wallet-watch-delete" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="sats-sentinel-watch-title"><h3>${esc(state.discreet?"••••":(mon.label||mon.id))}</h3>${mon.note&&!state.discreet?`<p>${esc(mon.note)}</p>`:""}</div><code class="sats-sentinel-watch-address">${esc(safeValue)}</code><div class="wallet-watch-monitor-meta"><div class="wide-meta"><span>${esc(walletWatchLang("Überwachung","Monitoring"))}</span><strong>${esc(reserve)}</strong></div><div><span>${esc(walletWatchLang("Bestand","Balance"))}</span><strong>${esc(balanceText)}</strong><small>${esc(state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("abgeleitete Adresse(n)","derived address(es)")}${mon.kind!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`)}</small></div><div><span>${esc(walletWatchLang("TX-Übersicht","TX overview"))}</span><strong>${esc(historyLabel)}</strong></div><div class="wide-meta sats-sentinel-last-movement"><span>${esc(walletWatchLang("Letzte von Sentinel erkannte Bewegung","Last movement detected by Sentinel"))}</span>${walletWatchLastDetectedHtml(runtime.last_activity)}</div><div class="${incoming?"is-on":"is-off"}"><span>${esc(walletWatchLang("Eingangs-Alarm","Incoming alert"))}</span><strong>${esc(incoming?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div class="${outgoing?"is-on":"is-off"}"><span>${esc(walletWatchLang("Ausgangs-Alarm","Outgoing alert"))}</span><strong>${esc(outgoing?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div><span>${esc(walletWatchLang("Alarmgrenze","Alert threshold"))}</span><strong>${esc(thresholdText)}</strong></div><div><span>${esc(walletWatchLang("Alarmkanäle","Alert channels"))}</span><strong>${esc(channels)}</strong></div></div><details class="sats-sentinel-tx-details" data-monitor-id="${esc(mon.id)}" ${pending?'data-pending-save="1"':""} ${!pending&&state.walletWatchOpenTxDetails.has(String(mon.id))?"open":""}><summary>${esc(pending?walletWatchLang("Erst Sats Sentinel speichern, dann TX laden","Save Sats Sentinel before loading TX"):historyLimit===0?walletWatchLang("Alle Transaktionen seitenweise anzeigen","Browse all transactions page by page"):walletWatchLang(`Letzte ${historyLimit} Transaktionen anzeigen`,`Show last ${historyLimit} transactions`))}</summary><div class="sats-sentinel-tx-host" data-wallet-watch-tx-host="${esc(mon.id)}"><p class="storage-note">${esc(pending?walletWatchLang("Dieser Watch-Eintrag existiert noch nicht im verschlüsselten Backend. Erst speichern.","This watch entry does not exist in the encrypted backend yet. Save it first."):walletWatchLang("Historische Übersicht wird erst beim Öffnen geladen und löst keine rückwirkenden Alarme aus.","Historical overview is loaded only when opened and never triggers retroactive alerts."))}</p></div></details></article>`;
+    const incoming=mon.notify_incoming!==false,outgoing=mon.notify_outgoing!==false,kindLabel=String(mon.kind||"address").toUpperCase(),runtime=walletWatchMonitorRuntimeSummary(mon.id),historyLimit=[0,5,10,25,50,100].includes(Number(mon.history_limit))?Number(mon.history_limit):10,balanceText=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,pending=Boolean(mon._pending_save),historyLabel=historyLimit===0?walletWatchLang("Unbegrenzt · 25/Seite","Unlimited · 25/page"):`${historyLimit} TX`,detailMode=String(mon.notification_detail||cfg.notification_detail||"discreet"),detailLabel=detailMode==="detailed"?walletWatchLang("Detailliert","Detailed"):detailMode==="normal"?walletWatchLang("Normal","Normal"):walletWatchLang("Diskret","Discreet"),label=state.discreet?"••••":(mon.label||mon.id),collapsed=walletWatchMonitorIsCollapsed(mon.id);
+    return `<article class="sats-sentinel-watch-card ${pending?"pending-save":""} ${collapsed?"is-collapsed":""}" data-monitor-id="${esc(mon.id)}">${collapsed?walletWatchCompactSummaryHtml(mon):walletWatchMonitorToggleHtml(mon.id,label,kindLabel,balanceText,false)}<div class="sats-sentinel-watch-body" ${collapsed?"hidden":""}><div class="sats-sentinel-watch-head"><div class="sats-sentinel-watch-badges"><span class="sats-sentinel-category ${esc(walletWatchCategoryClass(mon.category))}">${esc(walletWatchCategoryLabel(mon.category))}</span><span class="sats-sentinel-kind-badge">${esc(kindLabel)}</span>${pending?`<span class="sats-sentinel-pending-badge">${esc(walletWatchLang("NOCH SPEICHERN","SAVE REQUIRED"))}</span>`:""}</div><div class="sats-sentinel-watch-actions"><button class="secondary compact wallet-watch-edit" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact wallet-watch-delete" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="sats-sentinel-watch-title">${mon.note&&!state.discreet?`<p>${esc(mon.note)}</p>`:""}</div><code class="sats-sentinel-watch-address">${esc(safeValue)}</code><div class="wallet-watch-monitor-meta"><div class="wide-meta"><span>${esc(walletWatchLang("Überwachung","Monitoring"))}</span><strong>${esc(reserve)}</strong></div><div><span>${esc(walletWatchLang("Bestand","Balance"))}</span><strong>${esc(balanceText)}</strong><small>${esc(state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("abgeleitete Adresse(n)","derived address(es)")}${mon.kind!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`)}</small></div><div><span>${esc(walletWatchLang("TX-Übersicht","TX overview"))}</span><strong>${esc(historyLabel)}</strong></div><div class="wide-meta sats-sentinel-last-movement"><span>${esc(walletWatchLang("Letzte von Sentinel erkannte Bewegung","Last movement detected by Sentinel"))}</span>${walletWatchLastDetectedHtml(runtime.last_activity)}</div><div class="${incoming?"is-on":"is-off"}"><span>${esc(walletWatchLang("Eingangs-Alarm","Incoming alert"))}</span><strong>${esc(incoming?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div class="${outgoing?"is-on":"is-off"}"><span>${esc(walletWatchLang("Ausgangs-Alarm","Outgoing alert"))}</span><strong>${esc(outgoing?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div><span>${esc(walletWatchLang("Alarmgrenze","Alert threshold"))}</span><strong>${esc(thresholdText)}</strong></div><div><span>${esc(walletWatchLang("Alarmkanäle","Alert channels"))}</span><strong>${esc(channels)}</strong></div><div><span>${esc(walletWatchLang("Benachrichtigungsdetails","Notification detail"))}</span><strong>${esc(detailLabel)}</strong></div></div>${walletWatchMonitorAddressesHtml(mon.id)}<details class="sats-sentinel-tx-details" data-monitor-id="${esc(mon.id)}" ${pending?'data-pending-save="1"':""} ${!collapsed&&!pending&&state.walletWatchOpenTxDetails.has(String(mon.id))?"open":""}><summary>${esc(pending?walletWatchLang("Erst Sats Sentinel speichern, dann TX laden","Save Sats Sentinel before loading TX"):historyLimit===0?walletWatchLang("Alle Transaktionen seitenweise anzeigen","Browse all transactions page by page"):walletWatchLang(`Letzte ${historyLimit} Transaktionen anzeigen`,`Show last ${historyLimit} transactions`))}</summary><div class="sats-sentinel-tx-host" data-wallet-watch-tx-host="${esc(mon.id)}"><p class="storage-note">${esc(pending?walletWatchLang("Dieser Watch-Eintrag existiert noch nicht im verschlüsselten Backend. Erst speichern.","This watch entry does not exist in the encrypted backend yet. Save it first."):walletWatchLang("Historische Übersicht wird erst beim Öffnen geladen und löst keine rückwirkenden Alarme aus.","Historical overview is loaded only when opened and never triggers retroactive alerts."))}</p></div></details></div></article>`;
   }).join(""):`<p class="storage-note">${esc(walletWatchLang("Noch keine Adresse oder Watch-only-Wallet eingetragen.","No address or watch-only wallet configured yet."))}</p>`;
+  list.querySelectorAll(".sats-sentinel-watch-toggle").forEach(button=>button.onclick=()=>{const id=String(button.dataset.id||"");setWalletWatchMonitorCollapsed(id,!walletWatchMonitorIsCollapsed(id));renderWalletWatch();});
   $$(".wallet-watch-delete").forEach(btn=>btn.onclick=()=>{void removeWalletWatchMonitor(btn.dataset.id);});
   $$(".wallet-watch-edit").forEach(btn=>btn.onclick=()=>editWalletWatchMonitor(btn.dataset.id));
   $$(".sats-sentinel-tx-details").forEach(details=>{
@@ -4714,25 +4915,172 @@ function renderWalletWatchActivity(){
   if(nav){const page=Number(log.page||1),pages=Number(log.pages||1);if(pages>1){const opts=Array.from({length:pages},(_,i)=>`<option value="${i+1}" ${i+1===page?"selected":""}>${esc(walletWatchLang(`Seite ${i+1}`,`Page ${i+1}`))}</option>`).join("");nav.innerHTML=`<button type="button" class="secondary compact" data-ww-page="1" ${page<=1?"disabled":""} title="${esc(walletWatchLang("Erste Seite","First page"))}">«</button><button type="button" class="secondary compact" data-ww-page="${Math.max(1,page-1)}" ${page<=1?"disabled":""}>‹</button><label class="sats-sentinel-page-picker"><span>${esc(walletWatchLang(`Seite ${page} von ${pages}`,`Page ${page} of ${pages}`))}</span><select id="walletWatchActivityPageSelect">${opts}</select></label><button type="button" class="secondary compact" data-ww-page="${Math.min(pages,page+1)}" ${page>=pages?"disabled":""}>›</button><button type="button" class="secondary compact" data-ww-page="${pages}" ${page>=pages?"disabled":""} title="${esc(walletWatchLang("Letzte Seite","Last page"))}">»</button>`;nav.querySelectorAll("[data-ww-page]").forEach(btn=>btn.onclick=()=>loadWalletWatchActivity(Number(btn.dataset.wwPage||1)));const picker=$("#walletWatchActivityPageSelect");if(picker)picker.onchange=()=>loadWalletWatchActivity(Number(picker.value||1));}else nav.innerHTML="";}
 }
 async function loadWalletWatchActivity(page=1){if(!state.entryId||state.data?.locked)return;state.walletWatchActivityPage=Math.max(1,Number(page||1));try{const result=await api(`api/wallet-watch/log?entry_id=${encodeURIComponent(state.entryId)}&page=${state.walletWatchActivityPage}&page_size=${encodeURIComponent(state.walletWatchActivityPageSize||10)}&category=${encodeURIComponent(state.walletWatchActivityCategory||"all")}`,{timeoutMs:15000});if(state.walletWatch){state.walletWatch.activity_log=result;renderWalletWatchActivity();}}catch(error){if(state.activeTab==="walletwatch")toast(errorText(error));}}
-async function refreshWalletWatchStatus({silent=true}={}){if(walletWatchStatusRefreshInFlight||!state.entryId||!state.data?.security?.owner)return false;walletWatchStatusRefreshInFlight=true;try{const oldCount=Number(state.walletWatch?.status?.activity_log_count||0),status=await api(`api/wallet-watch/status?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:7000});if(!state.walletWatch)state.walletWatch={config:walletWatchConfig(),status,notify_services:[],activity_log:{items:[],page:1,pages:1,total:0,stored_total:0}};else state.walletWatch.status=status;if(state.activeTab==="walletwatch"){renderWalletWatchStatusOnly();if(!state.data?.locked&&Number(status.activity_log_count||0)!==oldCount)void loadWalletWatchActivity(1);}return true;}catch(error){if(!silent&&state.activeTab==="walletwatch")toast(errorText(error));return false;}finally{walletWatchStatusRefreshInFlight=false;}}
-function startWalletWatchStatusPolling(){if(walletWatchStatusPollTimer)clearInterval(walletWatchStatusPollTimer);walletWatchStatusPollTimer=setInterval(()=>{if(document.hidden||state.activeTab!=="walletwatch")return;void refreshWalletWatchStatus({silent:true});},15000);}
+async function refreshWalletWatchStatus({silent=true}={}){if(walletWatchStatusRefreshInFlight||!state.entryId||!state.data?.security?.owner||(state.data?.locked&&!walletWatchShowWhenLocked()))return false;walletWatchStatusRefreshInFlight=true;try{const oldCount=Number(state.walletWatch?.status?.activity_log_count||0),previousAddresses=Array.isArray(state.walletWatch?.status?.addresses)?state.walletWatch.status.addresses:[],status=await api(`api/wallet-watch/status?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:7000});if(!Array.isArray(status.addresses)&&previousAddresses.length)status.addresses=previousAddresses;if(!state.walletWatch)state.walletWatch={config:walletWatchConfig(),status,notify_services:[],activity_log:{items:[],page:1,pages:1,total:0,stored_total:0}};else state.walletWatch.status=status;if(state.data?.locked)renderLockedWalletWatch();if(state.activeTab==="walletwatch"&&!state.data?.locked){renderWalletWatchStatusOnly();if(Number(status.activity_log_count||0)!==oldCount)void loadWalletWatchActivity(1);}return true;}catch(error){if(!silent&&state.activeTab==="walletwatch"&&!state.data?.locked)toast(errorText(error));return false;}finally{walletWatchStatusRefreshInFlight=false;}}
+function startWalletWatchStatusPolling(){if(walletWatchStatusPollTimer)clearInterval(walletWatchStatusPollTimer);walletWatchStatusPollTimer=setInterval(()=>{if(document.hidden||state.activeTab!=="walletwatch")return;void refreshWalletWatchStatus({silent:true});},30000);}
 function syncWalletWatchLogModeUi(){const mode=$("#walletWatchLogMode")?.value||"days";$("#walletWatchLogDaysWrap")?.classList.toggle("hidden",mode!=="days");$("#walletWatchLogCountWrap")?.classList.toggle("hidden",mode!=="count");}
-function resetWalletWatchMonitorForm(){const form=$("#walletWatchAddForm");if(!form)return;form.reset();form.elements.edit_id.value="";form.elements.kind.value="address";form.elements.category.value="other";form.elements.receive_count.value="2";form.elements.change_count.value="2";form.elements.history_limit.value="10";form.elements.min_notify_amount.value="0";form.elements.min_notify_unit.value="sats";for(const name of ["notify_incoming","notify_outgoing","notify_ha_event","notify_persistent","notify_services","notify_external"])form.elements[name].checked=true;$("#walletWatchMonitorSubmit").textContent=walletWatchLang("Überwachung speichern","Save watch target");$("#walletWatchMonitorCancel").classList.add("hidden");syncWalletWatchKindUi();syncWalletWatchDetectedKind();}
-function editWalletWatchMonitor(id){const cfg=walletWatchConfig(),mon=(cfg.monitors||[]).find(item=>item.id===id),form=$("#walletWatchAddForm");if(!mon||!form)return;form.elements.edit_id.value=mon.id;form.elements.label.value=mon.label||"";form.elements.category.value=mon.category||"other";form.elements.kind.value=walletWatchDetectMonitorKind(mon.kind||"address",mon.value||"");form.elements.value.value=mon.value||"";form.elements.receive_count.value=String(mon.receive_count||0);form.elements.change_count.value=String(mon.change_count||0);form.elements.history_limit.value=String(mon.history_limit===0?0:(mon.history_limit||10));form.elements.note.value=mon.note||"";form.elements.min_notify_unit.value="sats";form.elements.min_notify_amount.value=String(mon.min_notify_sats||0);for(const name of ["notify_incoming","notify_outgoing","notify_ha_event","notify_persistent","notify_services","notify_external"])form.elements[name].checked=mon[name]!==false;$("#walletWatchMonitorSubmit").textContent=walletWatchLang("Änderungen speichern","Save changes");$("#walletWatchMonitorCancel").classList.remove("hidden");syncWalletWatchKindUi();syncWalletWatchDetectedKind();form.scrollIntoView({behavior:"smooth",block:"start"});}
+function resetWalletWatchMonitorForm(){const form=$("#walletWatchAddForm");if(!form)return;form.reset();form.elements.edit_id.value="";form.elements.kind.value="address";form.elements.category.value="other";form.elements.receive_count.value="20";form.elements.change_count.value="20";if(form.elements.address_type)form.elements.address_type.value="auto";form.elements.history_limit.value="10";form.elements.min_notify_amount.value="0";form.elements.min_notify_unit.value="sats";if(form.elements.notification_detail)form.elements.notification_detail.value=walletWatchConfig().notification_detail||"discreet";for(const name of ["notify_incoming","notify_outgoing","notify_ha_event","notify_persistent","notify_services","notify_external"])form.elements[name].checked=true;$("#walletWatchMonitorSubmit").textContent=walletWatchLang("Überwachung speichern","Save watch target");$("#walletWatchMonitorCancel").classList.add("hidden");syncWalletWatchKindUi();syncWalletWatchDetectedKind();}
+function editWalletWatchMonitor(id){const cfg=walletWatchConfig(),mon=(cfg.monitors||[]).find(item=>item.id===id)||walletWatchDisplayMonitors().find(item=>item.id===id),form=$("#walletWatchAddForm");if(!mon||!form)return;form.elements.edit_id.value=mon.id;form.elements.label.value=mon.label||"";form.elements.category.value=mon.category||"other";form.elements.kind.value=String(mon.kind||"address");form.elements.value.value=mon._runtime_catalog?"":(mon.value||"");form.elements.value.placeholder=mon._runtime_catalog?walletWatchLang(`Gespeichert: ${mon.watch_value_masked||"verschlüsselt"} · leer lassen = beibehalten`,`Stored: ${mon.watch_value_masked||"encrypted"} · leave empty to keep`):"";form.elements.receive_count.value=String(mon.receive_count||0);form.elements.change_count.value=String(mon.change_count||0);if(form.elements.address_type)form.elements.address_type.value=String(mon.address_type||"auto");form.elements.history_limit.value=String(mon.history_limit===0?0:(mon.history_limit||10));form.elements.note.value=mon.note||"";form.elements.min_notify_unit.value="sats";form.elements.min_notify_amount.value=String(mon.min_notify_sats||0);if(form.elements.notification_detail)form.elements.notification_detail.value=mon.notification_detail||cfg.notification_detail||"discreet";for(const name of ["notify_incoming","notify_outgoing","notify_ha_event","notify_persistent","notify_services","notify_external"])form.elements[name].checked=mon[name]!==false;$("#walletWatchMonitorSubmit").textContent=walletWatchLang("Änderungen speichern","Save changes");$("#walletWatchMonitorCancel").classList.remove("hidden");syncWalletWatchKindUi();syncWalletWatchDetectedKind();form.scrollIntoView({behavior:"smooth",block:"start"});}
 function SATsFix(){return 100000000;}
 async function loadWalletWatch(){
   if(!state.entryId||state.data?.locked||!state.data?.security?.owner||state.walletWatchLoading)return;
   state.walletWatchLoading=true;renderWalletWatch();
-  try{state.walletWatch=await api(`api/wallet-watch?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:30000});state.walletWatchSettingsDirty=false;}
+  try{state.walletWatch=await api(`api/wallet-watch?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:30000});state.walletWatch.locked_runtime_snapshot=false;state.walletWatchSettingsDirty=false;}
   catch(error){toast(errorText(error));}
   finally{state.walletWatchLoading=false;if(state.activeTab==="walletwatch")renderWalletWatch();}
 }
 function syncWalletWatchSourceUi(){const mode=$("#walletWatchQuerySource")?.value||"auto",box=$("#walletWatchElectrumSettings");if(box)box.classList.toggle("hidden",!["auto","fulcrum","electrs"].includes(mode));const kind=$("#walletWatchElectrumKind");if(kind){if(mode==="fulcrum")kind.value="fulcrum";if(mode==="electrs")kind.value="electrs";kind.disabled=mode==="fulcrum"||mode==="electrs";}const publicTor=$("#walletWatchPublicTor");if(publicTor)publicTor.disabled=mode==="fulcrum"||mode==="electrs"||mode==="mempool_own";}
-function syncWalletWatchKindUi(){const form=$("#walletWatchAddForm");if(!form)return;const derived=form.elements.kind?.value!=="address";$$('.wallet-watch-derived').forEach(el=>el.classList.toggle("hidden",!derived));}
+function syncWalletWatchKindUi(){const form=$("#walletWatchAddForm");if(!form)return;const kind=String(form.elements.kind?.value||"address");const derived=kind!=="address";$$('.wallet-watch-derived').forEach(el=>el.classList.toggle("hidden",!derived));$$('.wallet-watch-xpub-format').forEach(el=>el.classList.toggle("hidden",kind!=="xpub"));}
 function walletWatchCompactMonitorValue(value){return String(value||"").normalize("NFKC").trim().replace(/[\s\u200B-\u200D\u2060\uFEFF]/g,"").replace(/^[`\'"]|[`\'"]$/g,"");}
 function walletWatchExtractExtendedKey(value){const source=walletWatchCompactMonitorValue(value),match=source.match(/^(?:\[[0-9a-fA-F]{8}(?:\/[0-9]+[hH\']?)*\])?((?:xpub|ypub|zpub)[1-9A-HJ-NP-Za-km-z]+)$/i);return match?match[1]:"";}
-function walletWatchDetectMonitorKind(kind,value){const requested=String(kind||"address").trim().toLowerCase(),source=walletWatchCompactMonitorValue(value);if(walletWatchExtractExtendedKey(source)||["xpub","ypub","zpub"].some(prefix=>source.toLowerCase().startsWith(prefix)))return "xpub";if(/^(?:pkh\(|wpkh\(|sh\(wpkh\()/i.test(source))return "descriptor";return requested;}
+function walletWatchDetectMonitorKind(kind,value){const requested=String(kind||"address").trim().toLowerCase(),source=walletWatchCompactMonitorValue(value);if(walletWatchExtractExtendedKey(source)||["xpub","ypub","zpub"].some(prefix=>source.toLowerCase().startsWith(prefix)))return "xpub";if(/^(?:pkh\(|wpkh\(|sh\(wpkh\(|tr\()/i.test(source))return "descriptor";return requested;}
 function walletWatchCanonicalMonitorValue(kind,value){const raw=String(value||"");if(kind==="xpub")return walletWatchExtractExtendedKey(raw)||walletWatchCompactMonitorValue(raw);if(kind==="descriptor")return walletWatchCompactMonitorValue(raw);return raw.trim();}
+
+let walletWatchQrStream=null;
+let walletWatchQrFrame=0;
+let walletWatchQrActive=false;
+let walletWatchQrDetectBusy=false;
+let walletWatchQrLastScanAt=0;
+function walletWatchNormalizeScannedValue(raw){
+  let value=String(raw||"").trim();
+  if(/^bitcoin:/i.test(value)){
+    value=value.replace(/^bitcoin:/i,"").replace(/^\/\//,"");
+    value=value.split("?")[0].split("#")[0];
+    try{value=decodeURIComponent(value);}catch(_error){}
+  }
+  return value.trim();
+}
+function walletWatchEnsureQrScanner(){
+  let modal=$("#walletWatchQrScanner");
+  if(modal)return modal;
+  modal=document.createElement("div");
+  modal.id="walletWatchQrScanner";
+  modal.className="wallet-watch-qr-modal hidden";
+  modal.setAttribute("role","dialog");
+  modal.setAttribute("aria-modal","true");
+  modal.setAttribute("aria-label",walletWatchLang("Bitcoin QR-Code scannen","Scan Bitcoin QR code"));
+  modal.innerHTML=`<div class="wallet-watch-qr-dialog"><div class="wallet-watch-qr-head"><strong>${esc(walletWatchLang("QR-Code scannen","Scan QR code"))}</strong><button class="ghost compact" type="button" data-qr-close>${esc(walletWatchLang("Schließen","Close"))}</button></div><div class="wallet-watch-qr-video-wrap"><video playsinline muted></video><div class="wallet-watch-qr-reticle" aria-hidden="true"></div></div><p class="storage-note" data-qr-status>${esc(walletWatchLang("Kamera wird gestartet …","Starting camera …"))}</p><small>${esc(walletWatchLang("Die Erkennung läuft lokal auf diesem Gerät. Es wird kein Kamerabild an einen Server übertragen.","Detection runs locally on this device. No camera image is sent to a server."))}</small></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector("[data-qr-close]")?.addEventListener("click",stopWalletWatchQrScanner);
+  modal.addEventListener("click",event=>{if(event.target===modal)stopWalletWatchQrScanner();});
+  return modal;
+}
+function stopWalletWatchQrScanner(){
+  walletWatchQrActive=false;
+  walletWatchQrDetectBusy=false;
+  walletWatchQrLastScanAt=0;
+  if(walletWatchQrFrame){cancelAnimationFrame(walletWatchQrFrame);walletWatchQrFrame=0;}
+  if(walletWatchQrStream){for(const track of walletWatchQrStream.getTracks())track.stop();walletWatchQrStream=null;}
+  const modal=$("#walletWatchQrScanner"),video=modal?.querySelector("video");
+  if(video)video.srcObject=null;
+  modal?.classList.add("hidden");
+}
+let walletWatchQrPanelSeq=0;
+function walletWatchApplyScannedValue(raw,input){
+  const value=walletWatchNormalizeScannedValue(raw);
+  if(/^lightning:/i.test(value)||!value)throw new Error(walletWatchLang("Der QR-Code enthält keine unterstützte Bitcoin-Adresse, XPUB oder Descriptor.","The QR code does not contain a supported Bitcoin address, XPUB, or descriptor."));
+  input.value=value;
+  input.dispatchEvent(new Event("input",{bubbles:true}));
+  syncWalletWatchDetectedKind();
+  return value;
+}
+function walletWatchTryHomeAssistantQrScanner(){
+  if(window.parent===window)return Promise.resolve({state:"unsupported"});
+  const id=`bst_qr_${Date.now().toString(36)}_${(++walletWatchQrPanelSeq).toString(36)}`;
+  return new Promise(resolve=>{
+    let acknowledged=false,finished=false;
+    const cleanup=()=>{window.removeEventListener("message",onMessage);clearTimeout(ackTimer);clearTimeout(scanTimer);};
+    const finish=result=>{if(finished)return;finished=true;cleanup();resolve(result);};
+    const onMessage=event=>{
+      if(event.source!==window.parent||event.origin!==window.location.origin)return;
+      const msg=event.data;
+      if(!msg||msg.source!==NATIVE_RPC_SOURCE||msg.type!=="ui-event"||msg.action!=="qr-scan-state"||msg.id!==id)return;
+      const stateName=String(msg.state||"");
+      if(stateName==="probing"||stateName==="started"){acknowledged=true;clearTimeout(ackTimer);return;}
+      if(stateName==="result")finish({state:"result",value:String(msg.value||"")});
+      else if(stateName==="canceled")finish({state:"canceled"});
+      else finish({state:"unsupported"});
+    };
+    window.addEventListener("message",onMessage);
+    window.parent.postMessage({source:NATIVE_RPC_SOURCE,type:"ui-action",action:"scan-qr",id},window.location.origin);
+    const ackTimer=setTimeout(()=>{if(!acknowledged)finish({state:"unsupported"});},3000);
+    const scanTimer=setTimeout(()=>finish({state:"canceled"}),120000);
+  });
+}
+function walletWatchBarcodeDetectorCtor(){
+  // Some Home Assistant WebViews/polyfills expose BarcodeDetector on the HA
+  // parent window instead of inside this same-origin tracker iframe.
+  for(const candidate of [window,window.parent,window.top]){
+    try{if(candidate&&typeof candidate.BarcodeDetector==="function")return candidate.BarcodeDetector;}catch(_error){}
+  }
+  return null;
+}
+async function startWalletWatchQrScanner(){
+  const form=$("#walletWatchAddForm"),input=form?.elements?.value;
+  if(!form||!input)return;
+
+  // First ask the Home Assistant custom-panel host. In the Companion app rc18
+  // uses HA's official external bus (bar_code/scan), so the native scanner
+  // owns camera permissions and works even when this iframe lacks BarcodeDetector.
+  const haScan=await walletWatchTryHomeAssistantQrScanner();
+  if(haScan.state==="result"){
+    try{walletWatchApplyScannedValue(haScan.value,input);toast(walletWatchLang("QR-Code übernommen.","QR code imported."));}catch(error){toast(String(error?.message||error));}
+    return;
+  }
+  if(haScan.state==="canceled")return;
+
+  const BarcodeDetectorCtor=walletWatchBarcodeDetectorCtor();
+  if(!BarcodeDetectorCtor){
+    toast(walletWatchLang(`QR-Scan ist in diesem Client nicht verfügbar · ${FRONTEND_BUILD}. In der aktuellen Home-Assistant-Companion-App wird der native Scanner verwendet; im Browser bleibt Einfügen möglich.`,`QR scanning is not available in this client · ${FRONTEND_BUILD}. The current Home Assistant Companion app uses the native scanner; pasting remains available in browsers.`));
+    return;
+  }
+  if(!navigator.mediaDevices?.getUserMedia){
+    toast(walletWatchLang("Kamera ist hier nicht verfügbar. Prüfe HTTPS und die Kamera-Berechtigung von Home Assistant.","Camera access is not available here. Check HTTPS and Home Assistant camera permission."));
+    return;
+  }
+  try{
+    if(typeof BarcodeDetectorCtor.getSupportedFormats==="function"){
+      const formats=await BarcodeDetectorCtor.getSupportedFormats();
+      if(Array.isArray(formats)&&formats.length&&!formats.includes("qr_code"))throw new Error(walletWatchLang("QR-Code-Erkennung wird von diesem Gerät nicht angeboten.","QR code detection is not offered by this device."));
+    }
+    stopWalletWatchQrScanner();
+    const modal=walletWatchEnsureQrScanner(),video=modal.querySelector("video"),status=modal.querySelector("[data-qr-status]");
+    modal.classList.remove("hidden");
+    if(status)status.textContent=walletWatchLang("Kamera wird gestartet …","Starting camera …");
+    const detector=new BarcodeDetectorCtor({formats:["qr_code"]});
+    walletWatchQrStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+    video.srcObject=walletWatchQrStream;
+    await video.play();
+    walletWatchQrActive=true;
+    if(status)status.textContent=walletWatchLang("QR-Code in den Rahmen halten.","Hold the QR code inside the frame.");
+    const detectFrame=async timestamp=>{
+      if(!walletWatchQrActive)return;
+      if(timestamp-walletWatchQrLastScanAt>=180&&!walletWatchQrDetectBusy&&video.readyState>=2){
+        walletWatchQrLastScanAt=timestamp;
+        walletWatchQrDetectBusy=true;
+        try{
+          const codes=await detector.detect(video);
+          const raw=Array.isArray(codes)?String(codes.find(item=>String(item?.rawValue||"").trim())?.rawValue||""):"";
+          if(raw){
+            walletWatchApplyScannedValue(raw,input);
+            stopWalletWatchQrScanner();
+            toast(walletWatchLang("QR-Code übernommen.","QR code imported."));
+            return;
+          }
+        }catch(error){
+          const message=String(error?.message||error||"");
+          if(message&&status)status.textContent=message;
+        }finally{walletWatchQrDetectBusy=false;}
+      }
+      walletWatchQrFrame=requestAnimationFrame(detectFrame);
+    };
+    walletWatchQrFrame=requestAnimationFrame(detectFrame);
+  }catch(error){
+    stopWalletWatchQrScanner();
+    const name=String(error?.name||"");
+    const permission=name==="NotAllowedError"||name==="SecurityError";
+    toast(permission?walletWatchLang("Kamerazugriff nicht erlaubt. Erlaube Home Assistant den Kamerazugriff und versuche es erneut.","Camera access was not allowed. Grant Home Assistant camera access and try again."):walletWatchLang(`QR-Scanner konnte nicht gestartet werden: ${String(error?.message||error)}`,`QR scanner could not be started: ${String(error?.message||error)}`));
+  }
+}
 function walletWatchDraftConfig(){
   const cfg=JSON.parse(JSON.stringify(walletWatchConfig()));
   cfg.enabled=Boolean($("#walletWatchEnabled")?.checked);cfg.poll_interval_seconds=Number($("#walletWatchInterval")?.value||60);cfg.query_source=$("#walletWatchQuerySource")?.value||"auto";cfg.electrum_kind=$("#walletWatchElectrumKind")?.value||"fulcrum";cfg.electrum_host=String($("#walletWatchElectrumHost")?.value||"").trim();cfg.electrum_port=Number($("#walletWatchElectrumPort")?.value||50001);cfg.electrum_tls=Boolean($("#walletWatchElectrumTls")?.checked);cfg.electrum_verify_ssl=Boolean($("#walletWatchElectrumVerifySsl")?.checked);cfg.electrum_pinned_cert_pem=String($("#walletWatchElectrumPinnedCertPem")?.value||"").trim();cfg.allow_public_tor=Boolean($("#walletWatchPublicTor")?.checked);cfg.persistent_notification=Boolean($("#walletWatchPersistent")?.checked);cfg.notification_detail=$("#walletWatchDetail")?.value||"discreet";cfg.notification_services=$$("#walletWatchNotifyServices input:checked").map(x=>x.value);cfg.log_display_mode=$("#walletWatchLogMode")?.value||"days";cfg.log_display_days=Number($("#walletWatchLogDays")?.value||30);cfg.log_display_count=Number($("#walletWatchLogCount")?.value||100);
@@ -4740,23 +5088,23 @@ function walletWatchDraftConfig(){
   return cfg;
 }
 function syncWalletWatchDetectedKind(){const form=$("#walletWatchAddForm"),box=$("#walletWatchDetectedKind");if(!form||!box)return;const raw=String(form.elements.value?.value||""),kind=walletWatchDetectMonitorKind(form.elements.kind?.value||"address",raw);if(raw.trim()&&kind!==String(form.elements.kind?.value||"address")){form.elements.kind.value=kind;syncWalletWatchKindUi();}const label=kind==="xpub"?"XPUB / YPUB / ZPUB":kind==="descriptor"?"Output Descriptor":walletWatchLang("Bitcoin-Adresse","Bitcoin address");box.textContent=raw.trim()?`${walletWatchLang("Erkannt","Detected")}: ${label}`:"";box.className=`storage-note ${raw.trim()?"positive":""}`;}
-function walletWatchSourceTestMessage(probe){const label=String(probe?.label||"Quelle"),route=probe?.route==="tor"?"Tor":walletWatchLang("Direkt","Direct"),endpoint=String(probe?.endpoint||"");let detail="";if(probe?.server_version){detail=Array.isArray(probe.server_version)?probe.server_version.join(" · "):String(probe.server_version);}else if(probe?.block_height!==undefined){detail=`Block ${probe.block_height}`;}return `${walletWatchLang("Verbindung erfolgreich","Connection successful")}: ${label} · ${route}${endpoint?` · ${endpoint}`:""}${detail?` · ${detail}`:""}`;}
-async function testWalletWatchSource({config=null,silent=false}={}){const button=$("#walletWatchSourceTest"),result=$("#walletWatchSourceTestResult"),cfg=config||walletWatchDraftConfig();if(button)button.disabled=true;if(result){result.textContent=walletWatchLang("Abfragequelle wird geprüft …","Testing query source …");result.className="result";}try{const probe=await api("api/wallet-watch/source-test",{method:"POST",body:JSON.stringify({entry_id:state.entryId,config:cfg}),timeoutMs:45000});if(result){result.textContent=walletWatchSourceTestMessage(probe);result.className="result positive";}if(!silent)toast(walletWatchLang("Sentinel-Abfragequelle erreichbar.","Sentinel query source is reachable."));return probe;}catch(error){const message=errorText(error);if(result){result.textContent=message;result.className="result negative";}if(!silent)toast(message);throw error;}finally{if(button)button.disabled=false;}}
+function walletWatchSourceTestMessage(probe,{unsaved=false}={}){const label=String(probe?.label||"Quelle"),route=probe?.route==="tor"?"Tor":walletWatchLang("Direkt","Direct"),endpoint=String(probe?.endpoint||"");let detail="";if(probe?.server_version){detail=Array.isArray(probe.server_version)?probe.server_version.join(" · "):String(probe.server_version);}else if(probe?.block_height!==undefined){detail=`Block ${probe.block_height}`;}const draft=unsaved?` · ${walletWatchLang("NOCH NICHT GESPEICHERT","NOT SAVED YET")}`:"";return `${walletWatchLang("Verbindung erfolgreich","Connection successful")}: ${label} · ${route}${endpoint?` · ${endpoint}`:""}${detail?` · ${detail}`:""}${draft}`;}
+async function testWalletWatchSource({config=null,silent=false}={}){const button=$("#walletWatchSourceTest"),result=$("#walletWatchSourceTestResult"),cfg=config||walletWatchDraftConfig();if(button)button.disabled=true;if(result){result.textContent=walletWatchLang("Abfragequelle wird geprüft …","Testing query source …");result.className="result";}try{const probe=await api("api/wallet-watch/source-test",{method:"POST",body:JSON.stringify({entry_id:state.entryId,config:cfg}),timeoutMs:45000});if(result){result.textContent=walletWatchSourceTestMessage(probe,{unsaved:Boolean(state.walletWatchSettingsDirty&&!config)});result.className=state.walletWatchSettingsDirty&&!config?"result warning":"result positive";}if(!silent)toast(walletWatchLang("Sentinel-Abfragequelle erreichbar.","Sentinel query source is reachable."));return probe;}catch(error){const message=errorText(error);if(result){result.textContent=message;result.className="result negative";}if(!silent)toast(message);throw error;}finally{if(button)button.disabled=false;}}
 async function saveWalletWatch(event){
   event?.preventDefault();if(!state.walletWatch)return;const cfg=walletWatchDraftConfig(),result=$("#walletWatchSaveResult"),button=$("#walletWatchSaveButton");if(button)button.disabled=true;if(result){result.textContent=walletWatchLang("Speichere Sats Sentinel …","Saving Sats Sentinel …");result.className="result";}
-  try{state.walletWatch=await api("api/wallet-watch",{method:"POST",body:JSON.stringify({entry_id:state.entryId,config:cfg}),timeoutMs:30000});state.walletWatchSettingsDirty=false;if(result){result.textContent=state.walletWatch.status?.scan_in_progress?walletWatchLang("Gespeichert. Adressscan läuft im Hintergrund …","Saved. Address scan is running in the background …"):walletWatchLang("Gespeichert. Abfragequelle wird jetzt geprüft …","Saved. Testing query source now …");result.className="result positive";}renderWalletWatch();try{const probe=await testWalletWatchSource({config:state.walletWatch.config,silent:true});if(result){result.textContent=`${walletWatchLang("Sats Sentinel gespeichert.","Sats Sentinel saved.")} ${walletWatchSourceTestMessage(probe)}`;result.className="result positive";}}catch(_probeError){if(result){result.textContent=walletWatchLang("Sats Sentinel wurde gespeichert, aber die Abfragequelle ist nicht erreichbar. Siehe Verbindungstest darunter.","Sats Sentinel was saved, but the query source is not reachable. See the connection test below.");result.className="result warning";}}}
+  try{const requestedHost=String(cfg.electrum_host||"").trim();state.walletWatch=await api("api/wallet-watch",{method:"POST",body:JSON.stringify({entry_id:state.entryId,config:cfg}),timeoutMs:30000});state.walletWatchSettingsDirty=false;const savedHost=String(state.walletWatch?.config?.electrum_host||"").trim();if(requestedHost&&savedHost!==requestedHost){throw new Error(walletWatchLang("Fulcrum/electrs-Host wurde vom Backend nicht dauerhaft übernommen.","Fulcrum/electrs host was not persisted by the backend."));}if(result){result.textContent=state.walletWatch.status?.scan_in_progress?walletWatchLang("Gespeichert. Adressscan läuft im Hintergrund …","Saved. Address scan is running in the background …"):walletWatchLang("Gespeichert. Abfragequelle wird jetzt geprüft …","Saved. Testing query source now …");result.className="result positive";}renderWalletWatch();try{const probe=await testWalletWatchSource({config:state.walletWatch.config,silent:true});if(result){result.textContent=`${walletWatchLang("Sats Sentinel gespeichert.","Sats Sentinel saved.")} ${walletWatchSourceTestMessage(probe)}`;result.className="result positive";}}catch(_probeError){if(result){result.textContent=walletWatchLang("Sats Sentinel wurde gespeichert, aber die Abfragequelle ist nicht erreichbar. Siehe Verbindungstest darunter.","Sats Sentinel was saved, but the query source is not reachable. See the connection test below.");result.className="result warning";}}}
   catch(error){const message=errorText(error);if(result){result.textContent=message;result.className="result negative";}toast(message);}finally{if(button)button.disabled=false;}
 }
 async function pollWalletWatch(){const button=$("#walletWatchPoll");if(button)button.disabled=true;try{const status=await api("api/wallet-watch/poll",{method:"POST",body:JSON.stringify({entry_id:state.entryId}),timeoutMs:180000});if(state.walletWatch)state.walletWatch.status=status;renderWalletWatch();toast(walletWatchLang("Sats Sentinel geprüft.","Sats Sentinel checked."));}catch(error){toast(errorText(error));}finally{if(button)button.disabled=false;}}
 async function removeWalletWatchMonitor(id){
-  if(!state.walletWatch)return;const current=(walletWatchConfig().monitors||[]).find(item=>item.id===id);if(!current)return;const label=state.discreet?walletWatchLang("diese Wallet","this wallet"):(current.label||current.id);const ok=window.confirm(walletWatchLang(`„${label}“ wirklich entfernen? Die zugehörige Sentinel-Journal-Historie wird dauerhaft aus dem verschlüsselten Cache gelöscht.`,`Really remove “${label}”? Its Sats Sentinel journal history will be permanently deleted from the encrypted cache.`));if(!ok)return;
+  if(!state.walletWatch)return;const current=(walletWatchConfig().monitors||[]).find(item=>item.id===id)||walletWatchDisplayMonitors().find(item=>item.id===id);if(!current)return;const label=state.discreet?walletWatchLang("diese Wallet","this wallet"):(current.label||current.id);const ok=window.confirm(walletWatchLang(`„${label}“ wirklich entfernen? Die zugehörige Sentinel-Journal-Historie wird dauerhaft aus dem verschlüsselten Cache gelöscht.`,`Really remove “${label}”? Its Sats Sentinel journal history will be permanently deleted from the encrypted cache.`));if(!ok)return;
   if(current._pending_save){state.walletWatch.config.monitors=(state.walletWatch.config.monitors||[]).filter(item=>item.id!==id);delete state.walletWatchTxOverviews[id];renderWalletWatch();toast(walletWatchLang("Noch nicht gespeicherten Watch-Eintrag entfernt.","Removed unsaved watch entry."));return;}
   const previous=state.walletWatch;try{const response=await api("api/wallet-watch/remove-monitor",{method:"POST",body:JSON.stringify({entry_id:state.entryId,monitor_id:id}),timeoutMs:30000});state.walletWatch={config:response.config,status:response.status,notify_services:response.notify_services||previous.notify_services||[],activity_log:response.activity_log||previous.activity_log};delete state.walletWatchTxOverviews[id];state.walletWatchOpenTxDetails.delete(id);resetWalletWatchMonitorForm();renderWalletWatch();await loadWalletWatchActivity(1);const purged=Number(response?.status?.purged_activity_count||0);toast(walletWatchLang(`Watch-Eintrag entfernt · ${purged} Journal-Eintrag${purged===1?"":"e"} dauerhaft gelöscht.`,`Watch entry removed · ${purged} journal entr${purged===1?"y":"ies"} permanently deleted.`));}
   catch(error){state.walletWatch=previous;renderWalletWatch();toast(errorText(error));}
 }
 async function addWalletWatchMonitor(event){
-  event.preventDefault();if(!state.walletWatch)return;const form=event.currentTarget,fd=new FormData(form),rawValue=String(fd.get("value")||"").trim(),kind=walletWatchDetectMonitorKind(fd.get("kind"),rawValue),value=walletWatchCanonicalMonitorValue(kind,rawValue),result=$("#walletWatchMonitorSaveResult"),button=$("#walletWatchMonitorSubmit");if(!value){toast(walletWatchLang("Adresse/XPUB/Descriptor fehlt.","Address/XPUB/descriptor is missing."));return;}
-  const cfg=walletWatchConfig(),editId=String(fd.get("edit_id")||""),unit=String(fd.get("min_notify_unit")||"sats"),rawAmount=Math.max(0,Number(fd.get("min_notify_amount")||0)),minNotifySats=Math.round(unit==="btc"?rawAmount*SATsFix():rawAmount);cfg.monitors=cfg.monitors||[];const existing=editId?cfg.monitors.find(item=>item.id===editId):null,id=existing?.id||`watch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;const monitor={id,label:String(fd.get("label")||"").trim()||existing?.label||`Wallet ${cfg.monitors.length+1}`,category:String(fd.get("category")||"other"),note:String(fd.get("note")||"").trim(),kind,value,enabled:existing?.enabled!==false,receive_count:kind==="address"?0:Number(fd.get("receive_count")||2),change_count:kind==="address"?0:Number(fd.get("change_count")||2),history_limit:[0,5,10,25,50,100].includes(Number(fd.get("history_limit")))?Number(fd.get("history_limit")):10,created_at:existing?.created_at||new Date().toISOString(),min_notify_sats:minNotifySats,notify_incoming:form.elements.notify_incoming.checked,notify_outgoing:form.elements.notify_outgoing.checked,notify_ha_event:form.elements.notify_ha_event.checked,notify_persistent:form.elements.notify_persistent.checked,notify_services:form.elements.notify_services.checked,notify_external:form.elements.notify_external.checked};
+  event.preventDefault();if(!state.walletWatch)return;const form=event.currentTarget,fd=new FormData(form),rawValue=String(fd.get("value")||"").trim(),editId=String(fd.get("edit_id")||""),existingDisplay=editId?walletWatchDisplayMonitors().find(item=>String(item.id||"")===editId):null,requestedKind=String(fd.get("kind")||existingDisplay?.kind||"address"),kind=walletWatchDetectMonitorKind(requestedKind,rawValue),value=walletWatchCanonicalMonitorValue(kind,rawValue),result=$("#walletWatchMonitorSaveResult"),button=$("#walletWatchMonitorSubmit");if(!value&&!editId){toast(walletWatchLang("Adresse/XPUB/Descriptor fehlt.","Address/XPUB/descriptor is missing."));return;}
+  const cfg=walletWatchConfig(),unit=String(fd.get("min_notify_unit")||"sats"),rawAmount=Math.max(0,Number(fd.get("min_notify_amount")||0)),minNotifySats=Math.round(unit==="btc"?rawAmount*SATsFix():rawAmount);cfg.monitors=cfg.monitors||[];const existing=editId?(cfg.monitors.find(item=>item.id===editId)||existingDisplay):null,id=existing?.id||`watch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;const monitor={id,label:String(fd.get("label")||"").trim()||existing?.label||`Wallet ${cfg.monitors.length+1}`,category:String(fd.get("category")||"other"),note:String(fd.get("note")||"").trim(),kind,value,enabled:existing?.enabled!==false,receive_count:kind==="address"?0:Number(fd.get("receive_count")||20),change_count:kind==="address"?0:Number(fd.get("change_count")||20),address_type:kind==="xpub"?String(fd.get("address_type")||existing?.address_type||"auto"):"auto",history_limit:[0,5,10,25,50,100].includes(Number(fd.get("history_limit")))?Number(fd.get("history_limit")):10,created_at:existing?.created_at||new Date().toISOString(),min_notify_sats:minNotifySats,notification_detail:String(fd.get("notification_detail")||existing?.notification_detail||cfg.notification_detail||"discreet"),notify_incoming:form.elements.notify_incoming.checked,notify_outgoing:form.elements.notify_outgoing.checked,notify_ha_event:form.elements.notify_ha_event.checked,notify_persistent:form.elements.notify_persistent.checked,notify_services:form.elements.notify_services.checked,notify_external:form.elements.notify_external.checked};
   if(button)button.disabled=true;if(result){result.textContent=walletWatchLang("Watch-Eintrag wird verschlüsselt gespeichert …","Saving watch entry encrypted …");result.className="result";}
   try{
     // A user commonly enters/changes the Fulcrum endpoint and then immediately
@@ -4773,12 +5121,12 @@ async function addWalletWatchMonitor(event){
 }
 function addWalletWatchNotificationTarget(event){
   event.preventDefault();if(!state.walletWatch)return;const form=event.currentTarget,fd=new FormData(form),url=String(fd.get("url")||"").trim();if(!url){toast(walletWatchLang("Ziel-URL fehlt.","Target URL is missing."));return;}
-  const cfg=walletWatchConfig(),kind=String(fd.get("kind")||"ntfy"),id=`notify_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;cfg.notification_targets=cfg.notification_targets||[];cfg.notification_targets.push({id,label:String(fd.get("label")||"").trim()||(kind==="ntfy"?"ntfy":"Webhook"),kind,url,token:String(fd.get("token")||"").trim(),enabled:true,detail:String(fd.get("detail")||"inherit"),verify_ssl:Boolean(form.elements.verify_ssl.checked)});state.walletWatch.config=cfg;form.reset();form.elements.kind.value="ntfy";form.elements.detail.value="inherit";form.elements.verify_ssl.checked=true;renderWalletWatch();toast(walletWatchLang("Benachrichtigungsziel hinzugefügt – noch speichern.","Notification target added – save to activate."));
+  const cfg=walletWatchConfig(),kind=String(fd.get("kind")||"ntfy"),id=`notify_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;cfg.notification_targets=cfg.notification_targets||[];cfg.notification_targets.push({id,label:String(fd.get("label")||"").trim()||(kind==="ntfy"?"ntfy":"Webhook"),kind,url,token:String(fd.get("token")||"").trim(),enabled:true,detail:"inherit",verify_ssl:Boolean(form.elements.verify_ssl.checked)});state.walletWatch.config=cfg;form.reset();form.elements.kind.value="ntfy";form.elements.verify_ssl.checked=true;renderWalletWatch();toast(walletWatchLang("Benachrichtigungsziel hinzugefügt – noch speichern.","Notification target added – save to activate."));
 }
 async function testWalletWatchNotifications(){const button=$("#walletWatchNotifyTest");if(button)button.disabled=true;try{const result=await api("api/wallet-watch/notify-test",{method:"POST",body:JSON.stringify({entry_id:state.entryId}),timeoutMs:180000});if(result.ok){toast(walletWatchLang(`Test an ${result.delivered?.length||0} Ziel(e) gesendet.`,`Test sent to ${result.delivered?.length||0} target(s).`));}else{toast((result.errors||[]).join(" · ")||walletWatchLang("Benachrichtigungstest teilweise fehlgeschlagen.","Notification test partially failed."));}if(state.walletWatch)state.walletWatch.status={...state.walletWatch.status,last_notification_error:result.ok?null:(result.errors||[])[0]||"Fehler"};renderWalletWatch();}catch(error){toast(errorText(error));}finally{if(button)button.disabled=false;}}
 async function simulateWalletWatchActivity(event){event?.preventDefault();const form=$("#walletWatchSimulateForm"),button=$("#walletWatchSimulateButton"),resultBox=$("#walletWatchSimulateResult");if(!form)return;if(button)button.disabled=true;if(resultBox){resultBox.textContent=walletWatchLang("Simulation wird ausgelöst …","Starting simulation …");resultBox.className="result";}try{const payload={entry_id:state.entryId,monitor_id:String(form.elements.monitor_id?.value||""),direction:String(form.elements.direction?.value||"outgoing"),amount_sats:Number(form.elements.amount_sats?.value||100000),confirmed:Boolean(form.elements.confirmed?.checked),rbf:Boolean(form.elements.rbf?.checked)};const result=await api("api/wallet-watch/simulate",{method:"POST",body:JSON.stringify(payload),timeoutMs:180000});if(resultBox){resultBox.textContent=walletWatchLang(`TEST-Bewegung ausgelöst: ${result.direction==="outgoing"?"Ausgang":"Eingang"} · ${fmtNumber(result.amount_sats||0,0)} sats`,`TEST movement triggered: ${result.direction} · ${fmtNumber(result.amount_sats||0,0)} sats`);resultBox.className="result positive";}toast(walletWatchLang("Sats-Sentinel-Testbewegung ausgelöst.","Sats Sentinel test movement triggered."));}catch(error){if(resultBox){resultBox.textContent=errorText(error);resultBox.className="result negative";}else toast(errorText(error));}finally{if(button)button.disabled=false;}}
 async function liveTestWalletWatchTransaction(event){event?.preventDefault();const form=$("#walletWatchLiveTestForm"),button=$("#walletWatchLiveTestButton"),resultBox=$("#walletWatchLiveTestResult");if(!form)return;if(button)button.disabled=true;if(resultBox){resultBox.textContent=walletWatchLang("Mempool-Transaktion wird über die erlaubte Route geprüft …","Checking transaction through the allowed route …");resultBox.className="result";}try{const payload={entry_id:state.entryId,txid:String(form.elements.txid?.value||"").trim(),direction:String(form.elements.direction?.value||"outgoing")};const result=await api("api/wallet-watch/live-test",{method:"POST",body:JSON.stringify(payload),timeoutMs:180000});if(resultBox){resultBox.textContent=walletWatchLang(`Live-TEST ausgelöst: ${result.direction==="outgoing"?"Ausgang":"Eingang"} · ${fmtNumber(result.amount_sats||0,0)} sats · ${result.confirmed?"bestätigt":"unbestätigt"}`,`Live TEST triggered: ${result.direction} · ${fmtNumber(result.amount_sats||0,0)} sats · ${result.confirmed?"confirmed":"unconfirmed"}`);resultBox.className="result positive";}toast(walletWatchLang("Live-Mempool-Test ausgelöst.","Live mempool test triggered."));}catch(error){if(resultBox){resultBox.textContent=errorText(error);resultBox.className="result negative";}else toast(errorText(error));}finally{if(button)button.disabled=false;}}
-const wwSettings=$("#walletWatchSettingsForm"),wwAdd=$("#walletWatchAddForm"),wwNotifyAdd=$("#walletWatchNotifyTargetForm"),wwPoll=$("#walletWatchPoll"),wwSourceTest=$("#walletWatchSourceTest"),wwNotifyTest=$("#walletWatchNotifyTest"),wwSimulate=$("#walletWatchSimulateForm"),wwLiveTest=$("#walletWatchLiveTestForm"),wwLogMode=$("#walletWatchLogMode"),wwQuerySource=$("#walletWatchQuerySource"),wwActivityCategory=$("#walletWatchActivityCategory"),wwActivityPageSize=$("#walletWatchActivityPageSize"),wwActivityCounterparties=$("#walletWatchActivityCounterparties"),wwActivityRefresh=$("#walletWatchActivityRefresh"),wwMonitorCancel=$("#walletWatchMonitorCancel");if(wwSettings){wwSettings.onsubmit=saveWalletWatch;const markWalletWatchSettingsDirty=()=>{state.walletWatchSettingsDirty=true;};wwSettings.addEventListener("input",markWalletWatchSettingsDirty);wwSettings.addEventListener("change",markWalletWatchSettingsDirty);}if(wwSourceTest)wwSourceTest.onclick=()=>{void testWalletWatchSource();};if(wwQuerySource)wwQuerySource.onchange=()=>{state.walletWatchSettingsDirty=true;syncWalletWatchSourceUi();};if(wwAdd){wwAdd.onsubmit=addWalletWatchMonitor;wwAdd.elements.kind.onchange=()=>{syncWalletWatchKindUi();syncWalletWatchDetectedKind();};wwAdd.elements.value?.addEventListener("input",syncWalletWatchDetectedKind);wwAdd.elements.value?.addEventListener("paste",()=>setTimeout(syncWalletWatchDetectedKind,0));}if(wwNotifyAdd)wwNotifyAdd.onsubmit=addWalletWatchNotificationTarget;if(wwPoll)wwPoll.onclick=pollWalletWatch;if(wwNotifyTest)wwNotifyTest.onclick=testWalletWatchNotifications;if(wwSimulate)wwSimulate.onsubmit=simulateWalletWatchActivity;if(wwLiveTest)wwLiveTest.onsubmit=liveTestWalletWatchTransaction;if(wwLogMode)wwLogMode.onchange=syncWalletWatchLogModeUi;if(wwActivityCategory)wwActivityCategory.onchange=()=>{state.walletWatchActivityCategory=wwActivityCategory.value||"all";state.walletWatchActivityPage=1;void loadWalletWatchActivity(1);};if(wwActivityPageSize)wwActivityPageSize.onchange=()=>{const v=Number(wwActivityPageSize.value||10);state.walletWatchActivityPageSize=[10,15,20,25].includes(v)?v:10;localStorage.setItem("bst_wallet_watch_page_size",String(state.walletWatchActivityPageSize));state.walletWatchActivityPage=1;void loadWalletWatchActivity(1);};if(wwActivityCounterparties)wwActivityCounterparties.onchange=()=>{state.walletWatchActivityCounterparties=Number(wwActivityCounterparties.value||3);renderWalletWatchActivity();};if(wwActivityRefresh)wwActivityRefresh.onclick=()=>loadWalletWatchActivity(state.walletWatchActivityPage||1);if(wwMonitorCancel)wwMonitorCancel.onclick=resetWalletWatchMonitorForm;
+const wwSettings=$("#walletWatchSettingsForm"),wwAdd=$("#walletWatchAddForm"),wwCollapseAll=$("#walletWatchCollapseAll"),wwNotifyAdd=$("#walletWatchNotifyTargetForm"),wwPoll=$("#walletWatchPoll"),wwSourceTest=$("#walletWatchSourceTest"),wwNotifyTest=$("#walletWatchNotifyTest"),wwSimulate=$("#walletWatchSimulateForm"),wwLiveTest=$("#walletWatchLiveTestForm"),wwLogMode=$("#walletWatchLogMode"),wwQuerySource=$("#walletWatchQuerySource"),wwLockedDisplay=$("#walletWatchShowWhenLocked"),wwActivityCategory=$("#walletWatchActivityCategory"),wwActivityPageSize=$("#walletWatchActivityPageSize"),wwActivityCounterparties=$("#walletWatchActivityCounterparties"),wwActivityRefresh=$("#walletWatchActivityRefresh"),wwMonitorCancel=$("#walletWatchMonitorCancel"),wwQrScan=$("#walletWatchQrScan");if(wwCollapseAll)wwCollapseAll.onclick=()=>{const monitors=walletWatchDisplayMonitors();for(const mon of monitors)setWalletWatchMonitorCollapsed(mon.id,true);renderWalletWatch();};if(wwSettings){wwSettings.onsubmit=saveWalletWatch;const markWalletWatchSettingsDirty=event=>{if(event?.target?.id==="walletWatchShowWhenLocked")return;state.walletWatchSettingsDirty=true;};wwSettings.addEventListener("input",markWalletWatchSettingsDirty);wwSettings.addEventListener("change",markWalletWatchSettingsDirty);}if(wwSourceTest)wwSourceTest.onclick=()=>{void testWalletWatchSource();};if(wwQuerySource)wwQuerySource.onchange=()=>{state.walletWatchSettingsDirty=true;syncWalletWatchSourceUi();};if(wwLockedDisplay)wwLockedDisplay.onchange=()=>setWalletWatchShowWhenLocked(wwLockedDisplay.checked);if(wwAdd){wwAdd.onsubmit=addWalletWatchMonitor;wwAdd.elements.kind.onchange=()=>{syncWalletWatchKindUi();syncWalletWatchDetectedKind();};wwAdd.elements.value?.addEventListener("input",syncWalletWatchDetectedKind);wwAdd.elements.value?.addEventListener("paste",()=>setTimeout(syncWalletWatchDetectedKind,0));}if(wwNotifyAdd)wwNotifyAdd.onsubmit=addWalletWatchNotificationTarget;if(wwPoll)wwPoll.onclick=pollWalletWatch;if(wwNotifyTest)wwNotifyTest.onclick=testWalletWatchNotifications;if(wwSimulate)wwSimulate.onsubmit=simulateWalletWatchActivity;if(wwLiveTest)wwLiveTest.onsubmit=liveTestWalletWatchTransaction;if(wwLogMode)wwLogMode.onchange=syncWalletWatchLogModeUi;if(wwActivityCategory)wwActivityCategory.onchange=()=>{state.walletWatchActivityCategory=wwActivityCategory.value||"all";state.walletWatchActivityPage=1;void loadWalletWatchActivity(1);};if(wwActivityPageSize)wwActivityPageSize.onchange=()=>{const v=Number(wwActivityPageSize.value||10);state.walletWatchActivityPageSize=[10,15,20,25].includes(v)?v:10;localStorage.setItem("bst_wallet_watch_page_size",String(state.walletWatchActivityPageSize));state.walletWatchActivityPage=1;void loadWalletWatchActivity(1);};if(wwActivityCounterparties)wwActivityCounterparties.onchange=()=>{state.walletWatchActivityCounterparties=Number(wwActivityCounterparties.value||3);renderWalletWatchActivity();};if(wwActivityRefresh)wwActivityRefresh.onclick=()=>loadWalletWatchActivity(state.walletWatchActivityPage||1);if(wwMonitorCancel)wwMonitorCancel.onclick=resetWalletWatchMonitorForm;if(wwQrScan)wwQrScan.onclick=()=>{void startWalletWatchQrScanner();};document.addEventListener("keydown",event=>{if(event.key==="Escape"&&walletWatchQrActive)stopWalletWatchQrScanner();});
 
 state.lastActivityAt=Date.now();localStorage.setItem("bst_last_activity_at",String(state.lastActivityAt));
 console.info(`Bitcoin Stack Tracker dashboard ${BUILD_VERSION}`);
