@@ -123,7 +123,6 @@ async def _fetch_bitstamp_5m_page(
                         "Accept": "application/json",
                         "User-Agent": "BitcoinStackTracker/0.21",
                     },
-                    allow_redirects=False,
                     **request_kwargs,
                 )
                 if response.status in {301, 302, 303, 307, 308}:
