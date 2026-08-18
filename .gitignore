@@ -1,0 +1,16 @@
+# Python build/test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments and tooling
+.venv/
+venv/
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
