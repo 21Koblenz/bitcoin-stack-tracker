@@ -1,0 +1,143 @@
+name: Apply agent Sentinel market fixes
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-apply-sentinel-market-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 0
+
+      - name: Apply deterministic fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_one(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one match in {path}, got {count}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          app = "custom_components/bitcoin_stack_tracker/frontend/static/app.js"
+          init = "custom_components/bitcoin_stack_tracker/__init__.py"
+          css = "custom_components/bitcoin_stack_tracker/frontend/static/style.css"
+          index = "custom_components/bitcoin_stack_tracker/frontend/index.html"
+          const = "custom_components/bitcoin_stack_tracker/const.py"
+          market_test = "tests/test_market_assessment_ui.py"
+          cache = "custom_components/bitcoin_stack_tracker/market_assessment_intraday_cache.py"
+
+          # Dedicated market-assessment history must include the persisted
+          # intraday observations instead of rendering only daily points.
+          replace_one(
+              app,
+              'const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload),points=smoothMarketAssessmentPoints(rawPoints);',
+              'const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true}),points=smoothMarketAssessmentPoints(rawPoints);',
+          )
+
+          # A new five-minute model snapshot is a history change even when the
+          # daily BTC history revision did not change. Force only the cheap
+          # local history endpoint to refresh; the expensive historical model
+          # remains backed by its persistent backend cache.
+          replace_one(
+              app,
+              '    const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();\n',
+              '    const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();\n    const previousAssessmentCalculatedAt=String(state.data?.buy_opportunity_calculated_at||"");\n',
+          )
+          replace_one(
+              app,
+              '    const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;\n',
+              '    const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;\n    const assessmentAdvanced=Boolean(result?.calculated_at&&String(result.calculated_at)!==previousAssessmentCalculatedAt);\n',
+          )
+          replace_one(
+              app,
+              '      if(historyRevisionChanged)void loadMarketAssessmentHistory();',
+              '      if(historyRevisionChanged||assessmentAdvanced)void loadMarketAssessmentHistory({force:true});',
+          )
+          replace_one(
+              app,
+              '      if(historyRevisionChanged)void ensureChartMarketAssessmentHistory();',
+              '      if(historyRevisionChanged||assessmentAdvanced)void ensureChartMarketAssessmentHistory({force:true});',
+          )
+
+          # The server endpoints already enforce Owner access. Do not suppress
+          # the locked-vault Sentinel client before that authoritative check can
+          # run, because locked dashboard data may intentionally omit owner UI
+          # metadata.
+          replace_one(
+              app,
+              '    const showLockedSentinel=Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked();',
+              '    const showLockedSentinel=walletWatchShowWhenLocked();',
+          )
+          replace_one(
+              app,
+              '  if(!state.entryId||!state.data?.security?.owner)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});',
+              '  if(!state.entryId||!state.data?.locked)return false;\n  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});',
+          )
+          replace_one(
+              app,
+              '  if(!state.data?.locked||!state.data?.security?.owner||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}',
+              '  if(!state.data?.locked||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}',
+          )
+
+          # Serve the full 90-day five-minute tail to the 90-day range.
+          replace_one(init, '                "90d": 31,', '                "90d": 91,')
+
+          # Keep Store's external format version stable: the v1 hourly rows are
+          # shape-compatible and are migrated/deduplicated by the cache itself.
+          replace_one(cache, '_STORAGE_VERSION = 2', '_STORAGE_VERSION = 1')
+
+          # Make desktop behavior explicit as well as mobile: monitored address
+          # lists are real accordions and stay closed until the summary is used.
+          p = Path(css)
+          text = p.read_text(encoding="utf-8")
+          marker = '/* rc15: monitored addresses are explicit accordions on desktop and mobile */'
+          if marker not in text:
+              text += f'''\n\n{marker}\n.sats-sentinel-monitored-addresses>summary{{cursor:pointer;user-select:none}}\n.sats-sentinel-monitored-addresses:not([open])>.sats-sentinel-address-list{{display:none!important}}\n'''
+              p.write_text(text, encoding="utf-8")
+
+          # Cache-bust the panel assets without inventing a release version on
+          # this review branch.
+          replace_one(const, 'FRONTEND_CACHE_REVISION = "4"', 'FRONTEND_CACHE_REVISION = "5"')
+          replace_one(index, 'static/style.css?v=0.21.0.13&r=4', 'static/style.css?v=0.21.0.13&r=5')
+          replace_one(index, 'static/app.js?v=0.21.0.13&r=4', 'static/app.js?v=0.21.0.13&r=5')
+
+          # Existing test had the old one-minute UI polling value although the
+          # shared backend cache has intentionally been five minutes for CPU
+          # efficiency.
+          replace_one(market_test, '    assert "},60000);" in app', '    assert "},300000);" in app')
+
+          # Self-remove: this one-shot patch workflow must not ship.
+          Path('.github/workflows/agent-apply-sentinel-market-fixes.yml').unlink()
+
+      - name: Run focused tests
+        run: |
+          python -m pip install --disable-pip-version-check --no-input pytest
+          python -m compileall -q custom_components/bitcoin_stack_tracker
+          python -m pytest -q tests/test_market_assessment_ui.py tests/test_release_features.py
+
+      - name: Commit patched files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Fix Sentinel locked view and five-minute market history"
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
