@@ -26,6 +26,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
           path = Path('.github/workflows/agent-xpub-backfill-labels.yml')
           lines = path.read_text(encoding='utf-8').splitlines()
           apply_index = next(i for i,line in enumerate(lines) if line.strip() == '- name: Apply fixes')
@@ -36,29 +37,32 @@ jobs:
               script_lines.append(line[10:] if line.startswith('          ') else line)
           source = '\n'.join(script_lines) + '\n'
 
-          # The branch's current resolver call already writes directly into the
-          # monitor dict. Apply that small caller change here and remove the older
-          # exact-string subsection from the prepared patch before executing it.
           wallet_path = Path('custom_components/bitcoin_stack_tracker/wallet_watch.py')
           wallet = wallet_path.read_text(encoding='utf-8')
-          old_call = '''            monitor["_resolved_address_type"] = await self._resolve_xpub_address_type(
-                          monitor, source, electrum_client=client
-                      )'''
-          new_call = '''            resolved_type, resolved_verified = await self._resolve_xpub_address_type(
-                          monitor, source, electrum_client=client
-                      )
-                      monitor["_resolved_address_type"] = resolved_type
-                      monitor["_resolved_address_type_verified"] = bool(resolved_verified)'''
-          if old_call not in wallet:
-              raise SystemExit('current xpub resolver caller not found')
-          wallet_path.write_text(wallet.replace(old_call, new_call, 1), encoding='utf-8')
+          caller_pattern = re.compile(
+              r'(?P<i>[ \t]+)monitor\["_resolved_address_type"\] = await self\._resolve_xpub_address_type\(\n'
+              r'(?P=i)    monitor, source, electrum_client=client\n(?P=i)\)'
+          )
+          def caller_repl(match):
+              i = match.group('i')
+              return (
+                  f'{i}resolved_type, resolved_verified = await self._resolve_xpub_address_type(\n'
+                  f'{i}    monitor, source, electrum_client=client\n'
+                  f'{i})\n'
+                  f'{i}monitor["_resolved_address_type"] = resolved_type\n'
+                  f'{i}monitor["_resolved_address_type_verified"] = bool(resolved_verified)'
+              )
+          wallet, changed = caller_pattern.subn(caller_repl, wallet, count=1)
+          if changed != 1:
+              raise SystemExit(f'current xpub resolver caller replacement count={changed}')
+          wallet_path.write_text(wallet, encoding='utf-8')
 
           caller_patch_start = source.find("old = '''                resolved_type = await self._resolve_xpub_address_type(")
-          caller_patch_end = source.find("old = '''            \\\"resolved_address_type\\\": (", caller_patch_start)
+          caller_patch_end = source.find("old = '''            \"resolved_address_type\": (", caller_patch_start)
           if caller_patch_start >= 0 and caller_patch_end > caller_patch_start:
               source = source[:caller_patch_start] + source[caller_patch_end:]
           else:
-              raise SystemExit('prepared caller subsection not found')
+              raise SystemExit(f'prepared caller subsection not found start={caller_patch_start} end={caller_patch_end}')
 
           exec(compile(source, str(path) + ':Apply fixes', 'exec'), {'__name__': '__main__'})
 
