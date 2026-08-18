@@ -1,0 +1,23 @@
+/* Focused runtime UI fixes. Keep this file small and removable after the
+   corresponding rules are folded into the modular frontend. */
+.sats-sentinel-monitored-addresses > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sats-sentinel-monitored-addresses:not([open]) > .sats-sentinel-address-list {
+  display: none !important;
+}
+
+@media (min-width: 761px) {
+  .sats-sentinel-monitored-addresses {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .sats-sentinel-monitored-addresses > summary {
+    display: block;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
