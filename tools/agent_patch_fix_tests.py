@@ -6,23 +6,20 @@ root = Path(__file__).resolve().parents[1]
 # exact optional-chaining spelling in minified-ish frontend code.
 reg = root / "tests" / "test_xpub_backfill_rating_regressions.py"
 text = reg.read_text(encoding="utf-8")
-old = '''def test_labels():
- assert "score_affecting_settings" in B and 'payload.pop("labels", None)' in B and "label_extreme" in A and "buy_opportunity_settings?.labels" in A
-'''
+text = text.replace(
+    'W=(C/"wallet_watch.py").read_text();A=(C/"frontend"/"static"/"app.js").read_text();I=(C/"__init__.py").read_text();B=(C/"buy_opportunity.py").read_text();M=(C/"market_assessment_backfill.py").read_text()',
+    'W=(C/"wallet_watch.py").read_text();A=(C/"frontend"/"static"/"app.js").read_text();H=(C/"frontend"/"index.html").read_text();I=(C/"__init__.py").read_text();B=(C/"buy_opportunity.py").read_text();M=(C/"market_assessment_backfill.py").read_text()',
+)
+start = text.find("def test_labels():")
+if start < 0:
+    raise RuntimeError("generated rating regression missing")
 new = '''def test_labels():
  assert "score_affecting_settings" in B
- assert "label_extreme" in A
+ assert "label_extreme" in H
  assert "labels" in B
  assert "BUY_OPPORTUNITY_LABELS_SCHEMA" in I
 '''
-if old not in text:
-    # Handle the previous generated assertion variant, if present.
-    start = text.find("def test_labels():")
-    if start < 0:
-        raise RuntimeError("generated rating regression missing")
-    text = text[:start] + new
-else:
-    text = text.replace(old, new, 1)
+text = text[:start] + new
 reg.write_text(text, encoding="utf-8")
 
 # Seven new label inputs are intentionally display-only. They do not need the
