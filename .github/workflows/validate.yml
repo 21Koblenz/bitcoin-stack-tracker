@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           python -m compileall -q custom_components/bitcoin_stack_tracker
           node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
-          node --check custom_components/bitcoin_stack_tracker/frontend/static/panel.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
           pytest -q tests/test_xpub_backfill_rating_regressions.py tests/test_sentinel_market_regressions.py tests/test_market_assessment_ui.py tests/test_chart_independent_scales.py tests/test_release_features.py
       - name: Commit final patch and restore normal validation
         shell: bash
