@@ -26,7 +26,9 @@ jobs:
       - name: Install test runner
         run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
       - name: Apply fixes
-        run: python tools/agent_apply_current_fixes.py
+        run: |
+          python tools/agent_apply_current_fixes.py
+          python tools/agent_patch_fix_tests.py
       - name: Validate patched source
         shell: bash
         run: |
@@ -40,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           git checkout 79c1ac84f6d7dd0430a69f1e2dfdd96aa3922b3d -- .github/workflows/validate.yml
-          rm -f .github/workflows/agent-xpub-backfill-labels.yml tools/agent_apply_current_fixes.py
+          rm -f .github/workflows/agent-xpub-backfill-labels.yml tools/agent_apply_current_fixes.py tools/agent_patch_fix_tests.py
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
