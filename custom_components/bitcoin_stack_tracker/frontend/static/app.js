@@ -244,7 +244,7 @@ const I18N = {
   de: {
     overview:"Übersicht",ledger:"Buchungen",structure:"Depots & Ziele",tax:"Haltezeit",settings:"Export & Daten",security:"Zugriff & Verschlüsselung",logs:"App-Log",
     longTerm:"Langzeit",shortTerm:"Kurzzeit",unknown:"Ungeklärt",mixed:"Gemischt",nextMilestone:"Nächstes Ziel",dailyHistory:"Tageswerte",chartTitle:"Verlauf",
-    chartView:"Ansicht",chartLegend:"Chart-Legende",leftAxis:"Linke Skala",rightAxis:"Rechte Skala",chartCurrency:"Chartwährung",btcPrice:"Bitcoin-Kurs",portfolioValue:"Portfoliowert",stackHistory:"Stack-Verlauf",profitLossHistory:"Gesamtgewinn/-verlust",pricePortfolioOverlay:"Kurs + Portfoliowert",priceStackOverlay:"Kurs + Stack",priceMarketAssessmentOverlay:"Kurs + Markteinschätzung",priceProfitLossOverlay:"Kurs + Gesamtgewinn/-verlust",portfolioProfitLossOverlay:"Portfoliowert + Gesamtgewinn/-verlust",costProfitLossOverlay:"Einstand + Buchgewinn/-verlust",openCostBasis:"Offener Einstand",unrealizedProfitLoss:"Buchgewinn/-verlust",period:"Zeitraum",allData:"Alle Daten",yearToDate:"Jahresanfang",weekToDate:"Seit Wochenbeginn",oneWeek:"1 Woche",monthToDate:"Seit Monatsbeginn",firstPurchaseRange:"Seit erstem Kauf",maxRange:"Max",scale:"Skala",linear:"Linear",logarithmic:"Logarithmisch",logUnavailable:"Für Gewinn-/Verlust-Ansichten ist nur die lineare Skala möglich.",marketScoreLinearOnly:"Die Markteinschätzung verwendet immer die feste lineare Skala 0–100.",overlayOpacity:"Overlay-Transparenz",today:"Heute",performance:"Performance im gewählten Zeitraum",performanceNote:"Portfoliowert wird cashflow-bereinigt: Käufe, Einnahmen, Verkäufe, Stack-Zugänge und Ausgaben werden als externe Cashflows neutralisiert; Transaktionsgebühren bleiben echte Performancekosten. Buchgewinn/-verlust bezieht sich auf den offenen Einstand. Gesamtgewinn/-verlust ist realisiert plus unrealisiert.",periodStart:"Start",periodEnd:"Ende",absoluteChange:"Absolut",percentageChange:"Prozent",bitcoinPerformance:"Bitcoin-Kurs",portfolioPerformance:"Portfoliowert",stackPerformance:"BTC-Stack",bookProfitLossPerformance:"Buchgewinn/-verlust",realizedProfitLossPerformance:"Realisierter Gewinn/Verlust",profitLossPerformance:"Gesamtgewinn/-verlust",comparisonUnavailable:"Für diesen Zeitraum sind noch nicht genug Werte vorhanden.",
+    chartView:"Ansicht",chartLegend:"Chart-Legende",leftAxis:"Linke Skala",rightAxis:"Rechte Skala",chartCurrency:"Chartwährung",btcPrice:"Bitcoin-Kurs",portfolioValue:"Portfoliowert",stackHistory:"Stack-Verlauf",profitLossHistory:"Gesamtgewinn/-verlust",pricePortfolioOverlay:"Kurs + Portfoliowert",priceStackOverlay:"Kurs + Stack",priceMarketAssessmentOverlay:"Kurs + Markteinschätzung",priceProfitLossOverlay:"Kurs + Gesamtgewinn/-verlust",portfolioProfitLossOverlay:"Portfoliowert + Gesamtgewinn/-verlust",costProfitLossOverlay:"Einstand + Buchgewinn/-verlust",openCostBasis:"Offener Einstand",unrealizedProfitLoss:"Buchgewinn/-verlust",period:"Zeitraum",allData:"Alle Daten",yearToDate:"Jahresanfang",weekToDate:"Seit Wochenbeginn",oneWeek:"1 Woche",monthToDate:"Seit Monatsbeginn",firstPurchaseRange:"Seit erstem Kauf",maxRange:"Max",scale:"Skala",linear:"Linear",logarithmic:"Logarithmisch",symlogarithmic:"SymLog",logUnavailable:"Für diese Datenreihe ist keine logarithmische Skala verfügbar.",marketScoreLinearOnly:"Die Markteinschätzung verwendet immer die feste lineare Skala 0–100.",overlayOpacity:"Overlay-Transparenz",today:"Heute",performance:"Performance im gewählten Zeitraum",performanceNote:"Portfoliowert wird cashflow-bereinigt: Käufe, Einnahmen, Verkäufe, Stack-Zugänge und Ausgaben werden als externe Cashflows neutralisiert; Transaktionsgebühren bleiben echte Performancekosten. Buchgewinn/-verlust bezieht sich auf den offenen Einstand. Gesamtgewinn/-verlust ist realisiert plus unrealisiert.",periodStart:"Start",periodEnd:"Ende",absoluteChange:"Absolut",percentageChange:"Prozent",bitcoinPerformance:"Bitcoin-Kurs",portfolioPerformance:"Portfoliowert",stackPerformance:"BTC-Stack",bookProfitLossPerformance:"Buchgewinn/-verlust",realizedProfitLossPerformance:"Realisierter Gewinn/Verlust",profitLossPerformance:"Gesamtgewinn/-verlust",comparisonUnavailable:"Für diesen Zeitraum sind noch nicht genug Werte vorhanden.",
     milestones:"Meilensteine",newEntry:"Neue Buchung",type:"Art",depot:"Depot",amount:"Menge",unit:"Einheit",currency:"Fiatwährung",pricePerBtc:"Preis pro BTC",fee:"Gebühr",includedFee:"Enthaltene Handelsgebühr",includedFeeEstimated:"geschätzt · im Endpreis enthalten",dateTime:"Datum / Uhrzeit",note:"Notiz",saveEntry:"Buchung speichern",date:"Datum",price:"Preis",holding:"Haltezeit",
     depots:"Depots",totalDepot:"Gesamtdepot",allDepotsCombined:"Alle Depots zusammen",totalStack:"Gesamtstack",totalValue:"Gesamtwert",rangePerformance:"Zeitraum-Performance",stackChange:"Stack-Veränderung",selectedRange:"Gewählter Zeitraum",add:"Hinzufügen",goals:"Stacking-Ziele",name:"Name",target:"Ziel",addGoal:"Ziel hinzufügen",goalStorage:"Jedes Ziel erzeugt zusätzliche lokale Verlaufswerte. Mehr Ziele bedeuten mehr Speicherbedarf.",remaining:"Fehlt",current:"Aktuell",targetValue:"Zielwert",
     overviewOnly:"Nur Übersicht",holdingDisclaimer:"Konfigurierbare Haltezeit- und FIFO-Übersicht. Abhängig vom anwendbaren Recht können Coins nach der gewählten Frist anders behandelt werden. Keine Steuerberatung und keine Steuererklärung.",holdingRule:"Haltezeit-Regel",days:"Tage bis Langzeit",customNote:"Eigene Notiz",saveRule:"Regel speichern",currentClassification:"Aktuelle Einordnung",saleOverview:"FIFO-Abgänge",sale:"Verkauf",purchase:"Kauf",income:"Einnahme",network_fee:"Transaktionsgebühr",stackEntry:"Bestand ohne Einstand",network:"Netzwerk",onchain:"On-Chain",lightning:"Lightning",holdingDays:"Haltetage",classification:"Einordnung",gain:"Realisierter Gewinn/Verlust",status:"Status",nextLong:"Nächster Langzeit-Zugang",
@@ -258,7 +258,7 @@ const I18N = {
   en: {
     overview:"Overview",ledger:"Ledger",structure:"Depots & goals",tax:"Holding period",settings:"Export & data",security:"Access & encryption",logs:"App log",
     longTerm:"Long term",shortTerm:"Short term",unknown:"Unknown",mixed:"Mixed",nextMilestone:"Next goal",dailyHistory:"Daily values",chartTitle:"History",
-    chartView:"View",chartLegend:"Chart legend",leftAxis:"Left scale",rightAxis:"Right scale",chartCurrency:"Chart currency",btcPrice:"Bitcoin price",portfolioValue:"Portfolio value",stackHistory:"Stack history",profitLossHistory:"Total profit/loss",pricePortfolioOverlay:"Price + portfolio",priceStackOverlay:"Price + stack",priceMarketAssessmentOverlay:"Price + market assessment",priceProfitLossOverlay:"Price + total profit/loss",portfolioProfitLossOverlay:"Portfolio + total profit/loss",costProfitLossOverlay:"Cost basis + unrealized profit/loss",openCostBasis:"Open cost basis",unrealizedProfitLoss:"Unrealized profit/loss",period:"Range",allData:"All data",yearToDate:"Year to date",weekToDate:"Since week start",oneWeek:"1 week",monthToDate:"Since month start",firstPurchaseRange:"Since first purchase",maxRange:"Max",scale:"Scale",linear:"Linear",logarithmic:"Logarithmic",logUnavailable:"Profit/loss views support the linear scale only.",marketScoreLinearOnly:"Market assessment always uses the fixed linear 0–100 scale.",overlayOpacity:"Overlay opacity",today:"Today",performance:"Performance for selected range",performanceNote:"Portfolio performance is cash-flow adjusted: purchases, income, sales, stack additions and expenses are neutralized as external cash flows; transaction fees remain real performance costs. Unrealized profit/loss is measured against open cost basis. Total profit/loss is realized plus unrealized.",periodStart:"Start",periodEnd:"End",absoluteChange:"Absolute",percentageChange:"Percent",bitcoinPerformance:"Bitcoin price",portfolioPerformance:"Portfolio value",stackPerformance:"BTC stack",bookProfitLossPerformance:"Unrealized profit/loss",realizedProfitLossPerformance:"Realized profit/loss",profitLossPerformance:"Total profit/loss",comparisonUnavailable:"Not enough values are available for this range.",
+    chartView:"View",chartLegend:"Chart legend",leftAxis:"Left scale",rightAxis:"Right scale",chartCurrency:"Chart currency",btcPrice:"Bitcoin price",portfolioValue:"Portfolio value",stackHistory:"Stack history",profitLossHistory:"Total profit/loss",pricePortfolioOverlay:"Price + portfolio",priceStackOverlay:"Price + stack",priceMarketAssessmentOverlay:"Price + market assessment",priceProfitLossOverlay:"Price + total profit/loss",portfolioProfitLossOverlay:"Portfolio + total profit/loss",costProfitLossOverlay:"Cost basis + unrealized profit/loss",openCostBasis:"Open cost basis",unrealizedProfitLoss:"Unrealized profit/loss",period:"Range",allData:"All data",yearToDate:"Year to date",weekToDate:"Since week start",oneWeek:"1 week",monthToDate:"Since month start",firstPurchaseRange:"Since first purchase",maxRange:"Max",scale:"Scale",linear:"Linear",logarithmic:"Logarithmic",symlogarithmic:"SymLog",logUnavailable:"A logarithmic scale is unavailable for this series.",marketScoreLinearOnly:"Market assessment always uses the fixed linear 0–100 scale.",overlayOpacity:"Overlay opacity",today:"Today",performance:"Performance for selected range",performanceNote:"Portfolio performance is cash-flow adjusted: purchases, income, sales, stack additions and expenses are neutralized as external cash flows; transaction fees remain real performance costs. Unrealized profit/loss is measured against open cost basis. Total profit/loss is realized plus unrealized.",periodStart:"Start",periodEnd:"End",absoluteChange:"Absolute",percentageChange:"Percent",bitcoinPerformance:"Bitcoin price",portfolioPerformance:"Portfolio value",stackPerformance:"BTC stack",bookProfitLossPerformance:"Unrealized profit/loss",realizedProfitLossPerformance:"Realized profit/loss",profitLossPerformance:"Total profit/loss",comparisonUnavailable:"Not enough values are available for this range.",
     milestones:"Milestones",newEntry:"New entry",type:"Type",depot:"Depot",amount:"Amount",unit:"Unit",currency:"Fiat currency",pricePerBtc:"Price per BTC",fee:"Fee",includedFee:"Included trading fee",includedFeeEstimated:"estimated · included in execution price",dateTime:"Date / time",note:"Note",saveEntry:"Save entry",date:"Date",price:"Price",holding:"Holding",
     depots:"Depots",totalDepot:"Total portfolio",allDepotsCombined:"All depots combined",totalStack:"Total stack",totalValue:"Total value",rangePerformance:"Range performance",stackChange:"Stack change",selectedRange:"Selected range",add:"Add",goals:"Stacking goals",name:"Name",target:"Target",addGoal:"Add goal",goalStorage:"Each goal creates additional local history values. More goals require more storage.",remaining:"Remaining",current:"Current",targetValue:"Target value",
     overviewOnly:"Overview only",holdingDisclaimer:"Configurable holding-period and FIFO overview. Depending on applicable law, coins older than the selected period may be treated differently. Not tax advice and not a tax return.",holdingRule:"Holding-period rule",days:"Days until long term",customNote:"Custom note",saveRule:"Save rule",currentClassification:"Current classification",saleOverview:"FIFO disposals",sale:"Sale",purchase:"Purchase",income:"Income",network_fee:"Transaction fee",stackEntry:"Stack without cost basis",network:"Network",onchain:"On-chain",lightning:"Lightning",holdingDays:"Holding days",classification:"Classification",gain:"Realized profit/loss",status:"Status",nextLong:"Next long-term lot",
@@ -1085,7 +1085,7 @@ async function loadData() {
     renderAutoLock();
     state.lockedWalletWatchEditId="";
     state.walletWatch=null;
-    const showLockedSentinel=Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked();
+    const showLockedSentinel=walletWatchShowWhenLocked();
     if(showLockedSentinel){
       const managed=await loadLockedWalletWatchManagement();
       if(!managed)await refreshWalletWatchStatus({silent:true});
@@ -1730,9 +1730,10 @@ function updateChartScaleButtons(series = []) {
     if (!button || !text) continue;
     const item = series[index];
     const unavailable = !item;
-    const logBlocked = Boolean(item?.allowNegative || item?.forceLinear);
+    const logBlocked = Boolean(item?.forceLinear);
     if (logBlocked && chartAxisScale(index) === "log") setChartAxisScale(index,"linear");
-    const label = chartAxisScale(index) === "log" ? t("logarithmic") : t("linear");
+    const signedLog = Boolean(item?.allowNegative && chartAxisScale(index) === "log");
+    const label = chartAxisScale(index) === "log" ? t(signedLog?"symlogarithmic":"logarithmic") : t("linear");
     text.textContent = `${index === 0 ? "L" : "R"} · ${label}`;
     button.classList.toggle("hidden", unavailable);
     button.disabled = unavailable || logBlocked;
@@ -1817,7 +1818,7 @@ function marketAssessmentLiveTailPoints(payload,{includeIntraday=false}={}){
   return rows;
 }
 function marketAssessmentOverlayIntervalMinutesForRange(){
-  if(state.historyRange==="1")return 60;
+  if(state.historyRange==="1")return 5;
   if(state.historyRange==="7"||state.historyRange==="week_start")return 360;
   if(state.historyRange==="30"||state.historyRange==="month_start")return 720;
   return 1440;
@@ -1855,9 +1856,9 @@ function syncMarketAssessmentHistorySourceRevision(data=state.data){
 }
 function marketAssessmentHistoryCacheKey(range,entryId=state.entryId,revision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision()){
   const shortOverlay=state.activeTab==="overview"&&state.chartMode==="price_market"&&marketAssessmentOverlayIntervalMinutesForRange()<1440;
-  // Refresh the lightweight intraday tail at most once per hour. The expensive
-  // causal daily score cache keeps its own stable server-side content signature.
-  const intradayRevision=shortOverlay?Math.floor(Date.now()/3600000):"daily";
+  // Refresh only the lightweight persisted intraday tail once per five-minute
+  // bucket. The expensive causal daily score cache keeps its own stable signature.
+  const intradayRevision=shortOverlay?Math.floor(Date.now()/300000):"daily";
   return `${entryId}|${revision}|${range}|${intradayRevision}`;
 }
 async function fetchMarketAssessmentHistoryRange(range,{force=false}={}){
@@ -1978,6 +1979,9 @@ function renderChart() {
   const overlay = series.length > 1;
   updateChartScaleButtons(series);
   const logarithmic = index => Boolean(series[index] && !series[index].allowNegative && chartAxisScale(index) === "log");
+  const symlogarithmic = index => Boolean(series[index]?.allowNegative && chartAxisScale(index) === "log");
+  const symlogThresholds = series.map(item=>{if(!item?.allowNegative)return 1;const values=Object.values(item.values||{}).map(Number).filter(Number.isFinite).map(Math.abs).filter(value=>value>0);const maxAbs=values.length?Math.max(...values):1;return Math.max(1,maxAbs*.01);});
+  const chartScaleLabel = index => symlogarithmic(index)?t("symlogarithmic"):(logarithmic(index)?t("logarithmic"):t("linear"));
   $("#overlayOpacity").disabled = !overlay;
   $("#opacityControl").classList.toggle("is-inactive", !overlay);
   const usable = (value,index) => Number.isFinite(Number(value)) && (!logarithmic(index) || Number(value) > 0);
@@ -2008,8 +2012,8 @@ function renderChart() {
     .sort((a,b) => a.timestamp - b.timestamp)
     .map((item,index) => ({...item,index,x:pad.l + (item.timestamp-minTime)/timeSpan*plotWidth}));
   const marketSeriesIndex=series.findIndex(item=>item?.key==="market_assessment"),marketPayload=chartMarketAssessmentPayloadReady()?state.chartMarketAssessmentHistory:null,marketRawMarkers=marketSeriesIndex>=0?(Array.isArray(marketPayload?.marker_points)&&marketPayload.marker_points.length?marketPayload.marker_points:(marketPayload?.best_point?[marketPayload.best_point]:[])):[];
-  const transform = (value,index) => logarithmic(index) ? Math.log10(Number(value)) : Number(value);
-  const inverse = (value,index) => logarithmic(index) ? 10 ** Number(value) : Number(value);
+  const transform = (value,index) => {const numeric=Number(value);if(logarithmic(index))return Math.log10(numeric);if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*Math.log10(1+Math.abs(numeric)/threshold);}return numeric;};
+  const inverse = (value,index) => {const numeric=Number(value);if(logarithmic(index))return 10 ** numeric;if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*threshold*((10 ** Math.abs(numeric))-1);}return numeric;};
   const getExtent = (item,index) => {
     if(Number.isFinite(Number(item?.fixedMin))&&Number.isFinite(Number(item?.fixedMax))&&Number(item.fixedMax)>Number(item.fixedMin))return [transform(Number(item.fixedMin),index),transform(Number(item.fixedMax),index)];
     let min=Number.POSITIVE_INFINITY,max=Number.NEGATIVE_INFINITY;
@@ -2093,7 +2097,7 @@ function renderChart() {
   element.innerHTML = `<svg class="${mobileChart ? "mobile-chart-svg" : ""}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(series.map(item=>item.label).join(" + "))}">
     <defs><linearGradient id="areaPrimary" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7931a" stop-opacity=".32"/><stop offset="1" stop-color="#f7931a" stop-opacity="0"/></linearGradient></defs>
     ${grid}${rightAxis}${zeroLines}${markerSvg}${area?`<polygon class="area-primary" points="${area}"/>`:""}<polyline class="series-primary" points="${primaryPoints}"/>${secondary}${dateLabels}
-    <text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(logarithmic(0)?t("logarithmic"):t("linear"))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(logarithmic(1)?t("logarithmic"):t("linear"))}</text>`:""}
+    <text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(chartScaleLabel(0))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(chartScaleLabel(1))}</text>`:""}
     <line id="crossX" class="crosshair hidden" x1="0" y1="${pad.t}" x2="0" y2="${height-pad.b}"/><line id="crossY" class="crosshair hidden" x1="${pad.l}" y1="0" x2="${width-pad.r}" y2="0"/>
     <circle id="crossDotA" class="cross-dot hidden" r="5" stroke="#f7931a"/><circle id="crossDotB" class="cross-dot hidden" r="5" stroke="#66d19e"/>
     <rect id="chartHit" class="chart-hit" x="${pad.l}" y="${pad.t}" width="${plotWidth}" height="${plotHeight}"/>${marketBestSvg}
@@ -2984,7 +2988,7 @@ function startLivePricePolling(){
 function renderMarketAssessmentHistory(){
   const host=$("#marketAssessmentHistoryChart"),hint=$("#marketAssessmentHistoryHint"),bestLegend=$("#marketAssessmentHistoryBestLegend"),markerTooltip=$("#marketAssessmentHistoryMarkerTooltip"),select=$("#marketAssessmentHistoryRange"),overlayToggle=$("#marketAssessmentHistoryPriceOverlay"),priceScaleSelect=$("#marketAssessmentHistoryPriceScale"),opacityInput=$("#marketAssessmentHistoryPriceOpacity"),opacityValue=$("#marketAssessmentHistoryPriceOpacityValue"),opacityControl=$("#marketAssessmentHistoryPriceOpacityControl"),smoothingSelect=$("#marketAssessmentHistorySmoothing");
   if(!host)return;if(select)select.value=state.marketAssessmentHistoryRange||"3y";if(overlayToggle)overlayToggle.checked=Boolean(state.marketAssessmentHistoryPriceOverlay);if(priceScaleSelect){priceScaleSelect.value=state.marketAssessmentHistoryPriceScale||"log";priceScaleSelect.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityInput){opacityInput.value=String(state.marketAssessmentHistoryPriceOpacity);opacityInput.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityValue)opacityValue.textContent=`${Math.round(state.marketAssessmentHistoryPriceOpacity)} %`;if(opacityControl)opacityControl.classList.toggle("is-inactive",!state.marketAssessmentHistoryPriceOverlay);if(smoothingSelect)smoothingSelect.value=String(state.marketAssessmentHistorySmoothing||5);
-  const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload),points=smoothMarketAssessmentPoints(rawPoints);
+  const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true}),points=smoothMarketAssessmentPoints(rawPoints);
   if(!points.length){host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Noch keine rekonstruierte Score-Historie geladen.","No reconstructed score history loaded yet."))}</p>`;if(bestLegend)bestLegend.innerHTML="";if(markerTooltip)markerTooltip.classList.add("hidden");if(hint)hint.textContent="";return;}
   const overlay=Boolean(state.marketAssessmentHistoryPriceOverlay),priceLog=state.marketAssessmentHistoryPriceScale!=="linear",priceOpacity=Math.max(0,Math.min(1,Number(state.marketAssessmentHistoryPriceOpacity||0)/100)),currency=String(payload?.currency||state.data?.summary?.reference_currency||"EUR").toUpperCase();
   const mobile=window.matchMedia("(max-width: 760px)").matches,width=Math.max(mobile?320:760,Math.round(host.clientWidth||(mobile?360:1100))),height=Math.max(mobile?600:560,Math.round(host.clientHeight||(mobile?620:590))),pad={l:58,r:overlay?(mobile?72:88):18,t:32,b:54},pw=width-pad.l-pad.r,ph=height-pad.t-pad.b;
@@ -3022,12 +3026,14 @@ async function refreshMarketAssessment({silent=true}={}){
     const result=await api(`api/market-assessment?entry_id=${encodeURIComponent(requestedEntry)}`,{timeoutMs:15000});
     if(requestedEntry!==state.entryId||!state.data)return false;
     const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();
+    const previousAssessmentCalculatedAt=String(state.data?.buy_opportunity_calculated_at||"");
     if(result?.buy_opportunity)state.data.buy_opportunity=result.buy_opportunity;
     if(result?.buy_opportunity_settings)state.data.buy_opportunity_settings=result.buy_opportunity_settings;
     if(result?.calculated_at)state.data.buy_opportunity_calculated_at=result.calculated_at;
     if(state.data?.history&&Object.prototype.hasOwnProperty.call(result||{},"history_last_sync"))state.data.history.last_sync=result.history_last_sync||null;
     syncMarketAssessmentHistorySourceRevision();
     const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;
+    const assessmentAdvanced=Boolean(result?.calculated_at&&String(result.calculated_at)!==previousAssessmentCalculatedAt);
     // The endpoint never triggers an additional external market call. The
     // current score is shared for five minutes; a background daily-history sync
     // is signaled via history_last_sync so an already-open panel drops only its
@@ -3036,11 +3042,11 @@ async function refreshMarketAssessment({silent=true}={}){
     invalidateDerivedCaches();
     if(state.activeTab==="market"){
       renderBuyOpportunitySettings();renderMarketAssessmentHistory();
-      if(historyRevisionChanged)void loadMarketAssessmentHistory();
+      if(historyRevisionChanged||assessmentAdvanced)void loadMarketAssessmentHistory({force:true});
     }
     if(state.activeTab==="overview"&&state.chartMode==="price_market"){
       renderChart();
-      if(historyRevisionChanged)void ensureChartMarketAssessmentHistory();
+      if(historyRevisionChanged||assessmentAdvanced)void ensureChartMarketAssessmentHistory({force:true});
     }
     return true;
   }catch(error){
@@ -4752,12 +4758,12 @@ async function saveLockedWalletWatchMonitor(event){
 async function removeLockedWalletWatchMonitor(id){
   const st=state.walletWatch?.status||{},mon=(Array.isArray(st.monitor_catalog)?st.monitor_catalog:[]).find(item=>String(item?.id||"")===String(id||""));if(!mon)return;const label=state.discreet?walletWatchLang("diese Wallet","this wallet"):(mon.label||mon.id);if(!window.confirm(walletWatchLang(`„${label}“ wirklich aus Sats Sentinel entfernen?`,`Really remove “${label}” from Sats Sentinel?`)))return;try{const response=await api("api/wallet-watch/remove-monitor",{method:"POST",body:JSON.stringify({entry_id:state.entryId,monitor_id:String(id||"")}),timeoutMs:30000});if(state.walletWatch)state.walletWatch.status=response.status;state.lockedWalletWatchEditId="";renderLockedWalletWatch();toast(walletWatchLang("Watch-Wallet entfernt. Die Änderung wird beim nächsten Entsperren mit dem Haupttresor synchronisiert.","Watch wallet removed. The change will sync to the main vault on the next unlock."));}catch(error){toast(errorText(error));}}
 async function loadLockedWalletWatchManagement(){
-  if(!state.entryId||!state.data?.security?.owner)return false;
-  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};return true;}catch(_error){return false;}
+  if(!state.entryId||!state.data?.locked)return false;
+  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};state.data.security={...(state.data.security||{}),owner:true};return true;}catch(_error){return false;}
 }
 function renderLockedWalletWatch(){
   const host=$("#lockedWalletWatch");if(!host)return;
-  if(!state.data?.locked||!state.data?.security?.owner||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}
+  if(!state.data?.locked||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}
   const st=state.walletWatch.status||{},catalog=Array.isArray(st.monitor_catalog)?st.monitor_catalog.filter(item=>item):[];
   if(!catalog.length){host.classList.remove("hidden");host.innerHTML=`<div class="locked-wallet-watch-head"><div><span class="kicker">SATS SENTINEL · RUNTIME VAULT</span><h2>${esc(walletWatchLang("Überwachte Wallets & Adressen","Watched wallets & addresses"))}</h2><p>${esc(walletWatchLang("Der Portfolio-Tresor ist gesperrt. Im verschlüsselten Sentinel-Runtime-Tresor ist aktuell keine Watch-Wallet verfügbar. Einmal entsperren, damit der Runtime-Stand aufgebaut wird.","The portfolio vault is locked. No watch wallet is currently available in the encrypted Sentinel runtime vault. Unlock once to build the runtime state."))}</p></div></div>`;return;}
   const cards=catalog.map((mon,index)=>{const id=String(mon.id||""),runtime=walletWatchMonitorRuntimeSummary(id),label=state.discreet?`Wallet #${index+1}`:(String(mon.label||"").trim()||`Wallet ${index+1}`),kind=String(mon.kind||"address").toUpperCase(),balance=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,counts=state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("Adresse(n)","address(es)")}${String(mon.kind||"address")!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`,last=runtime.last_activity?.detected_at?fmtDateTime(runtime.last_activity.detected_at):walletWatchLang("keine neue Bewegung","no new movement"),masked=state.discreet?"••••":String(mon.watch_value_masked||walletWatchLang("verschlüsselt","encrypted")),detail=walletWatchNotificationDetailLabel(mon.notification_detail),editor=state.lockedWalletWatchEditId===id?lockedWalletWatchEditorHtml(mon):"",collapsed=state.lockedWalletWatchEditId===id?false:walletWatchMonitorIsCollapsed(id);return `<article class="locked-wallet-card ${collapsed?"is-collapsed":""}" data-monitor-id="${esc(id)}">${collapsed?walletWatchCompactSummaryHtml(mon,{locked:true,index}):walletWatchMonitorToggleHtml(id,label,kind,balance,false)}<div class="locked-wallet-card-body" ${collapsed?"hidden":""}><div class="locked-wallet-card-head"><code class="locked-wallet-watch-value">${esc(masked)}</code><div class="sats-sentinel-watch-actions"><button class="secondary compact locked-wallet-edit" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact locked-wallet-delete" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="locked-wallet-balance">${esc(balance)}</div><div class="locked-wallet-meta"><span>${esc(counts)}</span><span>${esc(walletWatchLang("Benachrichtigung","Notification"))}: ${esc(detail)}</span><span>${esc(walletWatchLang("Letzte Bewegung","Last movement"))}: ${esc(last)}</span></div>${walletWatchMonitorAddressesHtml(id)}${editor}</div></article>`;}).join("");

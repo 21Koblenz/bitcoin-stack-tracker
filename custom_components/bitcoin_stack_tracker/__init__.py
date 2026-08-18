@@ -2962,7 +2962,7 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 "month_start": 31,
                 # The overview maps its visible 30-day range to the wider 90d
                 # causal daily cache, so keep the recent intraday tail here too.
-                "90d": 31,
+                "90d": 91,
             }.get(range_key, 0)
 
             async def _with_intraday(payload: dict[str, Any]) -> dict[str, Any]:

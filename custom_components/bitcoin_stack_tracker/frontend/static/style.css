@@ -1395,3 +1395,8 @@ html.viewport-resizing .chart .series-primary{filter:none}
   .wallet-watch-qr-modal{padding:10px}
   .wallet-watch-qr-dialog{max-height:calc(100dvh - 20px);border-radius:18px;padding:12px}
 }
+
+
+/* monitored Sentinel addresses: explicit desktop/mobile accordion */
+.sats-sentinel-monitored-addresses>summary{cursor:pointer;user-select:none}
+.sats-sentinel-monitored-addresses:not([open])>.sats-sentinel-address-list{display:none!important}
