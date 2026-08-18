@@ -35,43 +35,27 @@ jobs:
           script_lines = [line[10:] if line.startswith('          ') else line for line in lines[run_index + 1:end_index]]
           source = '\n'.join(script_lines) + '\n'
 
-          # Apply wallet changes against the actual current file, then remove the
-          # older wallet subsection from the prepared multi-file patch.
           wallet_path = Path('custom_components/bitcoin_stack_tracker/wallet_watch.py')
           wallet = wallet_path.read_text(encoding='utf-8')
-
-          resolver_pattern = re.compile(
-              r'    async def _resolve_xpub_address_type\(.*?\n    async def _probe_gap_address_used\(', re.S
-          )
+          resolver_pattern = re.compile(r'    async def _resolve_xpub_address_type\(.*?\n    async def _probe_gap_address_used\(', re.S)
           resolver = '''    async def _resolve_xpub_address_type(
               self, monitor: dict[str, Any], source: dict[str, Any], *, electrum_client: _ElectrumRPCClient | None
           ) -> tuple[str, bool]:
-              """Resolve ambiguous raw xpub script type from actual node history.
-
-              Raw xpub serialization does not identify P2PKH/P2SH-P2WPKH/P2WPKH/P2TR.
-              Electrum probes use the lightweight subscription status hash. A
-              no-history Native-SegWit fallback remains provisional and is never
-              presented as a verified zero-balance wallet.
-              """
+              """Resolve ambiguous raw xpub script type from actual node history."""
               requested = str(monitor.get("address_type") or "auto").strip().lower()
               extpub = str(monitor.get("value") or "")
               root = _parse_extpub(extpub)
-              if requested != "auto":
-                  return requested, True
-              if not extpub.lower().startswith("xpub"):
-                  return root.script_type, True
-
+              if requested != "auto": return requested, True
+              if not extpub.lower().startswith("xpub"): return root.script_type, True
               for candidate_index, script_type in enumerate(_XPUB_AUTO_CANDIDATES):
                   addresses: list[str] = []
                   for branch, gap_key in ((0, "receive_count"), (1, "change_count")):
                       configured = max(0, int(monitor.get(gap_key) or 0))
-                      if configured <= 0:
-                          continue
+                      if configured <= 0: continue
                       count = min(MAX_DERIVED_PER_BRANCH, max(configured, HD_DISCOVERY_BOOTSTRAP_ADDRESSES))
                       for index in range(count):
                           row = derive_extpub_branch_address(extpub, branch, index, address_type=script_type)
                           addresses.append(str(row["address"]))
-
                   detected = False
                   if electrum_client is not None:
                       statuses = await self._electrum_calls_chunked(
@@ -83,59 +67,37 @@ jobs:
                   else:
                       for address in addresses:
                           if await self._probe_gap_address_used(source, address):
-                              detected = True
-                              break
-                  if detected:
-                      return script_type, True
-                  if candidate_index + 1 < len(_XPUB_AUTO_CANDIDATES):
-                      await asyncio.sleep(GAP_DISCOVERY_YIELD_SECONDS)
+                              detected = True; break
+                  if detected: return script_type, True
+                  if candidate_index + 1 < len(_XPUB_AUTO_CANDIDATES): await asyncio.sleep(GAP_DISCOVERY_YIELD_SECONDS)
               return "p2wpkh", False
 
               async def _probe_gap_address_used('''
           wallet, count = resolver_pattern.subn(resolver, wallet, count=1)
-          if count != 1:
-              raise SystemExit(f'xpub resolver replacement count={count}')
+          if count != 1: raise SystemExit(f'xpub resolver replacement count={count}')
           wallet = wallet.replace('              async def _probe_gap_address_used(\n        self, source:', '    async def _probe_gap_address_used(\n        self, source:', 1)
-
           old = '''            "resolved_address_type": (
                           str(monitor.get("_resolved_address_type") or monitor.get("address_type") or "auto")
                           if str(monitor.get("kind") or "") == "xpub" else ""
                       ),'''
-          new = old + '''
+          if old not in wallet: raise SystemExit('runtime-row script type block missing')
+          wallet = wallet.replace(old, old + '''
                       "resolved_address_type_verified": (
                           bool(monitor.get("_resolved_address_type_verified"))
                           if str(monitor.get("kind") or "") == "xpub" else True
-                      ),'''
-          if old not in wallet:
-              raise SystemExit('runtime-row script type block missing')
-          wallet = wallet.replace(old, new, 1)
-
+                      ),''', 1)
           old = '''            "last_activity_at", "last_balance_refresh_unix",
                   ):'''
-          new = '''            "last_activity_at", "last_balance_refresh_unix",
+          if old not in wallet: raise SystemExit('runtime-row merge block missing')
+          wallet = wallet.replace(old, '''            "last_activity_at", "last_balance_refresh_unix",
                       "resolved_address_type", "resolved_address_type_verified",
-                  ):'''
-          if old not in wallet:
-              raise SystemExit('runtime-row merge block missing')
-          wallet = wallet.replace(old, new, 1)
-
-          caller_pattern = re.compile(
-              r'(?P<i>[ \t]+)monitor\["_resolved_address_type"\] = await self\._resolve_xpub_address_type\(\n'
-              r'(?P=i)    monitor, source, electrum_client=client\n(?P=i)\)'
-          )
+                  ):''', 1)
+          caller_pattern = re.compile(r'(?P<i>[ \t]+)monitor\["_resolved_address_type"\] = await self\._resolve_xpub_address_type\(\n(?P=i)    monitor, source, electrum_client=client\n(?P=i)\)')
           def caller_repl(match):
-              i = match.group('i')
-              return (
-                  f'{i}resolved_type, resolved_verified = await self._resolve_xpub_address_type(\n'
-                  f'{i}    monitor, source, electrum_client=client\n{i})\n'
-                  f'{i}monitor["_resolved_address_type"] = resolved_type\n'
-                  f'{i}monitor["_resolved_address_type_verified"] = bool(resolved_verified)'
-              )
-          wallet, count = caller_pattern.subn(caller_repl, wallet, count=1)
-          if count != 1:
-              raise SystemExit(f'xpub caller replacement count={count}')
-
-          old_catalog = '''        resolved_by_monitor: dict[str, str] = {}
+              i=match.group('i'); return f'{i}resolved_type, resolved_verified = await self._resolve_xpub_address_type(\n{i}    monitor, source, electrum_client=client\n{i})\n{i}monitor["_resolved_address_type"] = resolved_type\n{i}monitor["_resolved_address_type_verified"] = bool(resolved_verified)'
+          wallet,count=caller_pattern.subn(caller_repl,wallet,count=1)
+          if count!=1: raise SystemExit(f'xpub caller replacement count={count}')
+          old_catalog='''        resolved_by_monitor: dict[str, str] = {}
                   for row in rebuilt:
                       if not isinstance(row, dict):
                           continue
@@ -149,54 +111,65 @@ jobs:
                       monitor_id = str(item.get("id") or "")
                       if monitor_id in resolved_by_monitor:
                           item["resolved_address_type"] = resolved_by_monitor[monitor_id]'''
-          new_catalog = '''        resolved_by_monitor: dict[str, tuple[str, bool]] = {}
+          new_catalog='''        resolved_by_monitor: dict[str, tuple[str, bool]] = {}
                   for row in rebuilt:
-                      if not isinstance(row, dict):
-                          continue
+                      if not isinstance(row, dict): continue
                       resolved = str(row.get("resolved_address_type") or "")
                       monitor_id = str(row.get("monitor_id") or "")
                       if monitor_id and resolved in _XPUB_AUTO_CANDIDATES:
                           resolved_by_monitor[monitor_id] = (resolved, bool(row.get("resolved_address_type_verified")))
                   for item in self.runtime_store.data.get("monitor_catalog") or []:
-                      if not isinstance(item, dict):
-                          continue
+                      if not isinstance(item, dict): continue
                       monitor_id = str(item.get("id") or "")
                       if monitor_id in resolved_by_monitor:
                           resolved, verified = resolved_by_monitor[monitor_id]
                           item["resolved_address_type"] = resolved
                           item["resolved_address_type_verified"] = verified'''
-          if old_catalog not in wallet:
-              raise SystemExit('xpub catalog block missing')
-          wallet = wallet.replace(old_catalog, new_catalog, 1)
-
-          old_summary = '''                    "utxo_count": 0,
+          if old_catalog not in wallet: raise SystemExit('xpub catalog block missing')
+          wallet=wallet.replace(old_catalog,new_catalog,1)
+          old_summary='''                    "utxo_count": 0,
                               "baseline_complete": True,
                           },'''
-          new_summary = '''                    "utxo_count": 0,
+          if old_summary not in wallet: raise SystemExit('monitor summary init missing')
+          wallet=wallet.replace(old_summary,'''                    "utxo_count": 0,
                               "baseline_complete": True,
                               "resolved_address_type": "",
                               "resolved_address_type_verified": False,
-                          },'''
-          if old_summary not in wallet:
-              raise SystemExit('monitor summary init missing')
-          wallet = wallet.replace(old_summary, new_summary, 1)
-          old_summary_update = '''            summary["balance_sats"] += int(row.get("balance_sats") or 0)
+                          },''',1)
+          old_update='''            summary["balance_sats"] += int(row.get("balance_sats") or 0)
                       summary["utxo_count"] += int(row.get("utxo_count") or 0)'''
-          new_summary_update = old_summary_update + '''
+          if old_update not in wallet: raise SystemExit('monitor summary update missing')
+          wallet=wallet.replace(old_update,old_update+'''
                       if row.get("resolved_address_type"):
                           summary["resolved_address_type"] = str(row.get("resolved_address_type") or "")
-                          summary["resolved_address_type_verified"] = bool(row.get("resolved_address_type_verified"))'''
-          if old_summary_update not in wallet:
-              raise SystemExit('monitor summary update missing')
-          wallet = wallet.replace(old_summary_update, new_summary_update, 1)
-          wallet_path.write_text(wallet, encoding='utf-8')
+                          summary["resolved_address_type_verified"] = bool(row.get("resolved_address_type_verified"))''',1)
+          wallet_path.write_text(wallet,encoding='utf-8')
+          ws=source.find('# ---------- Raw XPUB auto detection ----------'); we=source.find('# ---------- Wire throttled 90-day backfill + expose completeness ----------',ws)
+          if ws<0 or we<=ws: raise SystemExit('prepared wallet section bounds missing')
+          source=source[:ws]+source[we:]
 
-          wallet_section_start = source.find('# ---------- Raw XPUB auto detection ----------')
-          wallet_section_end = source.find('# ---------- Wire throttled 90-day backfill + expose completeness ----------', wallet_section_start)
-          if wallet_section_start < 0 or wallet_section_end <= wallet_section_start:
-              raise SystemExit('prepared wallet section bounds missing')
-          source = source[:wallet_section_start] + source[wallet_section_end:]
-          exec(compile(source, str(path) + ':Apply fixes', 'exec'), {'__name__': '__main__'})
+          # Patch current rating-label function explicitly, then skip the older
+          # exact-string subsection in the prepared frontend patch.
+          app_path=Path('custom_components/bitcoin_stack_tracker/frontend/static/app.js')
+          app=app_path.read_text(encoding='utf-8')
+          old_rating='''function buyOpportunityRatingLabel(rating){
+            const key={very_expensive:"ratingVeryExpensive",expensive:"ratingExpensive",neutral:"ratingNeutral",interesting:"ratingInteresting",cheap:"ratingCheap",very_cheap:"ratingVeryCheap",extreme:"ratingExtreme",unavailable:"ratingUnavailable"}[String(rating||"unavailable")];
+            return t(key||"ratingUnavailable");
+          }'''
+          new_rating='''function buyOpportunityRatingLabel(rating){
+            const value=String(rating||"unavailable"),custom=String(state.data?.buy_opportunity_settings?.labels?.[value]||"").trim();
+            if(custom)return custom.slice(0,120);
+            const key={very_expensive:"ratingVeryExpensive",expensive:"ratingExpensive",neutral:"ratingNeutral",interesting:"ratingInteresting",cheap:"ratingCheap",very_cheap:"ratingVeryCheap",extreme:"ratingExtreme",unavailable:"ratingUnavailable"}[value];
+            return t(key||"ratingUnavailable");
+          }'''
+          if old_rating not in app: raise SystemExit('current rating label function missing')
+          app_path.write_text(app.replace(old_rating,new_rating,1),encoding='utf-8')
+          rs=source.find("old = '''function buyOpportunityRatingLabel(rating){")
+          re_=source.find("old = '''function buyOpportunitySettingsDefaults()",rs)
+          if rs<0 or re_<=rs: raise SystemExit(f'prepared rating subsection bounds missing {rs} {re_}')
+          source=source[:rs]+source[re_:]
+
+          exec(compile(source,str(path)+':Apply fixes','exec'),{'__name__':'__main__'})
 
       - name: Validate patched source
         shell: bash
@@ -222,18 +195,15 @@ jobs:
   hassfest:
     name: Hassfest validation
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v5
-
       - name: Run hassfest validation
         uses: home-assistant/actions/hassfest@master
 
   hacs:
     name: HACS validation
     runs-on: ubuntu-latest
-
     steps:
       - name: Run HACS validation
         uses: hacs/action@main
