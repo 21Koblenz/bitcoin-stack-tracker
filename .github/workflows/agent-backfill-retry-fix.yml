@@ -1,0 +1,267 @@
+name: Agent market backfill retry fix
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-backfill-retry-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
+      - name: Apply retry/progress fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          root = Path('.')
+          comp = root / 'custom_components' / 'bitcoin_stack_tracker'
+          backfill = comp / 'market_assessment_backfill.py'
+          text = backfill.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'{label}: pattern not found')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'from .network import async_routed_session, tor_proxy_from_settings\n',
+              'from .network import async_routed_session, rotate_tor_isolation, tor_proxy_from_settings\n',
+              'network import',
+          )
+          replace_once(
+              'BACKFILL_INITIAL_DELAY_SECONDS = 60\nBACKFILL_RETRY_SECONDS = 6 * 60 * 60\nBACKFILL_GENERATION_RETRY_SECONDS = 60\n',
+              'BACKFILL_INITIAL_DELAY_SECONDS = 60\nBACKFILL_PAGE_RETRIES = 4\nBACKFILL_PAGE_RETRY_BASE_SECONDS = 15\nBACKFILL_RETRY_INITIAL_SECONDS = 60\nBACKFILL_RETRY_MAX_SECONDS = 15 * 60\nBACKFILL_GENERATION_RETRY_SECONDS = 60\n',
+              'retry constants',
+          )
+
+          marker = '\n\ndef _score_batch(\n'
+          helper = '''
+
+async def _fetch_bitstamp_5m_page_resilient(
+    hass: HomeAssistant,
+    *,
+    entry_id: str,
+    currency: str,
+    proxy_url: str,
+    end_timestamp: int,
+) -> dict[str, float]:
+    """Retry a single Bitstamp page without discarding the whole 90-day job.
+
+    A shared Tor exit can temporarily receive a provider error even when the
+    integration and Tor gateway are healthy. Retry the page on a fresh isolated
+    Tor circuit with short bounded delays. The public route remains Tor-only.
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, BACKFILL_PAGE_RETRIES + 1):
+        try:
+            return await _fetch_bitstamp_5m_page(
+                hass,
+                currency=currency,
+                proxy_url=proxy_url,
+                end_timestamp=end_timestamp,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
+            last_error = err
+            if attempt >= BACKFILL_PAGE_RETRIES:
+                raise
+            retry_seconds = BACKFILL_PAGE_RETRY_BASE_SECONDS * attempt
+            # IsolateSOCKSAuth gives the retry a fresh Tor stream/circuit group;
+            # it never permits a direct clearnet fallback.
+            rotate_tor_isolation(hass)
+            _set_status(
+                hass,
+                entry_id,
+                state="download_retry",
+                complete=False,
+                error=f"{type(err).__name__}: {str(err)}"[:240],
+                page_retry_attempt=attempt,
+                page_retry_max=BACKFILL_PAGE_RETRIES,
+                retry_in_seconds=retry_seconds,
+                next_retry_at=(
+                    datetime.now(timezone.utc) + timedelta(seconds=retry_seconds)
+                ).isoformat(),
+            )
+            if not await _sleep_while_loaded(hass, entry_id, retry_seconds):
+                raise asyncio.CancelledError
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Bitstamp page retry exited unexpectedly")
+'''
+          if marker not in text:
+              raise SystemExit('score batch insertion marker missing')
+          text = text.replace(marker, helper + marker, 1)
+
+          old_call = '''        page = await _fetch_bitstamp_5m_page(
+            hass,
+            currency=currency,
+            proxy_url=proxy_url,
+            end_timestamp=cursor,
+        )'''
+          new_call = '''        page = await _fetch_bitstamp_5m_page_resilient(
+            hass,
+            entry_id=entry.entry_id,
+            currency=currency,
+            proxy_url=proxy_url,
+            end_timestamp=cursor,
+        )'''
+          replace_once(old_call, new_call, 'resilient page call')
+
+          old_status = '''        downloaded_points=0,
+        error=None,
+    )'''
+          new_status = '''        downloaded_points=0,
+        downloaded_pages=0,
+        error=None,
+        retry_in_seconds=0,
+        next_retry_at=None,
+        page_retry_attempt=0,
+    )'''
+          replace_once(old_status, new_status, 'download status reset')
+
+          old_loop = '''    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
+        return
+    while _runtime(hass, entry.entry_id) is not None:
+        try:
+            if await _backfill_once(hass, entry, history_store, cache):
+                return
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_GENERATION_RETRY_SECONDS
+            ):
+                return
+        except asyncio.CancelledError:
+            raise
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
+            _LOGGER.warning("Market-assessment intraday backfill paused: %s", err)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="retry_wait",
+                complete=False,
+                error=str(err)[:240],
+            )
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_RETRY_SECONDS
+            ):
+                return'''
+          new_loop = '''    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
+        return
+    retry_attempt = 0
+    while _runtime(hass, entry.entry_id) is not None:
+        try:
+            if await _backfill_once(hass, entry, history_store, cache):
+                return
+            retry_attempt = 0
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_GENERATION_RETRY_SECONDS
+            ):
+                return
+        except asyncio.CancelledError:
+            raise
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
+            retry_attempt += 1
+            retry_seconds = min(
+                BACKFILL_RETRY_MAX_SECONDS,
+                BACKFILL_RETRY_INITIAL_SECONDS * (2 ** (retry_attempt - 1)),
+            )
+            _LOGGER.warning(
+                "Market-assessment intraday backfill paused for %ss: %s",
+                retry_seconds,
+                err,
+            )
+            # A provider/Tor-exit failure must not freeze the reconstruction for
+            # six hours. Rotate only the isolated Tor stream and retry soon;
+            # there is still no clearnet fallback.
+            rotate_tor_isolation(hass)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="retry_wait",
+                complete=False,
+                error=f"{type(err).__name__}: {str(err)}"[:240],
+                retry_attempt=retry_attempt,
+                retry_in_seconds=retry_seconds,
+                next_retry_at=(
+                    datetime.now(timezone.utc) + timedelta(seconds=retry_seconds)
+                ).isoformat(),
+            )
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, retry_seconds
+            ):
+                return'''
+          replace_once(old_loop, new_loop, 'outer retry loop')
+          backfill.write_text(text, encoding='utf-8')
+
+          app_path = comp / 'frontend' / 'static' / 'app.js'
+          app = app_path.read_text(encoding='utf-8')
+          start = app.find('function renderMarketAssessmentBackfillStatus(')
+          end = app.find('function renderMarketAssessmentHistory(){', start)
+          if start < 0 or end <= start:
+              raise SystemExit('backfill status renderer bounds missing')
+          renderer = '''function renderMarketAssessmentBackfillStatus(payload=state.marketAssessmentHistory){
+  const host=$("#marketAssessmentBackfillStatus");if(!host)return;const s=payload?.intraday_backfill||{};
+  if(!Object.keys(s).length){host.textContent=walletWatchLang("90-Tage-Rückrechnung wartet auf Start …","90-day reconstruction waiting to start …");return;}
+  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),source=Number(s.source_points||0),done=Number(s.completed_points||cached),target=source>0?source:Number(s.expected_full_grid_points||25920),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points||target-done)),downloaded=Number(s.downloaded_points||0),pages=Number(s.downloaded_pages||0),stateName=String(s.state||""),error=String(s.error||"").trim();
+  const retryAt=Date.parse(String(s.next_retry_at||"")),retrySeconds=Number.isFinite(retryAt)?Math.max(0,Math.ceil((retryAt-Date.now())/1000)):Math.max(0,Number(s.retry_in_seconds||0)),retryMinutes=retrySeconds>0?Math.max(1,Math.ceil(retrySeconds/60)):0;
+  const downloadText=downloaded>0?walletWatchLang(` · Download ${fmtNumber(downloaded,0)} Punkte / ${fmtNumber(pages,0)} Seiten`,` · downloaded ${fmtNumber(downloaded,0)} points / ${fmtNumber(pages,0)} pages`):"";
+  const retryText=(stateName==="retry_wait"||stateName==="download_retry")&&retryMinutes>0?walletWatchLang(` · neuer Versuch in ~${fmtNumber(retryMinutes,0)} min`,` · retry in ~${fmtNumber(retryMinutes,0)} min`):"";
+  const errorPart=error?walletWatchLang(` · Fehler: ${error}`,` · error: ${error}`):"";
+  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${complete?"vollständig":(stateName||"läuft gedrosselt")} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${downloadText}${retryText}${errorPart}${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${complete?"complete":(stateName||"throttled")} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${downloadText}${retryText}${errorPart}${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);
+  host.className=`result market-assessment-backfill-status ${complete?"positive":""}`;
+}
+'''
+          app = app[:start] + renderer + app[end:]
+          app_path.write_text(app, encoding='utf-8')
+
+          const_path = comp / 'const.py'
+          const_text = const_path.read_text(encoding='utf-8')
+          if 'FRONTEND_CACHE_REVISION = "6"' in const_text:
+              const_text = const_text.replace('FRONTEND_CACHE_REVISION = "6"', 'FRONTEND_CACHE_REVISION = "7"', 1)
+          const_path.write_text(const_text, encoding='utf-8')
+
+          index_path = comp / 'frontend' / 'index.html'
+          html = index_path.read_text(encoding='utf-8')
+          html = html.replace('static/style.css?v=0.21.0.13&r=6', 'static/style.css?v=0.21.0.13&r=7', 1)
+          html = html.replace('static/app.js?v=0.21.0.13&r=6', 'static/app.js?v=0.21.0.13&r=7', 1)
+          index_path.write_text(html, encoding='utf-8')
+
+          test_path = root / 'tests' / 'test_xpub_backfill_rating_regressions.py'
+          tests = test_path.read_text(encoding='utf-8')
+          tests += '''\n\ndef test_backfill_retry_is_short_resilient_and_visible():\n assert "BACKFILL_PAGE_RETRIES = 4" in M\n assert "BACKFILL_RETRY_INITIAL_SECONDS = 60" in M\n assert "BACKFILL_RETRY_MAX_SECONDS = 15 * 60" in M\n assert "BACKFILL_RETRY_SECONDS = 6 * 60 * 60" not in M\n assert "rotate_tor_isolation" in M and "download_retry" in M and "next_retry_at" in M\n assert "downloaded_points" in A and "neuer Versuch in" in A and "Fehler:" in A\n'''
+          test_path.write_text(tests, encoding='utf-8')
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q custom_components/bitcoin_stack_tracker
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
+          python -m pytest -q tests/test_xpub_backfill_rating_regressions.py tests/test_sentinel_market_regressions.py tests/test_market_assessment_ui.py tests/test_chart_independent_scales.py tests/test_release_features.py
+      - name: Commit and remove bootstrap workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/agent-backfill-retry-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Fix stalled 90-day market backfill retries"
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
