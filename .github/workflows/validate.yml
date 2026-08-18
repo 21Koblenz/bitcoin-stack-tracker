@@ -13,7 +13,7 @@ permissions:
 jobs:
   agent_patch:
     name: Apply XPUB/backfill/labels patch
-    if: github.ref == 'refs/heads/agent/sentinel-market-cache-cleanup' && github.actor != 'github-actions[bot]'
+    if: (github.ref == 'refs/heads/agent/sentinel-market-cache-cleanup' || github.head_ref == 'agent/sentinel-market-cache-cleanup') && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the work branch
