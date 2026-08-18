@@ -55,6 +55,42 @@ jobs:
           wallet, changed = caller_pattern.subn(caller_repl, wallet, count=1)
           if changed != 1:
               raise SystemExit(f'current xpub resolver caller replacement count={changed}')
+
+          old_catalog = '''        resolved_by_monitor: dict[str, str] = {}
+                  for row in rebuilt:
+                      if not isinstance(row, dict):
+                          continue
+                      resolved = str(row.get("resolved_address_type") or "")
+                      monitor_id = str(row.get("monitor_id") or "")
+                      if monitor_id and resolved in _XPUB_AUTO_CANDIDATES:
+                          resolved_by_monitor[monitor_id] = resolved
+                  for item in self.runtime_store.data.get("monitor_catalog") or []:
+                      if not isinstance(item, dict):
+                          continue
+                      monitor_id = str(item.get("id") or "")
+                      if monitor_id in resolved_by_monitor:
+                          item["resolved_address_type"] = resolved_by_monitor[monitor_id]'''
+          new_catalog = '''        resolved_by_monitor: dict[str, tuple[str, bool]] = {}
+                  for row in rebuilt:
+                      if not isinstance(row, dict):
+                          continue
+                      resolved = str(row.get("resolved_address_type") or "")
+                      monitor_id = str(row.get("monitor_id") or "")
+                      if monitor_id and resolved in _XPUB_AUTO_CANDIDATES:
+                          resolved_by_monitor[monitor_id] = (
+                              resolved, bool(row.get("resolved_address_type_verified"))
+                          )
+                  for item in self.runtime_store.data.get("monitor_catalog") or []:
+                      if not isinstance(item, dict):
+                          continue
+                      monitor_id = str(item.get("id") or "")
+                      if monitor_id in resolved_by_monitor:
+                          resolved, verified = resolved_by_monitor[monitor_id]
+                          item["resolved_address_type"] = resolved
+                          item["resolved_address_type_verified"] = verified'''
+          if old_catalog not in wallet:
+              raise SystemExit('current resolved catalog block not found')
+          wallet = wallet.replace(old_catalog, new_catalog, 1)
           wallet_path.write_text(wallet, encoding='utf-8')
 
           caller_patch_start = source.find("old = '''                resolved_type = await self._resolve_xpub_address_type(")
@@ -63,6 +99,13 @@ jobs:
               source = source[:caller_patch_start] + source[caller_patch_end:]
           else:
               raise SystemExit(f'prepared caller subsection not found start={caller_patch_start} end={caller_patch_end}')
+
+          catalog_patch_start = source.find('# Catalog persistence:')
+          catalog_patch_end = source.find('# A provisional raw-xpub guess', catalog_patch_start)
+          if catalog_patch_start >= 0 and catalog_patch_end > catalog_patch_start:
+              source = source[:catalog_patch_start] + source[catalog_patch_end:]
+          else:
+              raise SystemExit(f'prepared catalog subsection not found start={catalog_patch_start} end={catalog_patch_end}')
 
           exec(compile(source, str(path) + ':Apply fixes', 'exec'), {'__name__': '__main__'})
 
