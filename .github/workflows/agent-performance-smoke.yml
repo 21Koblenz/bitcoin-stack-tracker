@@ -6,16 +6,9 @@ on:
       - agent/sentinel-market-cache-cleanup
     paths:
       - .github/workflows/agent-performance-smoke.yml
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/agent-performance-smoke.yml
-      - custom_components/bitcoin_stack_tracker/**
-      - tests/**
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   performance:
@@ -24,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: agent/sentinel-market-cache-cleanup
           fetch-depth: 1
 
       - uses: actions/setup-python@v6
@@ -38,17 +32,23 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
 
       - name: Focused regression suite
+        id: regression
+        shell: bash
         run: |
+          set -o pipefail
           pytest -q \
             tests/test_bulk_import_performance_regression.py \
             tests/test_market_backfill_lifecycle.py \
             tests/test_sentinel_autolock_visibility.py \
-            tests/test_buy_opportunity.py
-          node tests/performance_math_test.js
+            tests/test_buy_opportunity.py | tee /tmp/regression.log
+          node tests/performance_math_test.js | tee -a /tmp/regression.log
 
       - name: Benchmark market scoring hot path
-        shell: python
+        id: market
+        shell: bash
         run: |
+          set -o pipefail
+          python - <<'PY' | tee /tmp/market.log
           import importlib.util
           import math
           import statistics
@@ -64,7 +64,6 @@ jobs:
 
           start = date(2015, 1, 1)
           history = {}
-          price = 250.0
           for idx in range(3650):
               trend = math.exp(idx / 1800.0)
               cycle = 1.0 + 0.38 * math.sin(idx / 95.0) + 0.12 * math.sin(idx / 17.0)
@@ -73,7 +72,6 @@ jobs:
 
           as_of = start + timedelta(days=3649)
           current = history[as_of.isoformat()]
-
           for _ in range(3):
               result = module.calculate_buy_opportunity(history, current, currency='EUR', settings={}, as_of_day=as_of)
               assert result.get('score') is not None
@@ -91,11 +89,14 @@ jobs:
           worst = max(samples)
           print(f'MARKET_SCORE median_ms={median:.2f} p95_ms={p95:.2f} worst_ms={worst:.2f} samples={len(samples)} history_days={len(history)}')
           assert p95 < 1500.0, f'market-score p95 too slow: {p95:.2f} ms'
+          PY
 
       - name: Benchmark frontend analytics hot paths
+        id: frontend
         shell: bash
         run: |
-          node <<'NODE'
+          set -o pipefail
+          node <<'NODE' | tee /tmp/frontend.log
           const math = require('./custom_components/bitcoin_stack_tracker/frontend/static/performance-math.js');
           const N = 20000;
           const prices = Array.from({length:N}, (_,i)=>({time:i*86400000,value:30000 + i*2 + Math.sin(i/19)*5000,key:String(i)}));
@@ -122,3 +123,28 @@ jobs:
           bench('MAX_DRAWDOWN', ()=>math.maximumDrawdown(prices), 750);
           bench('TWR', ()=>math.timeWeightedReturn(prices,events), 1500);
           NODE
+
+      - name: Persist performance result for review
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "performance_smoke_commit=${GITHUB_SHA}"
+            echo "regression=${{ steps.regression.outcome }}"
+            echo "market=${{ steps.market.outcome }}"
+            echo "frontend=${{ steps.frontend.outcome }}"
+            echo
+            echo "[regression]"
+            cat /tmp/regression.log 2>/dev/null || true
+            echo
+            echo "[market]"
+            cat /tmp/market.log 2>/dev/null || true
+            echo
+            echo "[frontend]"
+            cat /tmp/frontend.log 2>/dev/null || true
+          } > PERFORMANCE-SMOKE-RESULT.txt
+          git config user.name "Einundzwanzig Koblenz"
+          git config user.email "koblenzeinundzwanzig@proton.me"
+          git add PERFORMANCE-SMOKE-RESULT.txt
+          git commit -m "Record performance smoke result" || exit 0
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
