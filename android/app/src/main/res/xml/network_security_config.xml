@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Cleartext is never enabled for public Clearnet. Onion and explicit local
+         names may use HTTP, but the routed client still decides whether Tor or
+         local-direct is allowed before a socket is opened. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">onion</domain>
+        <domain includeSubdomains="true">local</domain>
+        <domain includeSubdomains="true">home.arpa</domain>
+        <domain includeSubdomains="true">lan</domain>
+        <domain includeSubdomains="true">internal</domain>
+        <domain>localhost</domain>
+    </domain-config>
+</network-security-config>
