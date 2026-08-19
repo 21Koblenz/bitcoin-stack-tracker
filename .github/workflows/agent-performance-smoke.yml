@@ -6,6 +6,13 @@ on:
       - agent/sentinel-market-cache-cleanup
     paths:
       - .github/workflows/agent-performance-smoke.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/agent-performance-smoke.yml
+      - custom_components/bitcoin_stack_tracker/**
+      - tests/**
 
 permissions:
   contents: read
@@ -17,7 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: agent/sentinel-market-cache-cleanup
           fetch-depth: 1
 
       - uses: actions/setup-python@v6
@@ -60,8 +66,6 @@ jobs:
           history = {}
           price = 250.0
           for idx in range(3650):
-              # Deterministic multi-cycle synthetic history; enough movement to
-              # exercise rolling windows, percentiles, RSI and turning points.
               trend = math.exp(idx / 1800.0)
               cycle = 1.0 + 0.38 * math.sin(idx / 95.0) + 0.12 * math.sin(idx / 17.0)
               price = max(25.0, 250.0 * trend * cycle)
@@ -70,7 +74,6 @@ jobs:
           as_of = start + timedelta(days=3649)
           current = history[as_of.isoformat()]
 
-          # Warm caches/interpreter paths first.
           for _ in range(3):
               result = module.calculate_buy_opportunity(history, current, currency='EUR', settings={}, as_of_day=as_of)
               assert result.get('score') is not None
@@ -87,9 +90,6 @@ jobs:
           p95 = samples[max(0, math.ceil(len(samples) * 0.95) - 1)]
           worst = max(samples)
           print(f'MARKET_SCORE median_ms={median:.2f} p95_ms={p95:.2f} worst_ms={worst:.2f} samples={len(samples)} history_days={len(history)}')
-          # Backfill runs in an executor and is deliberately paced at 2 points
-          # per 20 seconds. This guard catches pathological regressions without
-          # making CI sensitive to ordinary runner jitter.
           assert p95 < 1500.0, f'market-score p95 too slow: {p95:.2f} ms'
 
       - name: Benchmark frontend analytics hot paths
