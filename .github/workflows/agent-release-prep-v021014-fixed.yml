@@ -1,0 +1,116 @@
+name: Agent prepare v0.21.0.14 fixed
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-release-prep-v021014-fixed.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Patch release metadata
+        shell: python
+        run: |
+          from pathlib import Path
+
+          root = Path('.')
+          old = '0.21.0.13'
+          new = '0.21.0.14'
+          for rel in [
+              'VERSION.txt',
+              'README.md',
+              'custom_components/bitcoin_stack_tracker/manifest.json',
+              'custom_components/bitcoin_stack_tracker/const.py',
+              'custom_components/bitcoin_stack_tracker/wallet_watch.py',
+              'custom_components/bitcoin_stack_tracker/frontend/index.html',
+              'custom_components/bitcoin_stack_tracker/frontend/panel.js',
+              'custom_components/bitcoin_stack_tracker/frontend/static/app.js',
+          ]:
+              path = root / rel
+              text = path.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'{old} missing in {rel}')
+              path.write_text(text.replace(old, new), encoding='utf-8')
+
+          const_path = root / 'custom_components/bitcoin_stack_tracker/const.py'
+          const = const_path.read_text(encoding='utf-8')
+          const = const.replace('FRONTEND_CACHE_REVISION = "7"', 'FRONTEND_CACHE_REVISION = "8"', 1)
+          const_path.write_text(const, encoding='utf-8')
+
+          readme_path = root / 'README.md'
+          readme = readme_path.read_text(encoding='utf-8')
+          readme = readme.replace(
+              'existing five-minute current-score run, are not interpolated, and are retained for up to 45 days',
+              'existing 15-minute current-score run, are not interpolated, and are retained for up to 90 days',
+          )
+          readme = readme.replace(
+              'bestehenden 5-Minuten-Current-Score-Berechnung, werden nicht interpoliert und bis zu 45 Tage gespeichert',
+              'bestehenden 15-Minuten-Current-Score-Berechnung, werden nicht interpoliert und bis zu 90 Tage gespeichert',
+          )
+
+          en_start = readme.index('### Release\n', readme.index('<a id="english">'))
+          en_end = readme.index('### What this project explicitly is not', en_start)
+          en = '''### Release\n\nCurrent project version: **v0.21.0.14**. This release makes the 90-day market-assessment reconstruction startup-safe, moves live/reconstructed scores to 15-minute buckets, fixes Sats Sentinel privacy after inactivity auto-lock and completes the performance/repository cleanup.\n\n#### Highlights since v0.21.0.13\n\n- one detached, startup-safe 90-day reconstruction worker; no second long-running task from market reads\n- 15-minute assessment buckets with 90-day retention: 8,640 target points\n- local 15-minute/legacy 5-minute/adaptive price caches are reused before any public request\n- missing public candles remain Tor-only/fail-closed; Coinbase Exchange first, Bitstamp fallback\n- locked-screen Sentinel stays hidden after inactivity auto-lock when that display option is disabled; monitoring and alerts continue\n- reconstruction status shows the actual source, interval and Tor route instead of hard-coded `Bitstamp 5m`\n- editable market-rating labels and independent signed SymLog chart axes remain supported\n- one-shot performance smoke: 28/28 focused tests; market-score p95 **147.11 ms** on 3,650 history days; max-drawdown p95 **15.94 ms** and TWR p95 **36.64 ms** on 20,000 chart points / 1,500 events\n\n**After updating, fully restart Home Assistant Core and hard-reload the frontend.**\n\nThe **Tor Gateway remains at v0.21.0.3**.\n\nRelease changes: [`CHANGELOG.md`](CHANGELOG.md)\n\n'''
+          readme = readme[:en_start] + en + readme[en_end:]
+
+          de_start = readme.index('### Release\n', readme.index('<a id="deutsch">'))
+          de_end = readme.index('### Was das Projekt ausdrücklich nicht ist', de_start)
+          de = '''### Release\n\nAktueller Projektstand: **v0.21.0.14**. Dieses Release macht die 90-Tage-Markteinschätzungs-Rückrechnung startup-sicher, stellt Live-/Rückrechnungs-Scores auf 15-Minuten-Buckets um, behebt die Sats-Sentinel-Privatsphäre beim Inaktivitäts-Auto-Lock und schließt die Performance-/Repository-Bereinigung ab.\n\n#### Highlights seit v0.21.0.13\n\n- genau ein entkoppelter, startup-sicherer 90-Tage-Rückrechnungs-Worker; Market-Reads starten keinen zweiten Langzeit-Task\n- 15-Minuten-Markteinschätzung mit 90 Tagen Aufbewahrung: 8.640 Zielpunkte\n- lokale 15-Minuten-/alte 5-Minuten-/adaptive Kurscaches werden vor jeder öffentlichen Abfrage wiederverwendet\n- fehlende öffentliche Candles bleiben Tor-only/fail-closed; Coinbase Exchange zuerst, Bitstamp als Fallback\n- Sats Sentinel bleibt nach Inaktivitäts-Auto-Lock auf dem Sperrbildschirm verborgen, wenn diese Anzeige deaktiviert ist; Überwachung und Alarme laufen weiter\n- Rückrechnungsstatus zeigt echte Quelle, Intervall und Tor-Route statt festem `Bitstamp 5m`\n- editierbare Market-Rating-Namen und unabhängige Signed-SymLog-Chartachsen bleiben erhalten\n- One-shot-Performance-Smoke: 28/28 fokussierte Tests; Market-Score p95 **147,11 ms** bei 3.650 Historientagen; Max-Drawdown p95 **15,94 ms** und TWR p95 **36,64 ms** bei 20.000 Chartpunkten / 1.500 Events\n\n**Nach dem Update Home Assistant Core vollständig neu starten und das Frontend hart neu laden.**\n\nDas **Tor Gateway bleibt v0.21.0.3**.\n\nÄnderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)\n\n'''
+          readme = readme[:de_start] + de + readme[de_end:]
+          readme_path.write_text(readme, encoding='utf-8')
+
+          changelog_path = root / 'CHANGELOG.md'
+          changelog = changelog_path.read_text(encoding='utf-8')
+          if '## v0.21.0.14 ' not in changelog:
+              entry = '''## v0.21.0.14 — 2026-08-19: startup-safe market reconstruction, Sentinel privacy & smoother runtime\n\n### English\n\n#### Fixed\n- Fixed the Home Assistant restart/startup failure caused by the long-running market reconstruction. Market reads no longer create a second backfill owner; reconstruction has one detached background worker and cannot block Core startup completion.\n- Fixed reconstruction remaining at `waiting_for_home_assistant` on otherwise running installations. A bounded startup delay keeps the worker out of the hot path without depending on CoreState identity.\n- Fixed Sats Sentinel remaining visible after inactivity auto-lock when locked-screen display is disabled. Manual lock, auto-lock and foreground/session reconciliation share the same fail-closed hide path.\n- Removed the hard-coded `Bitstamp 5m` status text; diagnostics now use the actual backend source, interval and Tor route.\n\n#### Market assessment / performance\n- Live and reconstructed market-assessment snapshots use **15-minute buckets** with **90-day retention**: 8,640 target buckets.\n- Local 15-minute candles are preferred, legacy five-minute candles are compacted locally, and adaptive local price samples are reused before network access.\n- Missing public history remains Tor-only/fail-closed. Coinbase Exchange 15-minute candles are preferred; Bitstamp remains the fallback through Tor.\n- Backfilled points never overwrite a real live point in the same bucket.\n- One-shot performance smoke: **28/28** focused tests passed; market-score p95 **147.11 ms** on 3,650 history days; max-drawdown p95 **15.94 ms** and TWR p95 **36.64 ms** on 20,000 chart points / 1,500 events.\n- Backfill remains deliberately paced at two score points per batch with a 20-second pause and executor-backed CPU work.\n\n#### UI / model / repository\n- All seven market-rating names are editable display text and excluded from score/cache signatures.\n- Independent chart axes retain signed SymLog for signed P/L while market score remains linear 0–100.\n- Temporary implementation workflows and duplicate historical release/QC files are removed; `CHANGELOG.md` is the release-history source of truth.\n- Custom Integration: **v0.21.0.14**. Tor Gateway: **v0.21.0.3 unchanged**.\n\n### Deutsch\n\n#### Behoben\n- Home-Assistant-Restart-/Startup-Fehler der langen Marktrückrechnung behoben. Market-Reads erzeugen keinen zweiten Backfill-Owner mehr; die Rückrechnung besitzt genau einen entkoppelten Background-Worker und blockiert Core-Startup nicht.\n- `waiting_for_home_assistant` auf bereits laufenden Installationen behoben. Eine begrenzte Startup-Verzögerung hält den Worker aus dem Startpfad heraus, ohne an CoreState-Identität zu hängen.\n- Sats Sentinel blieb nach Inaktivitäts-Auto-Lock trotz deaktivierter Sperrbildschirm-Anzeige sichtbar. Manueller Lock, Auto-Lock und Foreground-/Session-Abgleich verwenden jetzt denselben fail-closed Hide-Pfad.\n- Festes `Bitstamp 5m` im Status entfernt; Diagnose nutzt echte Backend-Quelle, Intervall und Tor-Route.\n\n#### Markteinschätzung / Performance\n- Live- und rückgerechnete Markteinschätzung nutzt **15-Minuten-Buckets** mit **90 Tagen Aufbewahrung**: 8.640 Ziel-Buckets.\n- Lokale 15-Minuten-Candles haben Vorrang; alte 5-Minuten-Candles werden lokal verdichtet und adaptive lokale Kurssamples vor Netzwerkzugriff wiederverwendet.\n- Fehlende öffentliche Historie bleibt Tor-only/fail-closed. Coinbase-Exchange-15-Minuten-Candles zuerst, Bitstamp als Fallback über Tor.\n- Rückgerechnete Punkte überschreiben niemals einen echten Live-Punkt desselben Buckets.\n- One-shot-Performance-Smoke: **28/28** fokussierte Tests bestanden; Market-Score p95 **147,11 ms** bei 3.650 Historientagen; Max-Drawdown p95 **15,94 ms** und TWR p95 **36,64 ms** bei 20.000 Chartpunkten / 1.500 Events.\n- Backfill bleibt bewusst auf zwei Scorepunkte pro Batch plus 20 Sekunden Pause gedrosselt; CPU-Arbeit läuft im Executor.\n\n#### UI / Modell / Repository\n- Alle sieben Market-Rating-Namen sind frei editierbarer Anzeigetext und aus Score-/Cache-Signaturen ausgeschlossen.\n- Unabhängige Chartachsen behalten Signed-SymLog für vorzeichenbehaftetes P/L; der Marktscore bleibt linear 0–100.\n- Temporäre Implementierungs-Workflows und doppelte alte Release-/QC-Dateien entfernt; `CHANGELOG.md` ist die Release-Historie.\n- Custom Integration: **v0.21.0.14**. Tor Gateway: **v0.21.0.3 unverändert**.\n\n'''
+              changelog_path.write_text(changelog.replace('# Changelog\n\n', '# Changelog\n\n' + entry, 1), encoding='utf-8')
+
+      - name: Validate release candidate
+        run: |
+          python -m pip install --disable-pip-version-check 'pytest>=8,<10'
+          python -m compileall -q custom_components/bitcoin_stack_tracker
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
+          node tests/performance_math_test.js
+          pytest -q tests/test_market_backfill_lifecycle.py tests/test_sentinel_autolock_visibility.py tests/test_xpub_backfill_rating_regressions.py tests/test_chart_independent_scales.py tests/test_release_features.py tests/test_github_release_surface.py tests/test_buy_opportunity.py
+          test "$(tr -d '[:space:]' < VERSION.txt)" = "0.21.0.14"
+          grep -q '"version": "0.21.0.14"' custom_components/bitcoin_stack_tracker/manifest.json
+          grep -q 'VERSION = "0.21.0.14"' custom_components/bitcoin_stack_tracker/const.py
+          grep -q 'FRONTEND_BUILD = "0.21.0.14"' custom_components/bitcoin_stack_tracker/const.py
+          grep -q 'const BUILD_VERSION = "0.21.0.14"' custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          grep -q 'const FRONTEND_BUILD = "0.21.0.14"' custom_components/bitcoin_stack_tracker/frontend/panel.js
+          grep -q 'v=0.21.0.14' custom_components/bitcoin_stack_tracker/frontend/index.html
+          grep -q 'FRONTEND_CACHE_REVISION = "8"' custom_components/bitcoin_stack_tracker/const.py
+
+      - name: Commit release preparation
+        run: |
+          git config user.name "Einundzwanzig Koblenz"
+          git config user.email "koblenzeinundzwanzig@proton.me"
+          git rm .github/workflows/agent-release-prep-v021014-fixed.yml
+          git add VERSION.txt README.md CHANGELOG.md \
+            custom_components/bitcoin_stack_tracker/manifest.json \
+            custom_components/bitcoin_stack_tracker/const.py \
+            custom_components/bitcoin_stack_tracker/wallet_watch.py \
+            custom_components/bitcoin_stack_tracker/frontend/index.html \
+            custom_components/bitcoin_stack_tracker/frontend/panel.js \
+            custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          git commit -m "Prepare v0.21.0.14 release"
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
