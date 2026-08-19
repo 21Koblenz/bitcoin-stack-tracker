@@ -32,7 +32,26 @@ jobs:
           import sys
           import textwrap
 
-          source = Path('.github/workflows/agent-v021015-upgrade-fix.yml').read_text(encoding='utf-8').splitlines()
+          source_text = Path('.github/workflows/agent-v021015-upgrade-fix.yml').read_text(encoding='utf-8')
+          # main already advanced the outer panel cache key from 8 to 9 after
+          # v0.21.0.14 was published, while index.html still references r=6.
+          # Use a fresh r=10 for this upgrade repair so every existing browser
+          # gets a genuinely new URL.
+          source_text = source_text.replace(
+              "if 'FRONTEND_CACHE_REVISION = \"8\"' not in const:",
+              "if 'FRONTEND_CACHE_REVISION = \"9\"' not in const:",
+          )
+          source_text = source_text.replace(
+              "const.replace('FRONTEND_CACHE_REVISION = \"8\"', 'FRONTEND_CACHE_REVISION = \"9\"', 1)",
+              "const.replace('FRONTEND_CACHE_REVISION = \"9\"', 'FRONTEND_CACHE_REVISION = \"10\"', 1)",
+          )
+          source_text = source_text.replace('static/style.css?v=0.21.0.15&r=9', 'static/style.css?v=0.21.0.15&r=10')
+          source_text = source_text.replace('static/app.js?v=0.21.0.15&r=9', 'static/app.js?v=0.21.0.15&r=10')
+          source_text = source_text.replace('static/performance-math.js?v=0.21.0.15&r=9', 'static/performance-math.js?v=0.21.0.15&r=10')
+          source_text = source_text.replace("grep -q 'FRONTEND_CACHE_REVISION = \"9\"'", "grep -q 'FRONTEND_CACHE_REVISION = \"10\"'")
+          source_text = source_text.replace('advertised cache revision 8', 'advertised cache revision 9')
+          source_text = source_text.replace('Cache-Revision 8', 'Cache-Revision 9')
+          source = source_text.splitlines()
 
           def extract_run(step_name: str) -> str:
               marker = f'- name: {step_name}'
