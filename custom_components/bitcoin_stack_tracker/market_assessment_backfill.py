@@ -1,15 +1,13 @@
-"""Startup-safe throttled 90-day five-minute market-assessment backfill.
+"""Startup-safe throttled 90-day 15-minute market-assessment reconstruction.
 
-The live assessment cache records actual observations as they happen. This
-module reconstructs the recent public chart history from real five-minute OHLC
-closes and the existing causal price-only model. Reconstructed points are marked
-``backfilled``; a later live observation always wins for the same five-minute
-bucket.
+Live market-assessment observations are recorded in 15-minute buckets.  The
+historical reconstruction first reuses durable local chart candles and only
+asks a public exchange for missing history.  Public requests remain Tor-only and
+fail closed; there is no clearnet fallback.
 
-No portfolio, wallet, address, XPUB, descriptor or other private tracker data is
-used or sent to an exchange. Public requests always go through the configured
-Tor proxy and remain fail-closed. The worker is deliberately registered as a
-Home Assistant background task so it cannot hold Core in the STARTING state.
+The long-running worker is detached into Home Assistant's background-task pool
+so it never participates in Core startup completion.  Reconstructed points are
+marked ``backfilled`` and never overwrite a real live observation.
 """
 from __future__ import annotations
 
@@ -20,7 +18,7 @@ import logging
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlparse
 
-from aiohttp import ClientError, ClientResponseError
+from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CoreState, HomeAssistant
 
@@ -43,21 +41,20 @@ from .storage import BitcoinHistoryStore
 _LOGGER = logging.getLogger(__name__)
 
 BACKFILL_DAYS = 90
-BACKFILL_INTERVAL_MINUTES = 5
+BACKFILL_INTERVAL_MINUTES = 15
 BACKFILL_PAGE_LIMIT = 1000
-BACKFILL_MAX_PAGES = 40
+BACKFILL_MAX_PAGES = 20
 BACKFILL_COINBASE_PAGE_LIMIT = 300
-BACKFILL_COINBASE_MAX_PAGES = 100
+BACKFILL_COINBASE_MAX_PAGES = 40
 BACKFILL_NETWORK_PAUSE_SECONDS = 1
-# The full current model is intentionally replayed only two points at a time.
-# At 20 s between batches the one-time fill takes days rather than creating a
-# sustained CPU spike on smaller Home Assistant hosts.
 BACKFILL_SCORE_BATCH_POINTS = 2
 BACKFILL_SCORE_PAUSE_SECONDS = 20
-BACKFILL_INITIAL_DELAY_SECONDS = 45
-BACKFILL_GATEWAY_RETRY_SECONDS = 30
+BACKFILL_INITIAL_DELAY_SECONDS = 120
+BACKFILL_GATEWAY_RETRY_SECONDS = 60
 BACKFILL_RETRY_SECONDS = 5 * 60
-BACKFILL_GENERATION_RETRY_SECONDS = 60
+BACKFILL_GENERATION_RETRY_SECONDS = 5 * 60
+BACKFILL_COMPLETE_RECHECK_SECONDS = 15 * 60
+BACKFILL_MIN_SOURCE_COVERAGE = 0.95
 BITSTAMP_OHLC_HOSTS = {"bitstamp.net", "www.bitstamp.net"}
 COINBASE_EXCHANGE_HOSTS = {"api.exchange.coinbase.com"}
 
@@ -80,6 +77,10 @@ def _utc_stamp(value: Any) -> datetime | None:
 def _bucket(stamp: datetime) -> str:
     minute = (stamp.minute // BACKFILL_INTERVAL_MINUTES) * BACKFILL_INTERVAL_MINUTES
     return stamp.replace(minute=minute, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+
+def _expected_points() -> int:
+    return (BACKFILL_DAYS * 24 * 60) // BACKFILL_INTERVAL_MINUTES
 
 
 def _validated_redirect(
@@ -145,7 +146,7 @@ async def _request_json_with_safe_redirects(
     raise ValueError(f"Too many {provider} redirects")
 
 
-async def _fetch_bitstamp_5m_page(
+async def _fetch_bitstamp_page(
     hass: HomeAssistant,
     *,
     currency: str,
@@ -179,15 +180,14 @@ async def _fetch_bitstamp_5m_page(
             price = float(row.get("close"))
         except (TypeError, ValueError):
             continue
-        if stamp is None or price <= 0:
-            continue
-        result[stamp.isoformat()] = price
+        if stamp is not None and price > 0:
+            result[stamp.isoformat()] = price
     if not result:
-        raise ValueError("Bitstamp returned no usable five-minute OHLC values")
+        raise ValueError("Bitstamp returned no usable 15-minute OHLC values")
     return result
 
 
-async def _fetch_coinbase_5m_page(
+async def _fetch_coinbase_page(
     hass: HomeAssistant,
     *,
     currency: str,
@@ -220,11 +220,10 @@ async def _fetch_coinbase_5m_page(
             price = float(row[4])
         except (TypeError, ValueError):
             continue
-        if stamp is None or price <= 0:
-            continue
-        result[stamp.isoformat()] = price
+        if stamp is not None and price > 0:
+            result[stamp.isoformat()] = price
     if not result:
-        raise ValueError("Coinbase Exchange returned no usable five-minute candles")
+        raise ValueError("Coinbase Exchange returned no usable 15-minute candles")
     return result
 
 
@@ -266,6 +265,91 @@ def _current_generation(entry: ConfigEntry) -> tuple[str, str, dict[str, Any], d
     return signature, currency, scoring, settings
 
 
+def _cached_market_candles(
+    history_store: BitcoinHistoryStore,
+    *,
+    currency: str,
+    now: datetime,
+    cutoff: datetime,
+) -> dict[str, float]:
+    """Reuse durable local chart candles before making any public request.
+
+    The exact 15-minute tier is preferred.  Existing five-minute candles from a
+    previous build are compacted locally to 15-minute closing buckets.
+    """
+    by_bucket: dict[str, tuple[datetime, float]] = {}
+    for interval in (BACKFILL_INTERVAL_MINUTES, 5):
+        try:
+            values = history_store.market_candles_for_days(BACKFILL_DAYS, interval).get(
+                currency, {}
+            )
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not isinstance(values, Mapping):
+            continue
+        for raw_stamp, raw_price in values.items():
+            stamp = _utc_stamp(raw_stamp)
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError):
+                continue
+            if stamp is None or price <= 0 or not (cutoff <= stamp <= now):
+                continue
+            bucket = _bucket(stamp)
+            previous = by_bucket.get(bucket)
+            if previous is None or stamp >= previous[0]:
+                by_bucket[bucket] = (stamp, price)
+    return {stamp.isoformat(): price for stamp, price in by_bucket.values()}
+
+
+async def _download_coinbase_90d(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    currency: str,
+    proxy_url: str,
+    now: datetime,
+    cutoff: datetime,
+) -> dict[str, float]:
+    candles: dict[str, float] = {}
+    cursor_end = now
+    page_span = timedelta(
+        seconds=BACKFILL_INTERVAL_MINUTES * 60 * BACKFILL_COINBASE_PAGE_LIMIT
+    )
+    for page_index in range(BACKFILL_COINBASE_MAX_PAGES):
+        if _runtime(hass, entry.entry_id) is None or cursor_end <= cutoff:
+            break
+        cursor_start = max(cutoff, cursor_end - page_span)
+        page = await _fetch_coinbase_page(
+            hass,
+            currency=currency,
+            proxy_url=proxy_url,
+            start=cursor_start,
+            end=cursor_end,
+        )
+        for raw_stamp, raw_price in page.items():
+            stamp = _utc_stamp(raw_stamp)
+            if stamp is not None and cutoff <= stamp <= now:
+                candles[stamp.isoformat()] = float(raw_price)
+        _set_status(
+            hass,
+            entry.entry_id,
+            source="Coinbase Exchange",
+            downloaded_points=len(candles),
+            downloaded_pages=page_index + 1,
+        )
+        if cursor_start <= cutoff:
+            break
+        cursor_end = cursor_start - timedelta(seconds=1)
+        if not await _sleep_while_loaded(
+            hass, entry.entry_id, BACKFILL_NETWORK_PAUSE_SECONDS
+        ):
+            return {}
+    if not candles:
+        raise ValueError("Coinbase Exchange returned no usable 15-minute candles for backfill")
+    return candles
+
+
 async def _download_bitstamp_90d(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -280,7 +364,7 @@ async def _download_bitstamp_90d(
     for page_index in range(BACKFILL_MAX_PAGES):
         if _runtime(hass, entry.entry_id) is None:
             return {}
-        page = await _fetch_bitstamp_5m_page(
+        page = await _fetch_bitstamp_page(
             hass,
             currency=currency,
             proxy_url=proxy_url,
@@ -315,57 +399,7 @@ async def _download_bitstamp_90d(
         ):
             return {}
     if not candles:
-        raise ValueError("Bitstamp returned no usable five-minute candles for backfill")
-    return candles
-
-
-async def _download_coinbase_90d(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    *,
-    currency: str,
-    proxy_url: str,
-    now: datetime,
-    cutoff: datetime,
-) -> dict[str, float]:
-    candles: dict[str, float] = {}
-    cursor_end = now
-    page_span = timedelta(
-        seconds=BACKFILL_INTERVAL_MINUTES * 60 * BACKFILL_COINBASE_PAGE_LIMIT
-    )
-    for page_index in range(BACKFILL_COINBASE_MAX_PAGES):
-        if _runtime(hass, entry.entry_id) is None:
-            return {}
-        if cursor_end <= cutoff:
-            break
-        cursor_start = max(cutoff, cursor_end - page_span)
-        page = await _fetch_coinbase_5m_page(
-            hass,
-            currency=currency,
-            proxy_url=proxy_url,
-            start=cursor_start,
-            end=cursor_end,
-        )
-        for raw_stamp, raw_price in page.items():
-            stamp = _utc_stamp(raw_stamp)
-            if stamp is not None and cutoff <= stamp <= now:
-                candles[stamp.isoformat()] = float(raw_price)
-        _set_status(
-            hass,
-            entry.entry_id,
-            source="Coinbase Exchange",
-            downloaded_points=len(candles),
-            downloaded_pages=page_index + 1,
-        )
-        if cursor_start <= cutoff:
-            break
-        cursor_end = cursor_start - timedelta(seconds=1)
-        if not await _sleep_while_loaded(
-            hass, entry.entry_id, BACKFILL_NETWORK_PAUSE_SECONDS
-        ):
-            return {}
-    if not candles:
-        raise ValueError("Coinbase Exchange returned no usable five-minute candles for backfill")
+        raise ValueError("Bitstamp returned no usable 15-minute candles for backfill")
     return candles
 
 
@@ -378,8 +412,9 @@ async def _download_90d_with_fallback(
     now: datetime,
     cutoff: datetime,
 ) -> tuple[dict[str, float], str]:
+    """Prefer Coinbase's native 15-minute candles; keep Bitstamp secondary."""
     try:
-        candles = await _download_bitstamp_90d(
+        candles = await _download_coinbase_90d(
             hass,
             entry,
             currency=currency,
@@ -387,16 +422,13 @@ async def _download_90d_with_fallback(
             now=now,
             cutoff=cutoff,
         )
-        return candles, "Bitstamp 5m OHLC via Tor"
+        return candles, "Coinbase Exchange 15m candles via Tor"
     except asyncio.CancelledError:
         raise
     except (ClientError, TimeoutError, ValueError, TypeError) as err:
-        # Bitstamp currently returns HTTP 403 for some Tor exits. This is a
-        # provider refusal, not a reason to weaken the Tor-only policy. Fall
-        # through to another public exchange over the exact same Tor route.
         status = getattr(err, "status", None)
         _LOGGER.warning(
-            "Bitstamp 5m backfill unavailable%s; trying Coinbase Exchange through Tor: %s",
+            "Coinbase Exchange 15m backfill unavailable%s; trying Bitstamp through Tor: %s",
             f" (HTTP {status})" if status else "",
             err,
         )
@@ -405,13 +437,13 @@ async def _download_90d_with_fallback(
             entry.entry_id,
             state="provider_fallback",
             complete=False,
-            source="Bitstamp -> Coinbase Exchange",
+            source="Coinbase Exchange -> Bitstamp",
             provider_error=f"{type(err).__name__}: {err}"[:240],
             downloaded_points=0,
             downloaded_pages=0,
         )
 
-    candles = await _download_coinbase_90d(
+    candles = await _download_bitstamp_90d(
         hass,
         entry,
         currency=currency,
@@ -419,7 +451,7 @@ async def _download_90d_with_fallback(
         now=now,
         cutoff=cutoff,
     )
-    return candles, "Coinbase Exchange 5m candles via Tor"
+    return candles, "Bitstamp 15m OHLC via Tor"
 
 
 def _score_batch(
@@ -486,35 +518,88 @@ async def _backfill_once(
         )
         return False
 
-    proxy_url = tor_proxy_from_settings(settings)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=BACKFILL_DAYS)
+    expected = _expected_points()
+    candles = _cached_market_candles(
+        history_store, currency=currency, now=now, cutoff=cutoff
+    )
+    local_points = len(candles)
+    source_parts: list[str] = ["local chart cache"] if local_points else []
 
     _set_status(
         hass,
         entry.entry_id,
-        state="downloading",
+        state="using_local_cache" if local_points else "waiting_for_tor_gateway",
         complete=False,
         signature=signature,
         currency=currency,
         interval_minutes=BACKFILL_INTERVAL_MINUTES,
         retention_days=BACKFILL_DAYS,
-        source="Bitstamp",
+        source="local chart cache" if local_points else "Coinbase Exchange",
         network_route="Tor only",
+        local_price_points=local_points,
+        available_price_points=local_points,
+        expected_source_points=expected,
+        source_points=0,
         downloaded_points=0,
         downloaded_pages=0,
         provider_error=None,
         error=None,
     )
 
-    candles, source = await _download_90d_with_fallback(
-        hass,
-        entry,
-        currency=currency,
-        proxy_url=proxy_url,
-        now=now,
-        cutoff=cutoff,
-    )
+    network_error: str | None = None
+    need_network = local_points < int(expected * BACKFILL_MIN_SOURCE_COVERAGE)
+    if need_network:
+        try:
+            gateway_host = await async_tor_gateway_host()
+            proxy_url = tor_proxy_from_settings(settings)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="downloading",
+                gateway_host=gateway_host,
+                error=None,
+            )
+            remote, remote_source = await _download_90d_with_fallback(
+                hass,
+                entry,
+                currency=currency,
+                proxy_url=proxy_url,
+                now=now,
+                cutoff=cutoff,
+            )
+            candles.update(remote)
+            source_parts.append(remote_source)
+        except TorConfigurationError as err:
+            network_error = str(err)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="waiting_for_tor_gateway",
+                complete=False,
+                error=network_error[:240],
+                retry_in_seconds=BACKFILL_GATEWAY_RETRY_SECONDS,
+                next_retry_at=(
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=BACKFILL_GATEWAY_RETRY_SECONDS)
+                ).isoformat(),
+            )
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
+            network_error = f"{type(err).__name__}: {err}"
+            _LOGGER.warning("Market-assessment 15m price-history download paused: %s", err)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="retry_wait",
+                complete=False,
+                error=network_error[:240],
+                retry_in_seconds=BACKFILL_RETRY_SECONDS,
+                next_retry_at=(
+                    datetime.now(timezone.utc) + timedelta(seconds=BACKFILL_RETRY_SECONDS)
+                ).isoformat(),
+            )
+
     ordered = sorted(
         (
             (stamp, float(price))
@@ -525,8 +610,9 @@ async def _backfill_once(
         key=lambda item: item[0],
     )
     if not ordered:
-        raise ValueError("No usable five-minute candles were returned by any Tor provider")
+        return False
 
+    available_buckets = {_bucket(row[0]) for row in ordered}
     existing = await cache.async_points(signature, since=cutoff)
     existing_buckets = {
         str(item.get("bucket") or "")
@@ -534,26 +620,30 @@ async def _backfill_once(
         if isinstance(item, dict) and item.get("bucket")
     }
     missing = [row for row in ordered if _bucket(row[0]) not in existing_buckets]
-    total = len(ordered)
-    completed = total - len(missing)
+    completed = len(existing_buckets & available_buckets)
+    total = len(available_buckets)
+    source = " + ".join(dict.fromkeys(source_parts)) or "local chart cache"
+    coverage = min(1.0, total / max(1, expected))
+
     _set_status(
         hass,
         entry.entry_id,
-        state="scoring" if missing else "complete",
-        complete=not missing,
+        state="scoring" if missing else "checking_coverage",
+        complete=False,
         signature=signature,
         source=source,
-        source_points=total,
+        source_points=0,
+        available_price_points=total,
+        expected_source_points=expected,
+        source_coverage_percent=round(coverage * 100, 2),
         completed_points=completed,
-        remaining_points=len(missing),
-        error=None,
+        remaining_points=max(0, expected - completed),
+        error=network_error,
     )
-    if not missing:
-        return True
 
     for offset in range(0, len(missing), BACKFILL_SCORE_BATCH_POINTS):
         if _runtime(hass, entry.entry_id) is None:
-            return True
+            return False
         latest_signature, latest_currency, _latest_scoring, _latest_settings = _current_generation(entry)
         if latest_signature != signature or latest_currency != currency:
             _set_status(
@@ -586,25 +676,49 @@ async def _backfill_once(
             signature=signature,
             source=source,
             completed_points=completed,
-            remaining_points=max(0, total - completed),
+            remaining_points=max(0, expected - completed),
         )
         if offset + BACKFILL_SCORE_BATCH_POINTS < len(missing):
             if not await _sleep_while_loaded(
                 hass, entry.entry_id, BACKFILL_SCORE_PAUSE_SECONDS
             ):
-                return True
+                return False
+
+    enough_coverage = total >= int(expected * BACKFILL_MIN_SOURCE_COVERAGE)
+    if enough_coverage and network_error is None:
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="complete",
+            complete=True,
+            signature=signature,
+            source=source,
+            source_points=0,
+            available_price_points=total,
+            expected_source_points=expected,
+            completed_points=completed,
+            remaining_points=max(0, expected - completed),
+            error=None,
+            retry_in_seconds=0,
+            next_retry_at=None,
+        )
+        return True
 
     _set_status(
         hass,
         entry.entry_id,
-        state="complete",
-        complete=True,
+        state="retry_wait" if network_error else "waiting_for_more_price_history",
+        complete=False,
         signature=signature,
         source=source,
-        completed_points=total,
-        remaining_points=0,
+        source_points=0,
+        available_price_points=total,
+        expected_source_points=expected,
+        completed_points=completed,
+        remaining_points=max(0, expected - completed),
+        error=network_error,
     )
-    return True
+    return False
 
 
 async def _background_worker(
@@ -613,9 +727,6 @@ async def _background_worker(
     history_store: BitcoinHistoryStore,
     cache: MarketAssessmentIntradayCache,
 ) -> None:
-    # Application-stage add-ons such as the bundled Tor Gateway may not be
-    # available while Core is still STARTING. Waiting here is safe because this
-    # coroutine is registered in Home Assistant's background-task bucket.
     while _runtime(hass, entry.entry_id) is not None and hass.state is not CoreState.running:
         _set_status(
             hass,
@@ -631,38 +742,24 @@ async def _background_worker(
         return
 
     while _runtime(hass, entry.entry_id) is not None:
-        try:
-            try:
-                gateway_host = await async_tor_gateway_host()
-            except TorConfigurationError as err:
-                _set_status(
-                    hass,
-                    entry.entry_id,
-                    state="waiting_for_tor_gateway",
-                    complete=False,
-                    error=str(err)[:240],
-                    retry_in_seconds=BACKFILL_GATEWAY_RETRY_SECONDS,
-                    next_retry_at=(
-                        datetime.now(timezone.utc)
-                        + timedelta(seconds=BACKFILL_GATEWAY_RETRY_SECONDS)
-                    ).isoformat(),
-                )
-                if not await _sleep_while_loaded(
-                    hass, entry.entry_id, BACKFILL_GATEWAY_RETRY_SECONDS
-                ):
-                    return
-                continue
-
-            _set_status(
-                hass,
-                entry.entry_id,
-                gateway_host=gateway_host,
-                error=None,
-                retry_in_seconds=0,
-                next_retry_at=None,
-            )
-            if await _backfill_once(hass, entry, history_store, cache):
+        runtime = _runtime(hass, entry.entry_id)
+        if runtime is None:
+            return
+        signature, _currency, _scoring, _settings = _current_generation(entry)
+        status = runtime.get("market_assessment_backfill_status")
+        if (
+            isinstance(status, dict)
+            and bool(status.get("complete"))
+            and str(status.get("signature") or "") == signature
+        ):
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_COMPLETE_RECHECK_SECONDS
+            ):
                 return
+            continue
+
+        try:
+            await _backfill_once(hass, entry, history_store, cache)
             if not await _sleep_while_loaded(
                 hass, entry.entry_id, BACKFILL_GENERATION_RETRY_SECONDS
             ):
@@ -694,14 +791,7 @@ async def async_market_assessment_backfill_loop(
     history_store: BitcoinHistoryStore,
     cache: MarketAssessmentIntradayCache,
 ) -> None:
-    """Detach the long-running reconstruction from Home Assistant startup.
-
-    ``async_setup_entry`` currently invokes this coroutine through
-    ``hass.async_create_task``. A normal task is part of Home Assistant's startup
-    wait set. Therefore this thin wrapper immediately moves the real long-lived
-    work into ``async_create_background_task`` and returns. Background tasks do
-    not block startup and are automatically cancelled on Core shutdown.
-    """
+    """Detach the long-running reconstruction from Home Assistant startup."""
     runtime = _runtime(hass, entry.entry_id)
     if runtime is None:
         return
