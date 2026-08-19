@@ -32,7 +32,8 @@ The project pins Guardian Project Tor Android and jtorctl. The app binds to the 
 
 ## Android platform
 
-- `compileSdk` / `targetSdk`: 36 (Android 16 compatibility baseline)
+- `compileSdk`: 37, required by the pinned Tor Android runtime
+- `targetSdk`: 36 (Android 16 runtime-behavior baseline)
 - minimum Android: API 28
 - Java: 17
 - UI: Jetpack Compose
