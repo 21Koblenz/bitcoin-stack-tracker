@@ -1,4 +1,4 @@
-name: Agent startup-safe backfill fix
+name: Agent definitive backfill lifecycle fix
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
           python-version: '3.13'
       - name: Install test runner
         run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
-      - name: Patch startup scheduling and gateway wait
+      - name: Apply lifecycle fix
         shell: python
         run: |
           from pathlib import Path
@@ -47,7 +47,7 @@ jobs:
         "Bitcoin Stack Tracker 90-day market assessment backfill",
     )'''
           if old not in text:
-              raise SystemExit('backfill task scheduling pattern missing')
+              raise SystemExit('setup backfill task pattern missing')
           text = text.replace(old, new, 1)
 
           old = '''            runtime["history_auto_last_result"] = "startup-sync-scheduled"
@@ -58,97 +58,60 @@ jobs:
                 _scheduled_sync(dt_util.utcnow()),
                 f"Bitcoin Stack Tracker startup history sync {entry.entry_id}",
             )'''
-          if old not in text:
-              raise SystemExit('startup history scheduling pattern missing')
-          text = text.replace(old, new, 1)
+          if old in text:
+              text = text.replace(old, new, 1)
           init.write_text(text, encoding='utf-8')
 
+          runtime_path = comp / 'market_assessment_runtime.py'
+          rt = runtime_path.read_text(encoding='utf-8')
+          rt = rt.replace('from .market_assessment_backfill import async_market_assessment_backfill_loop\n', '', 1)
+          rt = rt.replace('_BACKFILL_TASK_KEY = "_market_assessment_backfill_task"\n', '', 1)
+          start = rt.find('def _ensure_backfill(\n')
+          end = rt.find('\n\nasync def async_market_assessment(', start)
+          if start < 0 or end <= start:
+              raise SystemExit('runtime ensure-backfill bounds missing')
+          replacement = '''def _ensure_backfill(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    history_storage: Any,
+    runtime: dict[str, Any],
+    *,
+    currency: str,
+    settings: dict[str, Any],
+) -> None:
+    """Leave backfill lifecycle exclusively to config-entry setup.
+
+    Market-assessment reads must never create a second long-running task. The
+    config entry owns exactly one background task and cancels it on unload.
+    """
+    del hass, entry, history_storage, runtime, currency, settings
+'''
+          rt = rt[:start] + replacement + rt[end:]
+          runtime_path.write_text(rt, encoding='utf-8')
+
           backfill = comp / 'market_assessment_backfill.py'
-          text = backfill.read_text(encoding='utf-8')
-          text = text.replace(
-              'from homeassistant.core import HomeAssistant\n',
-              'from homeassistant.core import CoreState, HomeAssistant\n',
-              1,
-          )
-          text = text.replace(
-              'from .network import async_routed_session, tor_proxy_from_settings\n',
-              'from .network import (\n    TorConfigurationError,\n    async_routed_session,\n    async_tor_gateway_host,\n    tor_proxy_from_settings,\n)\n',
-              1,
-          )
-          text = text.replace(
-              'BACKFILL_INITIAL_DELAY_SECONDS = 60\nBACKFILL_RETRY_SECONDS = 6 * 60 * 60\nBACKFILL_GENERATION_RETRY_SECONDS = 60\n',
-              'BACKFILL_INITIAL_DELAY_SECONDS = 30\nBACKFILL_GATEWAY_RETRY_SECONDS = 30\nBACKFILL_RETRY_SECONDS = 5 * 60\nBACKFILL_GENERATION_RETRY_SECONDS = 60\n',
-              1,
-          )
+          bf = backfill.read_text(encoding='utf-8')
+          start = bf.find('async def async_market_assessment_backfill_loop(\n')
+          if start < 0:
+              raise SystemExit('backfill public loop missing')
+          new_tail = '''async def async_market_assessment_backfill_loop(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    history_store: BitcoinHistoryStore,
+    cache: MarketAssessmentIntradayCache,
+) -> None:
+    """Run the single config-entry-owned background reconstruction worker."""
+    await _background_worker(hass, entry, history_store, cache)
+'''
+          bf = bf[:start] + new_tail
+          backfill.write_text(bf, encoding='utf-8')
 
-          old = '''    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
-        return
-    while _runtime(hass, entry.entry_id) is not None:
-        try:
-            if await _backfill_once(hass, entry, history_store, cache):
-                return'''
-          new = '''    # This is a true Home Assistant background task. During HAOS boot the
-    # Supervisor can start application-stage add-ons (including our Tor Gateway)
-    # only after Core has wrapped up startup. Never make Core startup depend on
-    # an add-on which itself is waiting for Core to become RUNNING.
-    while _runtime(hass, entry.entry_id) is not None and hass.state is not CoreState.running:
-        _set_status(
-            hass,
-            entry.entry_id,
-            state="waiting_for_home_assistant",
-            complete=False,
-            error=None,
-        )
-        if not await _sleep_while_loaded(hass, entry.entry_id, 2):
-            return
-
-    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
-        return
-
-    while _runtime(hass, entry.entry_id) is not None:
-        try:
-            # The bundled Tor Gateway is an HA application-stage add-on. If it
-            # is still starting, wait cheaply instead of entering the generic
-            # provider retry path. Public traffic remains fail-closed.
-            try:
-                gateway_host = await async_tor_gateway_host()
-            except TorConfigurationError as err:
-                _set_status(
-                    hass,
-                    entry.entry_id,
-                    state="waiting_for_tor_gateway",
-                    complete=False,
-                    error=str(err)[:240],
-                    retry_in_seconds=BACKFILL_GATEWAY_RETRY_SECONDS,
-                    next_retry_at=(
-                        datetime.now(timezone.utc)
-                        + timedelta(seconds=BACKFILL_GATEWAY_RETRY_SECONDS)
-                    ).isoformat(),
-                )
-                if not await _sleep_while_loaded(
-                    hass, entry.entry_id, BACKFILL_GATEWAY_RETRY_SECONDS
-                ):
-                    return
-                continue
-            _set_status(
-                hass,
-                entry.entry_id,
-                gateway_host=gateway_host,
-                error=None,
-                retry_in_seconds=0,
-                next_retry_at=None,
-            )
-            if await _backfill_once(hass, entry, history_store, cache):
-                return'''
-          if old not in text:
-              raise SystemExit('backfill loop startup pattern missing')
-          text = text.replace(old, new, 1)
-          backfill.write_text(text, encoding='utf-8')
-
-          tests = root / 'tests' / 'test_xpub_backfill_rating_regressions.py'
-          t = tests.read_text(encoding='utf-8')
-          t += '''\n\ndef test_market_backfill_cannot_block_home_assistant_startup():\n init = I\n assert "entry.async_create_background_task" in init\n assert "startup history sync" in init\n assert "waiting_for_home_assistant" in M\n assert "waiting_for_tor_gateway" in M\n assert "async_tor_gateway_host" in M\n assert "BACKFILL_GATEWAY_RETRY_SECONDS = 30" in M\n assert "BACKFILL_RETRY_SECONDS = 5 * 60" in M\n assert "BACKFILL_RETRY_SECONDS = 6 * 60 * 60" not in M\n'''
-          tests.write_text(t, encoding='utf-8')
+          test_path = root / 'tests' / 'test_xpub_backfill_rating_regressions.py'
+          tests = test_path.read_text(encoding='utf-8')
+          extra = '''\n\ndef test_backfill_has_single_background_lifecycle_owner():\n    assert 'entry.async_create_background_task(' in INIT\n    assert '"Bitcoin Stack Tracker 90-day market assessment backfill"' in INIT\n    assert 'hass.async_create_task(\\n        async_market_assessment_backfill_loop' not in INIT\n    assert 'Bitcoin Stack Tracker throttled market assessment backfill' not in (COMPONENT / "market_assessment_runtime.py").read_text(encoding="utf-8")\n    assert 'await _background_worker(hass, entry, history_store, cache)' in BACKFILL\n    assert 'waiting_for_home_assistant' in BACKFILL\n    assert 'waiting_for_tor_gateway' in BACKFILL\n'''
+          if 'test_backfill_has_single_background_lifecycle_owner' not in tests:
+              tests += extra
+          test_path.write_text(tests, encoding='utf-8')
 
       - name: Validate
         shell: bash
@@ -156,9 +119,9 @@ jobs:
           set -euo pipefail
           python -m compileall -q custom_components/bitcoin_stack_tracker
           node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
-          node --check custom_components/bitcoin_stack_tracker/frontend/static/panel.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
           python -m pytest -q tests/test_xpub_backfill_rating_regressions.py tests/test_sentinel_market_regressions.py tests/test_market_assessment_ui.py tests/test_chart_independent_scales.py tests/test_release_features.py
-      - name: Commit patch and remove bootstrap workflows
+      - name: Commit production fix and remove bootstrap workflows
         shell: bash
         run: |
           set -euo pipefail
@@ -166,5 +129,5 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
-          git commit -m "Prevent market backfill from blocking Home Assistant startup"
+          git commit -m "Fix Home Assistant backfill task lifecycle"
           git push origin HEAD:agent/sentinel-market-cache-cleanup
