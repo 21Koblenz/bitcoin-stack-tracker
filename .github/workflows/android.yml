@@ -6,9 +6,15 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
   push:
+    branches:
+      - main
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
