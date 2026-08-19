@@ -1,0 +1,504 @@
+name: Agent 15-minute market reconstruction fix
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-market-15m-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
+      - name: Apply 15-minute cached-first reconstruction
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          comp = root / 'custom_components' / 'bitcoin_stack_tracker'
+
+          runtime_path = comp / 'market_assessment_runtime.py'
+          runtime = runtime_path.read_text(encoding='utf-8')
+          if 'MARKET_ASSESSMENT_CACHE_SECONDS = 5 * 60' not in runtime:
+              raise SystemExit('runtime cache interval pattern missing')
+          runtime = runtime.replace('MARKET_ASSESSMENT_CACHE_SECONDS = 5 * 60', 'MARKET_ASSESSMENT_CACHE_SECONDS = 15 * 60', 1)
+          runtime = runtime.replace('five-minute TTL', 'fifteen-minute TTL')
+          runtime_path.write_text(runtime, encoding='utf-8')
+
+          cache_path = comp / 'market_assessment_intraday_cache.py'
+          cache = cache_path.read_text(encoding='utf-8')
+          if '_BUCKET_MINUTES = 5' not in cache:
+              raise SystemExit('intraday bucket pattern missing')
+          cache = cache.replace('_BUCKET_MINUTES = 5', '_BUCKET_MINUTES = 15', 1)
+          cache = cache.replace('five-minute snapshots', 'fifteen-minute snapshots')
+          cache = cache.replace('five-minute buckets', 'fifteen-minute buckets')
+          cache = cache.replace('five-minute bucket', 'fifteen-minute bucket')
+          cache_path.write_text(cache, encoding='utf-8')
+
+          backfill_path = comp / 'market_assessment_backfill.py'
+          bf = backfill_path.read_text(encoding='utf-8')
+          if 'BACKFILL_INTERVAL_MINUTES = 5' not in bf:
+              raise SystemExit('backfill interval pattern missing')
+          bf = bf.replace('BACKFILL_INTERVAL_MINUTES = 5', 'BACKFILL_INTERVAL_MINUTES = 15', 1)
+          bf = bf.replace('BACKFILL_INITIAL_DELAY_SECONDS = 45', 'BACKFILL_INITIAL_DELAY_SECONDS = 120', 1)
+          bf = bf.replace('BACKFILL_GENERATION_RETRY_SECONDS = 60', 'BACKFILL_GENERATION_RETRY_SECONDS = 5 * 60', 1)
+          bf = bf.replace('five-minute', 'fifteen-minute')
+          bf = bf.replace('5m backfill', '15m backfill')
+          bf = bf.replace('Bitstamp 5m OHLC via Tor', 'Bitstamp 15m OHLC via Tor')
+          bf = bf.replace('Coinbase Exchange 5m candles via Tor', 'Coinbase Exchange 15m candles via Tor')
+
+          helper_marker = '\n\nasync def _download_90d_with_fallback(\n'
+          helper = '''
+
+def _cached_market_candles(
+    history_store: BitcoinHistoryStore,
+    *,
+    currency: str,
+    now: datetime,
+    cutoff: datetime,
+) -> dict[str, float]:
+    """Reuse durable local chart candles before asking a public provider.
+
+    Prefer the exact 15-minute tier. If an older install already has five-minute
+    candles, compact them locally to the same 15-minute grid. No network access
+    is performed here.
+    """
+    by_bucket: dict[str, tuple[datetime, float]] = {}
+    for interval in (BACKFILL_INTERVAL_MINUTES, 5):
+        try:
+            values = history_store.market_candles_for_days(BACKFILL_DAYS, interval).get(
+                currency, {}
+            )
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not isinstance(values, Mapping):
+            continue
+        for raw_stamp, raw_price in values.items():
+            stamp = _utc_stamp(raw_stamp)
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError):
+                continue
+            if stamp is None or price <= 0 or not (cutoff <= stamp <= now):
+                continue
+            bucket = _bucket(stamp)
+            previous = by_bucket.get(bucket)
+            if previous is None or stamp >= previous[0]:
+                by_bucket[bucket] = (stamp, price)
+    return {stamp.isoformat(): price for stamp, price in by_bucket.values()}
+'''
+          if helper_marker not in bf:
+              raise SystemExit('backfill helper insertion marker missing')
+          bf = bf.replace(helper_marker, helper + helper_marker, 1)
+
+          start = bf.find('async def _download_90d_with_fallback(\n')
+          end = bf.find('\n\ndef _score_batch(', start)
+          if start < 0 or end <= start:
+              raise SystemExit('provider fallback bounds missing')
+          provider_func = '''async def _download_90d_with_fallback(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    currency: str,
+    proxy_url: str,
+    now: datetime,
+    cutoff: datetime,
+) -> tuple[dict[str, float], str]:
+    """Fetch missing 15-minute history over Tor, preferring Coinbase.
+
+    Coinbase Exchange natively supports 900-second candles and paginated ranges,
+    so Bitstamp is only a secondary provider. There is never a clearnet fallback.
+    """
+    try:
+        candles = await _download_coinbase_90d(
+            hass,
+            entry,
+            currency=currency,
+            proxy_url=proxy_url,
+            now=now,
+            cutoff=cutoff,
+        )
+        return candles, "Coinbase Exchange 15m candles via Tor"
+    except asyncio.CancelledError:
+        raise
+    except (ClientError, TimeoutError, ValueError, TypeError) as err:
+        status = getattr(err, "status", None)
+        _LOGGER.warning(
+            "Coinbase Exchange 15m backfill unavailable%s; trying Bitstamp through Tor: %s",
+            f" (HTTP {status})" if status else "",
+            err,
+        )
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="provider_fallback",
+            complete=False,
+            source="Coinbase Exchange -> Bitstamp",
+            provider_error=f"{type(err).__name__}: {err}"[:240],
+            downloaded_points=0,
+            downloaded_pages=0,
+        )
+
+    candles = await _download_bitstamp_90d(
+        hass,
+        entry,
+        currency=currency,
+        proxy_url=proxy_url,
+        now=now,
+        cutoff=cutoff,
+    )
+    return candles, "Bitstamp 15m OHLC via Tor"
+'''
+          bf = bf[:start] + provider_func + bf[end:]
+
+          start = bf.find('async def _backfill_once(\n')
+          end = bf.find('\n\nasync def _background_worker(', start)
+          if start < 0 or end <= start:
+              raise SystemExit('backfill once bounds missing')
+          backfill_once = '''async def _backfill_once(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    history_store: BitcoinHistoryStore,
+    cache: MarketAssessmentIntradayCache,
+) -> bool:
+    signature, currency, scoring_settings, settings = _current_generation(entry)
+    if not bool(settings.get(CONF_HISTORY_ENABLED, True)):
+        _set_status(
+            hass, entry.entry_id, state="disabled", complete=False, signature=signature
+        )
+        return False
+
+    history = history_store.data.get("prices", {}).get(currency, {})
+    if not isinstance(history, dict) or len(history) < 365:
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="waiting_for_daily_history",
+            complete=False,
+            currency=currency,
+            signature=signature,
+        )
+        return False
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=BACKFILL_DAYS)
+    expected_points = (BACKFILL_DAYS * 24 * 60) // BACKFILL_INTERVAL_MINUTES
+    candles = _cached_market_candles(
+        history_store, currency=currency, now=now, cutoff=cutoff
+    )
+    local_points = len(candles)
+    source_parts: list[str] = []
+    if local_points:
+        source_parts.append("local chart cache")
+
+    _set_status(
+        hass,
+        entry.entry_id,
+        state="using_local_cache" if local_points else "waiting_for_tor_gateway",
+        complete=False,
+        signature=signature,
+        currency=currency,
+        interval_minutes=BACKFILL_INTERVAL_MINUTES,
+        retention_days=BACKFILL_DAYS,
+        source="local chart cache" if local_points else "Coinbase Exchange",
+        network_route="Tor only",
+        local_price_points=local_points,
+        expected_source_points=expected_points,
+        downloaded_points=0,
+        downloaded_pages=0,
+        provider_error=None,
+        error=None,
+    )
+
+    network_error: str | None = None
+    try:
+        gateway_host = await async_tor_gateway_host()
+        proxy_url = tor_proxy_from_settings(settings)
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="downloading",
+            gateway_host=gateway_host,
+            error=None,
+        )
+        remote, remote_source = await _download_90d_with_fallback(
+            hass,
+            entry,
+            currency=currency,
+            proxy_url=proxy_url,
+            now=now,
+            cutoff=cutoff,
+        )
+        candles.update(remote)
+        source_parts.append(remote_source)
+    except TorConfigurationError as err:
+        network_error = str(err)
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="waiting_for_tor_gateway",
+            complete=False,
+            error=network_error[:240],
+            retry_in_seconds=BACKFILL_GATEWAY_RETRY_SECONDS,
+            next_retry_at=(
+                datetime.now(timezone.utc) + timedelta(seconds=BACKFILL_GATEWAY_RETRY_SECONDS)
+            ).isoformat(),
+        )
+    except (ClientError, TimeoutError, ValueError, TypeError) as err:
+        network_error = f"{type(err).__name__}: {err}"
+        _LOGGER.warning("Market-assessment 15m price history download paused: %s", err)
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="retry_wait",
+            complete=False,
+            error=network_error[:240],
+            retry_in_seconds=BACKFILL_RETRY_SECONDS,
+            next_retry_at=(
+                datetime.now(timezone.utc) + timedelta(seconds=BACKFILL_RETRY_SECONDS)
+            ).isoformat(),
+        )
+
+    ordered = sorted(
+        (
+            (stamp, float(price))
+            for raw_stamp, price in candles.items()
+            for stamp in [_utc_stamp(raw_stamp)]
+            if stamp is not None and cutoff <= stamp <= now
+        ),
+        key=lambda item: item[0],
+    )
+    if not ordered:
+        return False
+
+    existing = await cache.async_points(signature, since=cutoff)
+    existing_buckets = {
+        str(item.get("bucket") or "")
+        for item in existing
+        if isinstance(item, dict) and item.get("bucket")
+    }
+    missing = [row for row in ordered if _bucket(row[0]) not in existing_buckets]
+    total = len(ordered)
+    completed = len(existing_buckets.intersection({_bucket(row[0]) for row in ordered}))
+    source = " + ".join(dict.fromkeys(source_parts)) or "local chart cache"
+    coverage = min(1.0, total / max(1, expected_points))
+    _set_status(
+        hass,
+        entry.entry_id,
+        state="scoring" if missing else "checking_coverage",
+        complete=False,
+        signature=signature,
+        source=source,
+        source_points=total,
+        expected_source_points=expected_points,
+        source_coverage_percent=round(coverage * 100, 2),
+        completed_points=completed,
+        remaining_points=max(0, expected_points - completed),
+        error=network_error,
+    )
+
+    for offset in range(0, len(missing), BACKFILL_SCORE_BATCH_POINTS):
+        if _runtime(hass, entry.entry_id) is None:
+            return False
+        latest_signature, latest_currency, _latest_scoring, _latest_settings = _current_generation(entry)
+        if latest_signature != signature or latest_currency != currency:
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="generation_changed",
+                complete=False,
+                signature=latest_signature,
+            )
+            return False
+
+        batch = missing[offset : offset + BACKFILL_SCORE_BATCH_POINTS]
+        points = await hass.async_add_executor_job(
+            partial(
+                _score_batch,
+                history,
+                batch,
+                currency=currency,
+                settings=scoring_settings,
+                source=source,
+            )
+        )
+        added = await cache.async_merge_points(signature, points)
+        completed += added
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="scoring",
+            complete=False,
+            signature=signature,
+            source=source,
+            completed_points=completed,
+            remaining_points=max(0, expected_points - completed),
+        )
+        if offset + BACKFILL_SCORE_BATCH_POINTS < len(missing):
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_SCORE_PAUSE_SECONDS
+            ):
+                return False
+
+    enough_coverage = total >= int(expected_points * 0.95)
+    if enough_coverage and network_error is None:
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="complete",
+            complete=True,
+            signature=signature,
+            source=source,
+            completed_points=completed,
+            remaining_points=max(0, expected_points - completed),
+            error=None,
+        )
+        return True
+
+    _set_status(
+        hass,
+        entry.entry_id,
+        state="waiting_for_more_price_history" if network_error is None else "retry_wait",
+        complete=False,
+        signature=signature,
+        source=source,
+        completed_points=completed,
+        remaining_points=max(0, expected_points - completed),
+        error=network_error,
+    )
+    return False
+'''
+          bf = bf[:start] + backfill_once + bf[end:]
+
+          start = bf.find('async def _background_worker(\n')
+          end = bf.find('\n\nasync def async_market_assessment_backfill_loop(', start)
+          if start < 0 or end <= start:
+              raise SystemExit('background worker bounds missing')
+          worker = '''async def _background_worker(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    history_store: BitcoinHistoryStore,
+    cache: MarketAssessmentIntradayCache,
+) -> None:
+    """Run reconstruction only after HA startup, never as a startup dependency."""
+    while _runtime(hass, entry.entry_id) is not None and hass.state is not CoreState.running:
+        _set_status(
+            hass,
+            entry.entry_id,
+            state="waiting_for_home_assistant",
+            complete=False,
+            error=None,
+        )
+        if not await _sleep_while_loaded(hass, entry.entry_id, 2):
+            return
+
+    if not await _sleep_while_loaded(hass, entry.entry_id, BACKFILL_INITIAL_DELAY_SECONDS):
+        return
+
+    while _runtime(hass, entry.entry_id) is not None:
+        try:
+            if await _backfill_once(hass, entry, history_store, cache):
+                return
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_GENERATION_RETRY_SECONDS
+            ):
+                return
+        except asyncio.CancelledError:
+            raise
+        except (ClientError, TimeoutError, ValueError, TypeError) as err:
+            _LOGGER.warning("Market-assessment intraday backfill paused: %s", err)
+            _set_status(
+                hass,
+                entry.entry_id,
+                state="retry_wait",
+                complete=False,
+                error=f"{type(err).__name__}: {err}"[:240],
+                retry_in_seconds=BACKFILL_RETRY_SECONDS,
+                next_retry_at=(
+                    datetime.now(timezone.utc) + timedelta(seconds=BACKFILL_RETRY_SECONDS)
+                ).isoformat(),
+            )
+            if not await _sleep_while_loaded(
+                hass, entry.entry_id, BACKFILL_RETRY_SECONDS
+            ):
+                return
+'''
+          bf = bf[:start] + worker + bf[end:]
+          backfill_path.write_text(bf, encoding='utf-8')
+
+          app_path = comp / 'frontend' / 'static' / 'app.js'
+          app = app_path.read_text(encoding='utf-8')
+          if 'state.historyRange === "1") return 5' not in app:
+              raise SystemExit('1-day chart interval pattern missing')
+          app = app.replace('state.historyRange === "1") return 5', 'state.historyRange === "1") return 15', 1)
+          old = '''  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),source=Number(s.source_points||0),done=Number(s.completed_points||cached),target=source>0?source:Number(s.expected_full_grid_points||25920),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points||target-done));
+  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${complete?"vollständig":String(s.state||"läuft gedrosselt")} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${complete?"complete":String(s.state||"throttled")} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);'''
+          new = '''  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),sourcePoints=Number(s.source_points||0),done=Number(s.completed_points||cached),target=Number(s.expected_source_points||s.expected_full_grid_points||8640),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points||target-done)),interval=Number(s.interval_minutes||15),source=String(s.source||"lokaler Kurs-Cache / Coinbase Exchange");
+  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${complete?"vollständig":String(s.state||"läuft gedrosselt")} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)}) · ${esc(source)} · ${fmtNumber(interval,0)} min · Tor only${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${complete?"complete":String(s.state||"throttled")} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)}) · ${esc(source)} · ${fmtNumber(interval,0)} min · Tor only${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);'''
+          if old not in app:
+              raise SystemExit('backfill status renderer pattern missing')
+          app = app.replace(old, new, 1)
+          app_path.write_text(app, encoding='utf-8')
+
+          const_path = comp / 'const.py'
+          const = const_path.read_text(encoding='utf-8')
+          const = re.sub(r'FRONTEND_CACHE_REVISION = "(\\d+)"', lambda m: f'FRONTEND_CACHE_REVISION = "{int(m.group(1))+1}"', const, count=1)
+          const_path.write_text(const, encoding='utf-8')
+
+          index_path = comp / 'frontend' / 'index.html'
+          html = index_path.read_text(encoding='utf-8')
+          html = re.sub(r'(static/(?:style\\.css|app\\.js)\\?v=0\\.21\\.0\\.13&r=)\\d+', lambda m: m.group(1) + '7', html)
+          index_path.write_text(html, encoding='utf-8')
+
+          uniform_test = root / 'tests' / 'test_uniform_returns.py'
+          tests = uniform_test.read_text(encoding='utf-8')
+          tests = tests.replace('state.historyRange === "1") return 5', 'state.historyRange === "1") return 15')
+          uniform_test.write_text(tests, encoding='utf-8')
+
+          lifecycle_test = root / 'tests' / 'test_market_backfill_lifecycle.py'
+          tests = lifecycle_test.read_text(encoding='utf-8')
+          extra = '''\n\ndef test_market_reconstruction_uses_15m_cached_first_pipeline():\n    assert "MARKET_ASSESSMENT_CACHE_SECONDS = 15 * 60" in RUNTIME\n    assert "BACKFILL_INTERVAL_MINUTES = 15" in BACKFILL\n    assert "_cached_market_candles" in BACKFILL\n    assert "local chart cache" in BACKFILL\n    assert BACKFILL.index("_download_coinbase_90d(") < BACKFILL.index("_download_bitstamp_90d(", BACKFILL.index("async def _download_90d_with_fallback"))\n    assert "BACKFILL_INITIAL_DELAY_SECONDS = 120" in BACKFILL\n'''
+          if 'test_market_reconstruction_uses_15m_cached_first_pipeline' not in tests:
+              tests += extra
+          lifecycle_test.write_text(tests, encoding='utf-8')
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q custom_components/bitcoin_stack_tracker
+          node --check custom_components/bitcoin_stack_tracker/frontend/static/app.js
+          node --check custom_components/bitcoin_stack_tracker/frontend/panel.js
+          python -m pytest -q \
+            tests/test_market_backfill_lifecycle.py \
+            tests/test_uniform_returns.py \
+            tests/test_xpub_backfill_rating_regressions.py \
+            tests/test_sentinel_market_regressions.py \
+            tests/test_market_assessment_ui.py \
+            tests/test_chart_independent_scales.py \
+            tests/test_release_features.py
+      - name: Commit production fix and remove bootstrap workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/agent-market-15m-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Use cached-first 15-minute market reconstruction"
+          git push origin HEAD:agent/sentinel-market-cache-cleanup
