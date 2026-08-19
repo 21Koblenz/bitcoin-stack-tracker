@@ -32,11 +32,11 @@ The project pins Guardian Project Tor Android and jtorctl. The app binds to the 
 
 ## Android platform
 
-- `compileSdk` / `targetSdk`: 37
+- `compileSdk` / `targetSdk`: 36 (Android 16 compatibility baseline)
 - minimum Android: API 28
 - Java: 17
 - UI: Jetpack Compose
-- local network access: Android 17's `ACCESS_LOCAL_NETWORK` is declared and must only be requested when the user actually configures/uses a local node.
+- local network access: with target SDK 36 Android still grants LAN access through `INTERNET`; the Android 17-only `ACCESS_LOCAL_NETWORK` runtime permission is intentionally not declared yet.
 
 ## Migration order
 
