@@ -59,16 +59,18 @@ def test_market_assessment_refreshes_automatically_without_external_refresh_call
     app = (FRONTEND / "static" / "app.js").read_text(encoding="utf-8")
     init_py = (ROOT / "custom_components" / "bitcoin_stack_tracker" / "__init__.py").read_text(encoding="utf-8")
     assert "function startMarketAssessmentPolling()" in app
-    assert "},60000);" in app
+    assert "},300000);" in app
     assert "api/market-assessment?entry_id=" in app
     assert "startMarketAssessmentPolling();" in app
     assert 'route == "api/market-assessment"' in init_py
     route_start = init_py.index('route == "api/market-assessment"')
     route_end = init_py.index('route == "api/core-network"', route_start)
     route = init_py[route_start:route_end]
-    assert "calculate_buy_opportunity(" in route
+    assert "async_market_assessment(" in route
+    assert "calculate_buy_opportunity(" not in route
     assert "async_refresh()" not in route
     assert '"automatic": True' in route
+    assert '"cache_seconds": 300' in route
 
 
 def test_market_assessment_uses_live_raw_score_precision_in_sensor_and_ui():
@@ -150,7 +152,9 @@ def test_market_assessment_smoothing_is_configurable_shared_and_resettable():
     assert 'function resetMarketAssessmentChartDisplayDefaults' in app
     assert 'state.marketAssessmentHistorySmoothing=5' in app
     assert 'chartMarketAssessmentOverlayValues(values.price)' in app
-    assert 'smoothMarketAssessmentPoints(Array.isArray(payload?.points)?payload.points:[])' in app
+    history_block = app[app.index('function renderMarketAssessmentHistory'):app.index('async function loadMarketAssessmentHistory')]
+    assert 'rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true})' in history_block
+    assert 'points=smoothMarketAssessmentPoints(rawPoints)' in history_block
     assert 'display only, raw score unchanged' in app
 
 
@@ -212,8 +216,16 @@ def test_modular_model_has_help_for_every_field_and_tuning_direction():
     import re
     form = html[html.index('id="buyOpportunitySettingsForm"'):html.index('</form>', html.index('id="buyOpportunitySettingsForm"'))]
     field_names = re.findall(r'<(?:input|select)[^>]+name="([^"]+)"', form)
-    assert len(field_names) == 94
+    assert len(field_names) == 101
+    label_fields = [name for name in field_names if name.startswith("label_")]
+    assert len(label_fields) == 7
+    assert set(label_fields) == {
+        "label_very_expensive", "label_expensive", "label_neutral",
+        "label_interesting", "label_cheap", "label_very_cheap", "label_extreme",
+    }
     for name in field_names:
+        if name.startswith("label_"):
+            continue
         assert f'"{name}":[' in block
     assert 'renderBuyOpportunityFieldHelp' in app
     assert 'Höher' in block and 'niedriger' in block

@@ -10,7 +10,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <meta name="referrer" content="no-referrer">
   <title>Bitcoin Stack Tracker · Einundzwanzig Koblenz</title>
-  <link rel="stylesheet" href="static/style.css?v=0.21.0.13&r=4">
+  <link rel="stylesheet" href="static/style.css?v=0.21.0.14&r=6">
 </head>
 <body>
   <div class="topography" aria-hidden="true"></div>
@@ -194,6 +194,7 @@
           <button id="marketAssessmentHistoryResetDisplay" class="secondary" type="button" data-i18n="restoreChartDefaults">Standard wiederherstellen</button>
         </div>
         <p class="storage-note" data-i18n="marketHistoryCausalHint">Jeder historische Punkt wird mit derselben aktuell gewählten Modellkonfiguration so berechnet, als wäre dieser Tag „heute“. Spätere Kurse fließen nicht rückwirkend ein. Die optionale EMA-Glättung ist rein visuell, arbeitet nur rückblickend und verändert weder den Rohscore noch den Home-Assistant-Sensor.</p>
+        <div id="marketAssessmentBackfillStatus" class="result market-assessment-backfill-status"></div>
         <div id="marketAssessmentHistoryChart" class="chart market-assessment-history-chart"><p data-i18n="marketHistoryLoading">Historischer Score wird geladen …</p></div>
         <div id="marketAssessmentHistoryBestLegend" class="market-best-legend" aria-live="polite"></div>
         <div id="marketAssessmentHistoryMarkerTooltip" class="chart-tooltip market-best-popup hidden" role="status" aria-live="polite"></div>
@@ -339,7 +340,18 @@
             <label><span data-i18n="ratingVeryCheap">Sehr günstig</span><input name="threshold_very_cheap" type="number" min="1" max="99" step="1"></label>
             <label><span data-i18n="ratingExtreme">Extrem günstig</span><input name="threshold_extreme" type="number" min="1" max="99" step="1"></label>
           </div>
-          <div id="buyOpportunitySettingsPreview" class="result"></div>
+          <div class="analysis-head"><span class="kicker">RATING LABELS</span><h3>Eigene Bezeichnungen</h3></div>
+            <p class="storage-note">Nur Anzeigetext. Eigene Namen verändern weder Score noch Rückrechnung.</p>
+            <div class="buy-opportunity-threshold-grid buy-opportunity-label-grid">
+              <label><span>Sehr hoch bewertet</span><input name="label_very_expensive" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Hoch bewertet</span><input name="label_expensive" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Neutral</span><input name="label_neutral" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Interessant</span><input name="label_interesting" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Günstig</span><input name="label_cheap" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Sehr günstig</span><input name="label_very_cheap" type="text" maxlength="120" placeholder="Standard"></label>
+              <label><span>Extrem günstig</span><input name="label_extreme" type="text" maxlength="120" placeholder="Standard"></label>
+            </div>
+            <div id="buyOpportunitySettingsPreview" class="result"></div>
           <div class="form-actions">
             <button id="resetBuyOpportunitySettingsButton" class="secondary" type="button" data-i18n="resetMarketAssessmentDefaults">Backtest-Standard wiederherstellen</button>
             <button id="saveBuyOpportunitySettingsButton" class="primary" type="submit" data-i18n="saveBuyOpportunitySettings">Markteinschätzung speichern</button>
@@ -686,7 +698,7 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="static/performance-math.js?v=0.21.0.13"></script>
-  <script src="static/app.js?v=0.21.0.13&r=4"></script>
+  <script src="static/performance-math.js?v=0.21.0.14"></script>
+  <script src="static/app.js?v=0.21.0.14&r=6"></script>
 </body>
 </html>

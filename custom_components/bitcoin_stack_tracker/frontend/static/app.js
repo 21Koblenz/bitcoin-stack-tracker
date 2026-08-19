@@ -1,7 +1,7 @@
 "use strict";
 
-const BUILD_VERSION = "0.21.0.13";
-const FRONTEND_BUILD = "0.21.0.13";
+const BUILD_VERSION = "0.21.0.14";
+const FRONTEND_BUILD = "0.21.0.14";
 window.__BITCOIN_STACK_TRACKER_FRONTEND_BUILD__ = FRONTEND_BUILD;
 const SATS_PER_BTC = 100_000_000;
 const state = {
@@ -244,7 +244,7 @@ const I18N = {
   de: {
     overview:"Übersicht",ledger:"Buchungen",structure:"Depots & Ziele",tax:"Haltezeit",settings:"Export & Daten",security:"Zugriff & Verschlüsselung",logs:"App-Log",
     longTerm:"Langzeit",shortTerm:"Kurzzeit",unknown:"Ungeklärt",mixed:"Gemischt",nextMilestone:"Nächstes Ziel",dailyHistory:"Tageswerte",chartTitle:"Verlauf",
-    chartView:"Ansicht",chartLegend:"Chart-Legende",leftAxis:"Linke Skala",rightAxis:"Rechte Skala",chartCurrency:"Chartwährung",btcPrice:"Bitcoin-Kurs",portfolioValue:"Portfoliowert",stackHistory:"Stack-Verlauf",profitLossHistory:"Gesamtgewinn/-verlust",pricePortfolioOverlay:"Kurs + Portfoliowert",priceStackOverlay:"Kurs + Stack",priceMarketAssessmentOverlay:"Kurs + Markteinschätzung",priceProfitLossOverlay:"Kurs + Gesamtgewinn/-verlust",portfolioProfitLossOverlay:"Portfoliowert + Gesamtgewinn/-verlust",costProfitLossOverlay:"Einstand + Buchgewinn/-verlust",openCostBasis:"Offener Einstand",unrealizedProfitLoss:"Buchgewinn/-verlust",period:"Zeitraum",allData:"Alle Daten",yearToDate:"Jahresanfang",weekToDate:"Seit Wochenbeginn",oneWeek:"1 Woche",monthToDate:"Seit Monatsbeginn",firstPurchaseRange:"Seit erstem Kauf",maxRange:"Max",scale:"Skala",linear:"Linear",logarithmic:"Logarithmisch",logUnavailable:"Für Gewinn-/Verlust-Ansichten ist nur die lineare Skala möglich.",marketScoreLinearOnly:"Die Markteinschätzung verwendet immer die feste lineare Skala 0–100.",overlayOpacity:"Overlay-Transparenz",today:"Heute",performance:"Performance im gewählten Zeitraum",performanceNote:"Portfoliowert wird cashflow-bereinigt: Käufe, Einnahmen, Verkäufe, Stack-Zugänge und Ausgaben werden als externe Cashflows neutralisiert; Transaktionsgebühren bleiben echte Performancekosten. Buchgewinn/-verlust bezieht sich auf den offenen Einstand. Gesamtgewinn/-verlust ist realisiert plus unrealisiert.",periodStart:"Start",periodEnd:"Ende",absoluteChange:"Absolut",percentageChange:"Prozent",bitcoinPerformance:"Bitcoin-Kurs",portfolioPerformance:"Portfoliowert",stackPerformance:"BTC-Stack",bookProfitLossPerformance:"Buchgewinn/-verlust",realizedProfitLossPerformance:"Realisierter Gewinn/Verlust",profitLossPerformance:"Gesamtgewinn/-verlust",comparisonUnavailable:"Für diesen Zeitraum sind noch nicht genug Werte vorhanden.",
+    chartView:"Ansicht",chartLegend:"Chart-Legende",leftAxis:"Linke Skala",rightAxis:"Rechte Skala",chartCurrency:"Chartwährung",btcPrice:"Bitcoin-Kurs",portfolioValue:"Portfoliowert",stackHistory:"Stack-Verlauf",profitLossHistory:"Gesamtgewinn/-verlust",pricePortfolioOverlay:"Kurs + Portfoliowert",priceStackOverlay:"Kurs + Stack",priceMarketAssessmentOverlay:"Kurs + Markteinschätzung",priceProfitLossOverlay:"Kurs + Gesamtgewinn/-verlust",portfolioProfitLossOverlay:"Portfoliowert + Gesamtgewinn/-verlust",costProfitLossOverlay:"Einstand + Buchgewinn/-verlust",openCostBasis:"Offener Einstand",unrealizedProfitLoss:"Buchgewinn/-verlust",period:"Zeitraum",allData:"Alle Daten",yearToDate:"Jahresanfang",weekToDate:"Seit Wochenbeginn",oneWeek:"1 Woche",monthToDate:"Seit Monatsbeginn",firstPurchaseRange:"Seit erstem Kauf",maxRange:"Max",scale:"Skala",linear:"Linear",logarithmic:"Logarithmisch",symlogarithmic:"SymLog",logUnavailable:"Für diese Datenreihe ist keine logarithmische Skala verfügbar.",marketScoreLinearOnly:"Die Markteinschätzung verwendet immer die feste lineare Skala 0–100.",overlayOpacity:"Overlay-Transparenz",today:"Heute",performance:"Performance im gewählten Zeitraum",performanceNote:"Portfoliowert wird cashflow-bereinigt: Käufe, Einnahmen, Verkäufe, Stack-Zugänge und Ausgaben werden als externe Cashflows neutralisiert; Transaktionsgebühren bleiben echte Performancekosten. Buchgewinn/-verlust bezieht sich auf den offenen Einstand. Gesamtgewinn/-verlust ist realisiert plus unrealisiert.",periodStart:"Start",periodEnd:"Ende",absoluteChange:"Absolut",percentageChange:"Prozent",bitcoinPerformance:"Bitcoin-Kurs",portfolioPerformance:"Portfoliowert",stackPerformance:"BTC-Stack",bookProfitLossPerformance:"Buchgewinn/-verlust",realizedProfitLossPerformance:"Realisierter Gewinn/Verlust",profitLossPerformance:"Gesamtgewinn/-verlust",comparisonUnavailable:"Für diesen Zeitraum sind noch nicht genug Werte vorhanden.",
     milestones:"Meilensteine",newEntry:"Neue Buchung",type:"Art",depot:"Depot",amount:"Menge",unit:"Einheit",currency:"Fiatwährung",pricePerBtc:"Preis pro BTC",fee:"Gebühr",includedFee:"Enthaltene Handelsgebühr",includedFeeEstimated:"geschätzt · im Endpreis enthalten",dateTime:"Datum / Uhrzeit",note:"Notiz",saveEntry:"Buchung speichern",date:"Datum",price:"Preis",holding:"Haltezeit",
     depots:"Depots",totalDepot:"Gesamtdepot",allDepotsCombined:"Alle Depots zusammen",totalStack:"Gesamtstack",totalValue:"Gesamtwert",rangePerformance:"Zeitraum-Performance",stackChange:"Stack-Veränderung",selectedRange:"Gewählter Zeitraum",add:"Hinzufügen",goals:"Stacking-Ziele",name:"Name",target:"Ziel",addGoal:"Ziel hinzufügen",goalStorage:"Jedes Ziel erzeugt zusätzliche lokale Verlaufswerte. Mehr Ziele bedeuten mehr Speicherbedarf.",remaining:"Fehlt",current:"Aktuell",targetValue:"Zielwert",
     overviewOnly:"Nur Übersicht",holdingDisclaimer:"Konfigurierbare Haltezeit- und FIFO-Übersicht. Abhängig vom anwendbaren Recht können Coins nach der gewählten Frist anders behandelt werden. Keine Steuerberatung und keine Steuererklärung.",holdingRule:"Haltezeit-Regel",days:"Tage bis Langzeit",customNote:"Eigene Notiz",saveRule:"Regel speichern",currentClassification:"Aktuelle Einordnung",saleOverview:"FIFO-Abgänge",sale:"Verkauf",purchase:"Kauf",income:"Einnahme",network_fee:"Transaktionsgebühr",stackEntry:"Bestand ohne Einstand",network:"Netzwerk",onchain:"On-Chain",lightning:"Lightning",holdingDays:"Haltetage",classification:"Einordnung",gain:"Realisierter Gewinn/Verlust",status:"Status",nextLong:"Nächster Langzeit-Zugang",
@@ -258,7 +258,7 @@ const I18N = {
   en: {
     overview:"Overview",ledger:"Ledger",structure:"Depots & goals",tax:"Holding period",settings:"Export & data",security:"Access & encryption",logs:"App log",
     longTerm:"Long term",shortTerm:"Short term",unknown:"Unknown",mixed:"Mixed",nextMilestone:"Next goal",dailyHistory:"Daily values",chartTitle:"History",
-    chartView:"View",chartLegend:"Chart legend",leftAxis:"Left scale",rightAxis:"Right scale",chartCurrency:"Chart currency",btcPrice:"Bitcoin price",portfolioValue:"Portfolio value",stackHistory:"Stack history",profitLossHistory:"Total profit/loss",pricePortfolioOverlay:"Price + portfolio",priceStackOverlay:"Price + stack",priceMarketAssessmentOverlay:"Price + market assessment",priceProfitLossOverlay:"Price + total profit/loss",portfolioProfitLossOverlay:"Portfolio + total profit/loss",costProfitLossOverlay:"Cost basis + unrealized profit/loss",openCostBasis:"Open cost basis",unrealizedProfitLoss:"Unrealized profit/loss",period:"Range",allData:"All data",yearToDate:"Year to date",weekToDate:"Since week start",oneWeek:"1 week",monthToDate:"Since month start",firstPurchaseRange:"Since first purchase",maxRange:"Max",scale:"Scale",linear:"Linear",logarithmic:"Logarithmic",logUnavailable:"Profit/loss views support the linear scale only.",marketScoreLinearOnly:"Market assessment always uses the fixed linear 0–100 scale.",overlayOpacity:"Overlay opacity",today:"Today",performance:"Performance for selected range",performanceNote:"Portfolio performance is cash-flow adjusted: purchases, income, sales, stack additions and expenses are neutralized as external cash flows; transaction fees remain real performance costs. Unrealized profit/loss is measured against open cost basis. Total profit/loss is realized plus unrealized.",periodStart:"Start",periodEnd:"End",absoluteChange:"Absolute",percentageChange:"Percent",bitcoinPerformance:"Bitcoin price",portfolioPerformance:"Portfolio value",stackPerformance:"BTC stack",bookProfitLossPerformance:"Unrealized profit/loss",realizedProfitLossPerformance:"Realized profit/loss",profitLossPerformance:"Total profit/loss",comparisonUnavailable:"Not enough values are available for this range.",
+    chartView:"View",chartLegend:"Chart legend",leftAxis:"Left scale",rightAxis:"Right scale",chartCurrency:"Chart currency",btcPrice:"Bitcoin price",portfolioValue:"Portfolio value",stackHistory:"Stack history",profitLossHistory:"Total profit/loss",pricePortfolioOverlay:"Price + portfolio",priceStackOverlay:"Price + stack",priceMarketAssessmentOverlay:"Price + market assessment",priceProfitLossOverlay:"Price + total profit/loss",portfolioProfitLossOverlay:"Portfolio + total profit/loss",costProfitLossOverlay:"Cost basis + unrealized profit/loss",openCostBasis:"Open cost basis",unrealizedProfitLoss:"Unrealized profit/loss",period:"Range",allData:"All data",yearToDate:"Year to date",weekToDate:"Since week start",oneWeek:"1 week",monthToDate:"Since month start",firstPurchaseRange:"Since first purchase",maxRange:"Max",scale:"Scale",linear:"Linear",logarithmic:"Logarithmic",symlogarithmic:"SymLog",logUnavailable:"A logarithmic scale is unavailable for this series.",marketScoreLinearOnly:"Market assessment always uses the fixed linear 0–100 scale.",overlayOpacity:"Overlay opacity",today:"Today",performance:"Performance for selected range",performanceNote:"Portfolio performance is cash-flow adjusted: purchases, income, sales, stack additions and expenses are neutralized as external cash flows; transaction fees remain real performance costs. Unrealized profit/loss is measured against open cost basis. Total profit/loss is realized plus unrealized.",periodStart:"Start",periodEnd:"End",absoluteChange:"Absolute",percentageChange:"Percent",bitcoinPerformance:"Bitcoin price",portfolioPerformance:"Portfolio value",stackPerformance:"BTC stack",bookProfitLossPerformance:"Unrealized profit/loss",realizedProfitLossPerformance:"Realized profit/loss",profitLossPerformance:"Total profit/loss",comparisonUnavailable:"Not enough values are available for this range.",
     milestones:"Milestones",newEntry:"New entry",type:"Type",depot:"Depot",amount:"Amount",unit:"Unit",currency:"Fiat currency",pricePerBtc:"Price per BTC",fee:"Fee",includedFee:"Included trading fee",includedFeeEstimated:"estimated · included in execution price",dateTime:"Date / time",note:"Note",saveEntry:"Save entry",date:"Date",price:"Price",holding:"Holding",
     depots:"Depots",totalDepot:"Total portfolio",allDepotsCombined:"All depots combined",totalStack:"Total stack",totalValue:"Total value",rangePerformance:"Range performance",stackChange:"Stack change",selectedRange:"Selected range",add:"Add",goals:"Stacking goals",name:"Name",target:"Target",addGoal:"Add goal",goalStorage:"Each goal creates additional local history values. More goals require more storage.",remaining:"Remaining",current:"Current",targetValue:"Target value",
     overviewOnly:"Overview only",holdingDisclaimer:"Configurable holding-period and FIFO overview. Depending on applicable law, coins older than the selected period may be treated differently. Not tax advice and not a tax return.",holdingRule:"Holding-period rule",days:"Days until long term",customNote:"Custom note",saveRule:"Save rule",currentClassification:"Current classification",saleOverview:"FIFO disposals",sale:"Sale",purchase:"Purchase",income:"Income",network_fee:"Transaction fee",stackEntry:"Stack without cost basis",network:"Network",onchain:"On-chain",lightning:"Lightning",holdingDays:"Holding days",classification:"Classification",gain:"Realized profit/loss",status:"Status",nextLong:"Next long-term lot",
@@ -838,10 +838,12 @@ async function performAutoLock(){
   if(Date.now()-state.lastActivityAt < state.autoLockMinutes*60000){scheduleAutoLock();return;}
   autoLockInFlight=true;
   try{
+    if(!walletWatchShowWhenLocked())hideLockedWalletWatch();
     await service("lock_vault",{config_entry_id:state.entryId});
     toast(t("autoLockTriggered"));
     state.lastActivityAt=Date.now();
     await loadData();
+    if(!walletWatchShowWhenLocked())hideLockedWalletWatch();
   }catch(error){
     toast(error.message||String(error));
     state.lastActivityAt=Date.now();
@@ -1083,9 +1085,8 @@ async function loadData() {
     updateVaultGateText();
     if(autoLockTimer){clearTimeout(autoLockTimer);autoLockTimer=null;}
     renderAutoLock();
-    state.lockedWalletWatchEditId="";
-    state.walletWatch=null;
-    const showLockedSentinel=Boolean(state.data.security?.owner)&&walletWatchShowWhenLocked();
+    hideLockedWalletWatch();
+    const showLockedSentinel=walletWatchShowWhenLocked();
     if(showLockedSentinel){
       const managed=await loadLockedWalletWatchManagement();
       if(!managed)await refreshWalletWatchStatus({silent:true});
@@ -1730,9 +1731,10 @@ function updateChartScaleButtons(series = []) {
     if (!button || !text) continue;
     const item = series[index];
     const unavailable = !item;
-    const logBlocked = Boolean(item?.allowNegative || item?.forceLinear);
+    const logBlocked = Boolean(item?.forceLinear);
     if (logBlocked && chartAxisScale(index) === "log") setChartAxisScale(index,"linear");
-    const label = chartAxisScale(index) === "log" ? t("logarithmic") : t("linear");
+    const signedLog = Boolean(item?.allowNegative && chartAxisScale(index) === "log");
+    const label = chartAxisScale(index) === "log" ? t(signedLog?"symlogarithmic":"logarithmic") : t("linear");
     text.textContent = `${index === 0 ? "L" : "R"} · ${label}`;
     button.classList.toggle("hidden", unavailable);
     button.disabled = unavailable || logBlocked;
@@ -1817,7 +1819,7 @@ function marketAssessmentLiveTailPoints(payload,{includeIntraday=false}={}){
   return rows;
 }
 function marketAssessmentOverlayIntervalMinutesForRange(){
-  if(state.historyRange==="1")return 60;
+  if(state.historyRange==="1")return 5;
   if(state.historyRange==="7"||state.historyRange==="week_start")return 360;
   if(state.historyRange==="30"||state.historyRange==="month_start")return 720;
   return 1440;
@@ -1855,9 +1857,9 @@ function syncMarketAssessmentHistorySourceRevision(data=state.data){
 }
 function marketAssessmentHistoryCacheKey(range,entryId=state.entryId,revision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision()){
   const shortOverlay=state.activeTab==="overview"&&state.chartMode==="price_market"&&marketAssessmentOverlayIntervalMinutesForRange()<1440;
-  // Refresh the lightweight intraday tail at most once per hour. The expensive
-  // causal daily score cache keeps its own stable server-side content signature.
-  const intradayRevision=shortOverlay?Math.floor(Date.now()/3600000):"daily";
+  // Refresh only the lightweight persisted intraday tail once per five-minute
+  // bucket. The expensive causal daily score cache keeps its own stable signature.
+  const intradayRevision=shortOverlay?Math.floor(Date.now()/300000):"daily";
   return `${entryId}|${revision}|${range}|${intradayRevision}`;
 }
 async function fetchMarketAssessmentHistoryRange(range,{force=false}={}){
@@ -1978,6 +1980,9 @@ function renderChart() {
   const overlay = series.length > 1;
   updateChartScaleButtons(series);
   const logarithmic = index => Boolean(series[index] && !series[index].allowNegative && chartAxisScale(index) === "log");
+  const symlogarithmic = index => Boolean(series[index]?.allowNegative && chartAxisScale(index) === "log");
+  const symlogThresholds = series.map(item=>{if(!item?.allowNegative)return 1;const values=Object.values(item.values||{}).map(Number).filter(Number.isFinite).map(Math.abs).filter(value=>value>0);const maxAbs=values.length?Math.max(...values):1;return Math.max(1,maxAbs*.01);});
+  const chartScaleLabel = index => symlogarithmic(index)?t("symlogarithmic"):(logarithmic(index)?t("logarithmic"):t("linear"));
   $("#overlayOpacity").disabled = !overlay;
   $("#opacityControl").classList.toggle("is-inactive", !overlay);
   const usable = (value,index) => Number.isFinite(Number(value)) && (!logarithmic(index) || Number(value) > 0);
@@ -2008,8 +2013,8 @@ function renderChart() {
     .sort((a,b) => a.timestamp - b.timestamp)
     .map((item,index) => ({...item,index,x:pad.l + (item.timestamp-minTime)/timeSpan*plotWidth}));
   const marketSeriesIndex=series.findIndex(item=>item?.key==="market_assessment"),marketPayload=chartMarketAssessmentPayloadReady()?state.chartMarketAssessmentHistory:null,marketRawMarkers=marketSeriesIndex>=0?(Array.isArray(marketPayload?.marker_points)&&marketPayload.marker_points.length?marketPayload.marker_points:(marketPayload?.best_point?[marketPayload.best_point]:[])):[];
-  const transform = (value,index) => logarithmic(index) ? Math.log10(Number(value)) : Number(value);
-  const inverse = (value,index) => logarithmic(index) ? 10 ** Number(value) : Number(value);
+  const transform = (value,index) => {const numeric=Number(value);if(logarithmic(index))return Math.log10(numeric);if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*Math.log10(1+Math.abs(numeric)/threshold);}return numeric;};
+  const inverse = (value,index) => {const numeric=Number(value);if(logarithmic(index))return 10 ** numeric;if(symlogarithmic(index)){const threshold=symlogThresholds[index]||1;return Math.sign(numeric)*threshold*((10 ** Math.abs(numeric))-1);}return numeric;};
   const getExtent = (item,index) => {
     if(Number.isFinite(Number(item?.fixedMin))&&Number.isFinite(Number(item?.fixedMax))&&Number(item.fixedMax)>Number(item.fixedMin))return [transform(Number(item.fixedMin),index),transform(Number(item.fixedMax),index)];
     let min=Number.POSITIVE_INFINITY,max=Number.NEGATIVE_INFINITY;
@@ -2093,7 +2098,7 @@ function renderChart() {
   element.innerHTML = `<svg class="${mobileChart ? "mobile-chart-svg" : ""}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(series.map(item=>item.label).join(" + "))}">
     <defs><linearGradient id="areaPrimary" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7931a" stop-opacity=".32"/><stop offset="1" stop-color="#f7931a" stop-opacity="0"/></linearGradient></defs>
     ${grid}${rightAxis}${zeroLines}${markerSvg}${area?`<polygon class="area-primary" points="${area}"/>`:""}<polyline class="series-primary" points="${primaryPoints}"/>${secondary}${dateLabels}
-    <text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(logarithmic(0)?t("logarithmic"):t("linear"))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(logarithmic(1)?t("logarithmic"):t("linear"))}</text>`:""}
+    <text class="axis-text" x="${pad.l}" y="18">${esc(series[0].label)} · ${esc(chartScaleLabel(0))}</text>${overlay?`<text class="axis-text" x="${width-pad.r}" y="18" text-anchor="end">${esc(series[1].label)} · ${esc(chartScaleLabel(1))}</text>`:""}
     <line id="crossX" class="crosshair hidden" x1="0" y1="${pad.t}" x2="0" y2="${height-pad.b}"/><line id="crossY" class="crosshair hidden" x1="${pad.l}" y1="0" x2="${width-pad.r}" y2="0"/>
     <circle id="crossDotA" class="cross-dot hidden" r="5" stroke="#f7931a"/><circle id="crossDotB" class="cross-dot hidden" r="5" stroke="#66d19e"/>
     <rect id="chartHit" class="chart-hit" x="${pad.l}" y="${pad.t}" width="${plotWidth}" height="${plotHeight}"/>${marketBestSvg}
@@ -2507,7 +2512,9 @@ function renderTax() {
 }
 
 function buyOpportunityRatingLabel(rating){
-  const key={very_expensive:"ratingVeryExpensive",expensive:"ratingExpensive",neutral:"ratingNeutral",interesting:"ratingInteresting",cheap:"ratingCheap",very_cheap:"ratingVeryCheap",extreme:"ratingExtreme",unavailable:"ratingUnavailable"}[String(rating||"unavailable")];
+  const value=String(rating||"unavailable"),custom=String(state.data?.buy_opportunity_settings?.labels?.[value]||"").trim();
+  if(custom)return custom.slice(0,120);
+  const key={very_expensive:"ratingVeryExpensive",expensive:"ratingExpensive",neutral:"ratingNeutral",interesting:"ratingInteresting",cheap:"ratingCheap",very_cheap:"ratingVeryCheap",extreme:"ratingExtreme",unavailable:"ratingUnavailable"}[value];
   return t(key||"ratingUnavailable");
 }
 function marketBestMarkerPopupHtml(marker){
@@ -2566,7 +2573,7 @@ function renderBuyOpportunity(){
   const quality=result.data_quality||{};
   hintEl.textContent=`${t("dataCoverage")}: ${fmtNumber(quality.history_points||0,0)} ${t("historyPoints")} · ${fmtNumber(quality.weight_coverage_pct||0,0)} % · ${t("scoreVersion")}: ${result.score_version||"–"}`;
 }
-function buyOpportunitySettingsDefaults(){return {profile:"balanced",currency:(state.data?.currencies||[])[0]||"EUR",weights:{...BUY_OPPORTUNITY_PRESETS.balanced},signal_weights:structuredClone(BUY_OPPORTUNITY_SIGNAL_DEFAULTS),turning_point_weights:structuredClone(BUY_OPPORTUNITY_TURNING_DEFAULTS),model:{...BUY_OPPORTUNITY_MODEL_DEFAULTS},thresholds:{very_expensive_max:20,expensive_max:35,interesting:50,cheap:65,very_cheap:80,extreme:90}};}
+function buyOpportunitySettingsDefaults(){return {profile:"balanced",currency:(state.data?.currencies||[])[0]||"EUR",weights:{...BUY_OPPORTUNITY_PRESETS.balanced},signal_weights:structuredClone(BUY_OPPORTUNITY_SIGNAL_DEFAULTS),turning_point_weights:structuredClone(BUY_OPPORTUNITY_TURNING_DEFAULTS),model:{...BUY_OPPORTUNITY_MODEL_DEFAULTS},thresholds:{very_expensive_max:20,expensive_max:35,interesting:50,cheap:65,very_cheap:80,extreme:90},labels:{very_expensive:"",expensive:"",neutral:"",interesting:"",cheap:"",very_cheap:"",extreme:""}};}
 function setBuyOpportunityWeightInputs(weights={}){
   const form=$("#buyOpportunitySettingsForm");if(!form)return;
   for(const key of BUY_OPPORTUNITY_COMPONENTS){const input=form.elements[`weight_${key}`];if(input)input.value=String(Number(weights[key]??BUY_OPPORTUNITY_PRESETS.balanced[key]));}
@@ -2598,6 +2605,7 @@ function renderBuyOpportunitySettings(){
   setBuyOpportunityWeightInputs(settings.weights||defaults.weights);setBuyOpportunitySignalInputs(settings.signal_weights||defaults.signal_weights);setBuyOpportunityTurningInputs(settings.turning_point_weights||defaults.turning_point_weights);setBuyOpportunityModelInputs(settings.model||defaults.model);
   const thresholds=settings.thresholds||defaults.thresholds;
   for(const key of ["very_expensive_max","expensive_max","interesting","cheap","very_cheap","extreme"]){const input=form.elements[`threshold_${key}`];if(input)input.value=String(Number(thresholds[key]??defaults.thresholds[key]));}
+  const labels=settings.labels||defaults.labels;for(const key of ["very_expensive","expensive","neutral","interesting","cheap","very_cheap","extreme"]){const input=form.elements[`label_${key}`];if(input)input.value=String(labels[key]||"");}
   for(const element of form.querySelectorAll("input,select,button"))element.disabled=!owner;
   const result=state.data?.buy_opportunity||{},quality=result.data_quality||{},preview=$("#buyOpportunitySettingsPreview");
   preview.textContent=result.score==null?t("ratingUnavailable"):`${t("marketAssessment")}: ${result.score}/100 · ${buyOpportunityRatingLabel(result.rating)} · ${t("dataCoverage")}: ${fmtNumber(quality.weight_coverage_pct||0,0)} %`;
@@ -2615,6 +2623,7 @@ async function saveBuyOpportunitySettings(event){
   const weights=Object.fromEntries(BUY_OPPORTUNITY_COMPONENTS.map(key=>[key,Number(form.elements[`weight_${key}`].value||0)]));
   const signal_weights=collectBuyOpportunitySignalWeights(form),turning_point_weights=collectBuyOpportunityTurningWeights(form),model=collectBuyOpportunityModel(form);
   const thresholds=Object.fromEntries(["very_expensive_max","expensive_max","interesting","cheap","very_cheap","extreme"].map(key=>[key,Number(form.elements[`threshold_${key}`].value||0)]));
+  const labels=Object.fromEntries(["very_expensive","expensive","neutral","interesting","cheap","very_cheap","extreme"].map(key=>[key,String(form.elements[`label_${key}`]?.value||"").trim().slice(0,120)]));
   if(!(thresholds.very_expensive_max<thresholds.expensive_max&&thresholds.expensive_max<thresholds.interesting&&thresholds.interesting<thresholds.cheap&&thresholds.cheap<thresholds.very_cheap&&thresholds.very_cheap<thresholds.extreme)){preview.textContent=state.lang==="de"?"Grenzen müssen aufsteigend sein: Sehr hoch < Hoch < Interessant < Günstig < Sehr günstig < Extrem günstig":"Thresholds must ascend: Very high < High < Interesting < Cheap < Very cheap < Extremely cheap";preview.className="result negative";return;}
   if(!(model.volatility_regime_low_ratio<model.volatility_regime_high_ratio)){preview.textContent=state.lang==="de"?"Die Grenze für das niedrige Volatilitätsregime muss unter der hohen Grenze liegen.":"The low-volatility regime threshold must be below the high threshold.";preview.className="result negative";return;}
   if(!(model.volatility_fast_window_days<model.volatility_slow_window_days)){preview.textContent=state.lang==="de"?"Die schnelle Volatilitätsperiode muss kürzer als die langsame sein.":"The fast volatility window must be shorter than the slow window.";preview.className="result negative";return;}
@@ -2623,7 +2632,7 @@ async function saveBuyOpportunitySettings(event){
   if(Object.values(weights).reduce((sum,value)=>sum+Math.max(0,value),0)<=0){preview.textContent=state.lang==="de"?"Mindestens ein Gruppengewicht muss größer als 0 sein.":"At least one group weight must be greater than 0.";preview.className="result negative";return;}
   button.disabled=true;
   try{
-    const response=await service("set_buy_opportunity_settings",{config_entry_id:state.entryId,profile:form.elements.profile.value,currency:form.elements.currency.value,weights,signal_weights,turning_point_weights,model,thresholds});
+    const response=await service("set_buy_opportunity_settings",{config_entry_id:state.entryId,profile:form.elements.profile.value,currency:form.elements.currency.value,weights,signal_weights,turning_point_weights,model,thresholds,labels});
     state.data.buy_opportunity_settings=response.settings||state.data.buy_opportunity_settings;
     preview.textContent=t("buyOpportunitySaved");preview.className="result positive";toast(t("buyOpportunitySaved"));clearMarketAssessmentHistoryClientCache();await loadData();if(state.activeTab==="market")void loadMarketAssessmentHistory({force:true});if(state.activeTab==="overview"&&state.chartMode==="price_market")void ensureChartMarketAssessmentHistory({force:true});
   }catch(error){preview.textContent=error.message||String(error);preview.className="result negative";toast(error.message||String(error));}
@@ -2981,10 +2990,19 @@ function startLivePricePolling(){
   },30000);
 }
 
+function renderMarketAssessmentBackfillStatus(payload=state.marketAssessmentHistory){
+  const host=$("#marketAssessmentBackfillStatus");if(!host)return;const s=payload?.intraday_backfill||{};
+  if(!Object.keys(s).length){host.textContent=walletWatchLang("90-Tage-Rückrechnung wartet auf Start …","90-day reconstruction waiting to start …");return;}
+  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),available=Number(s.available_price_points||0),done=Number(s.completed_points||cached),target=Number(s.expected_source_points||s.expected_full_grid_points||8640),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points??(target-done))),interval=Math.max(1,Number(s.interval_minutes||15)),source=String(s.source||walletWatchLang("lokaler Kurscache / Tor-Anbieter","local price cache / Tor provider")),route=String(s.network_route||"Tor only"),stateLabel=complete?walletWatchLang("vollständig","complete"):String(s.state||walletWatchLang("läuft gedrosselt","throttled")),availableLabel=available>0?` · ${walletWatchLang("Kurse verfügbar","prices available")} ${fmtNumber(available,0)}`:"";
+  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${stateLabel} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)})${availableLabel} · ${source} · ${fmtNumber(interval,0)} min · ${route}${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${stateLabel} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)})${availableLabel} · ${source} · ${fmtNumber(interval,0)} min · ${route}${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);
+  host.className=`result market-assessment-backfill-status ${complete?"positive":""}`;
+}
+
 function renderMarketAssessmentHistory(){
   const host=$("#marketAssessmentHistoryChart"),hint=$("#marketAssessmentHistoryHint"),bestLegend=$("#marketAssessmentHistoryBestLegend"),markerTooltip=$("#marketAssessmentHistoryMarkerTooltip"),select=$("#marketAssessmentHistoryRange"),overlayToggle=$("#marketAssessmentHistoryPriceOverlay"),priceScaleSelect=$("#marketAssessmentHistoryPriceScale"),opacityInput=$("#marketAssessmentHistoryPriceOpacity"),opacityValue=$("#marketAssessmentHistoryPriceOpacityValue"),opacityControl=$("#marketAssessmentHistoryPriceOpacityControl"),smoothingSelect=$("#marketAssessmentHistorySmoothing");
   if(!host)return;if(select)select.value=state.marketAssessmentHistoryRange||"3y";if(overlayToggle)overlayToggle.checked=Boolean(state.marketAssessmentHistoryPriceOverlay);if(priceScaleSelect){priceScaleSelect.value=state.marketAssessmentHistoryPriceScale||"log";priceScaleSelect.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityInput){opacityInput.value=String(state.marketAssessmentHistoryPriceOpacity);opacityInput.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityValue)opacityValue.textContent=`${Math.round(state.marketAssessmentHistoryPriceOpacity)} %`;if(opacityControl)opacityControl.classList.toggle("is-inactive",!state.marketAssessmentHistoryPriceOverlay);if(smoothingSelect)smoothingSelect.value=String(state.marketAssessmentHistorySmoothing||5);
-  const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload),points=smoothMarketAssessmentPoints(rawPoints);
+  const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true}),points=smoothMarketAssessmentPoints(rawPoints);
+  renderMarketAssessmentBackfillStatus(payload);
   if(!points.length){host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Noch keine rekonstruierte Score-Historie geladen.","No reconstructed score history loaded yet."))}</p>`;if(bestLegend)bestLegend.innerHTML="";if(markerTooltip)markerTooltip.classList.add("hidden");if(hint)hint.textContent="";return;}
   const overlay=Boolean(state.marketAssessmentHistoryPriceOverlay),priceLog=state.marketAssessmentHistoryPriceScale!=="linear",priceOpacity=Math.max(0,Math.min(1,Number(state.marketAssessmentHistoryPriceOpacity||0)/100)),currency=String(payload?.currency||state.data?.summary?.reference_currency||"EUR").toUpperCase();
   const mobile=window.matchMedia("(max-width: 760px)").matches,width=Math.max(mobile?320:760,Math.round(host.clientWidth||(mobile?360:1100))),height=Math.max(mobile?600:560,Math.round(host.clientHeight||(mobile?620:590))),pad={l:58,r:overlay?(mobile?72:88):18,t:32,b:54},pw=width-pad.l-pad.r,ph=height-pad.t-pad.b;
@@ -3022,12 +3040,14 @@ async function refreshMarketAssessment({silent=true}={}){
     const result=await api(`api/market-assessment?entry_id=${encodeURIComponent(requestedEntry)}`,{timeoutMs:15000});
     if(requestedEntry!==state.entryId||!state.data)return false;
     const previousHistoryRevision=state.marketAssessmentHistorySourceRevision||marketAssessmentHistorySourceRevision();
+    const previousAssessmentCalculatedAt=String(state.data?.buy_opportunity_calculated_at||"");
     if(result?.buy_opportunity)state.data.buy_opportunity=result.buy_opportunity;
     if(result?.buy_opportunity_settings)state.data.buy_opportunity_settings=result.buy_opportunity_settings;
     if(result?.calculated_at)state.data.buy_opportunity_calculated_at=result.calculated_at;
     if(state.data?.history&&Object.prototype.hasOwnProperty.call(result||{},"history_last_sync"))state.data.history.last_sync=result.history_last_sync||null;
     syncMarketAssessmentHistorySourceRevision();
     const historyRevisionChanged=previousHistoryRevision!==state.marketAssessmentHistorySourceRevision;
+    const assessmentAdvanced=Boolean(result?.calculated_at&&String(result.calculated_at)!==previousAssessmentCalculatedAt);
     // The endpoint never triggers an additional external market call. The
     // current score is shared for five minutes; a background daily-history sync
     // is signaled via history_last_sync so an already-open panel drops only its
@@ -3036,11 +3056,11 @@ async function refreshMarketAssessment({silent=true}={}){
     invalidateDerivedCaches();
     if(state.activeTab==="market"){
       renderBuyOpportunitySettings();renderMarketAssessmentHistory();
-      if(historyRevisionChanged)void loadMarketAssessmentHistory();
+      if(historyRevisionChanged||assessmentAdvanced)void loadMarketAssessmentHistory({force:true});
     }
     if(state.activeTab==="overview"&&state.chartMode==="price_market"){
       renderChart();
-      if(historyRevisionChanged)void ensureChartMarketAssessmentHistory();
+      if(historyRevisionChanged||assessmentAdvanced)void ensureChartMarketAssessmentHistory({force:true});
     }
     return true;
   }catch(error){
@@ -4088,7 +4108,7 @@ $$('.tabs button[data-tab="settings"]').forEach(button=>button.addEventListener(
 $("#portfolioSelect").addEventListener("change",()=>setTimeout(loadBackupHealth,250));
 window.addEventListener("storage",event=>{if(event.key==="bst_last_activity_at"){state.lastActivityAt=sharedLastActivity();scheduleAutoLock();}else if(event.key==="bst_auto_lock_minutes"){const value=Number(event.newValue);if([0,5,15,30,60,120].includes(value)){state.autoLockMinutes=value;scheduleAutoLock();}}});
 for(const activityEvent of ["pointerdown","keydown","touchstart","input"]){window.addEventListener(activityEvent,recordUserActivity,{passive:true});}
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.entryId){void refreshNetworkStatus({silent:true});if(state.activeTab==="settings")void refreshConnectionInventory({silent:true});}});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.entryId){void loadData().then(()=>{if(state.data?.locked&&!walletWatchShowWhenLocked())hideLockedWalletWatch();void refreshNetworkStatus({silent:true});if(state.activeTab==="settings")void refreshConnectionInventory({silent:true});}).catch(error=>console.warn("Bitcoin Stack foreground state refresh failed",errorText(error)));}});
 const compactTableMedia=window.matchMedia("(max-width: 760px)");
 const refreshCompactTableLayout=()=>{if(!state.data||state.data.locked)return;if(state.activeTab==="ledger")renderLedger();else if(state.activeTab==="tax")renderTax();};
 if(typeof compactTableMedia.addEventListener==="function")compactTableMedia.addEventListener("change",refreshCompactTableLayout);
@@ -4709,17 +4729,26 @@ function walletWatchCompactSummaryHtml(mon,{locked=false,index=0}={}){
 }
 function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v1:${state.entryId||"default"}`;}
 function walletWatchShowWhenLocked(){return localStorage.getItem(walletWatchLockedDisplayStorageKey())==="1";}
+function hideLockedWalletWatch(){
+  state.lockedWalletWatchEditId="";
+  state.lockedWalletWatchSaving=false;
+  state.walletWatch=null;
+  state.walletWatchTxOverviews={};
+  const host=$("#lockedWalletWatch");
+  if(host){host.classList.add("hidden");host.innerHTML="";}
+}
 function setWalletWatchShowWhenLocked(show){
   const enabled=Boolean(show);
   localStorage.setItem(walletWatchLockedDisplayStorageKey(),enabled?"1":"0");
   const input=$("#walletWatchShowWhenLocked");if(input)input.checked=enabled;
+  if(!enabled){hideLockedWalletWatch();return;}
   if(state.data?.locked){
     state.lockedWalletWatchEditId="";
     state.walletWatchTxOverviews={};
-    if(!enabled){state.walletWatch=null;const host=$("#lockedWalletWatch");if(host){host.classList.add("hidden");host.innerHTML="";}}
-    else void loadLockedWalletWatchManagement().then(ok=>{if(ok)renderLockedWalletWatch();else void refreshWalletWatchStatus({silent:true});});
+    void loadLockedWalletWatchManagement().then(ok=>{if(ok)renderLockedWalletWatch();else void refreshWalletWatchStatus({silent:true});});
   }
 }
+
 function walletWatchPanelStorageKey(){return `bst_walletwatch_panel_state:${state.entryId||"default"}`;}
 function walletWatchPanelPreferences(){try{const parsed=JSON.parse(localStorage.getItem(walletWatchPanelStorageKey())||"{}");return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{};}catch(_error){return {};}}
 function setWalletWatchPanelCollapsed(panel,collapsed,{persist=false}={}){
@@ -4752,12 +4781,12 @@ async function saveLockedWalletWatchMonitor(event){
 async function removeLockedWalletWatchMonitor(id){
   const st=state.walletWatch?.status||{},mon=(Array.isArray(st.monitor_catalog)?st.monitor_catalog:[]).find(item=>String(item?.id||"")===String(id||""));if(!mon)return;const label=state.discreet?walletWatchLang("diese Wallet","this wallet"):(mon.label||mon.id);if(!window.confirm(walletWatchLang(`„${label}“ wirklich aus Sats Sentinel entfernen?`,`Really remove “${label}” from Sats Sentinel?`)))return;try{const response=await api("api/wallet-watch/remove-monitor",{method:"POST",body:JSON.stringify({entry_id:state.entryId,monitor_id:String(id||"")}),timeoutMs:30000});if(state.walletWatch)state.walletWatch.status=response.status;state.lockedWalletWatchEditId="";renderLockedWalletWatch();toast(walletWatchLang("Watch-Wallet entfernt. Die Änderung wird beim nächsten Entsperren mit dem Haupttresor synchronisiert.","Watch wallet removed. The change will sync to the main vault on the next unlock."));}catch(error){toast(errorText(error));}}
 async function loadLockedWalletWatchManagement(){
-  if(!state.entryId||!state.data?.security?.owner)return false;
-  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};return true;}catch(_error){return false;}
+  if(!state.entryId||!state.data?.locked)return false;
+  try{const response=await api(`api/wallet-watch/manage?entry_id=${encodeURIComponent(state.entryId)}`,{timeoutMs:10000});const previous=state.walletWatch||{};state.walletWatch={...previous,config:response.config||previous.config||{},status:response.status||previous.status||{},notify_services:previous.notify_services||[],activity_log:previous.activity_log||{items:[],page:1,pages:1,total:0,stored_total:0},locked_runtime_snapshot:true};state.data.security={...(state.data.security||{}),owner:true};return true;}catch(_error){return false;}
 }
 function renderLockedWalletWatch(){
   const host=$("#lockedWalletWatch");if(!host)return;
-  if(!state.data?.locked||!state.data?.security?.owner||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}
+  if(!state.data?.locked||!walletWatchShowWhenLocked()||!state.walletWatch?.status){host.classList.add("hidden");host.innerHTML="";return;}
   const st=state.walletWatch.status||{},catalog=Array.isArray(st.monitor_catalog)?st.monitor_catalog.filter(item=>item):[];
   if(!catalog.length){host.classList.remove("hidden");host.innerHTML=`<div class="locked-wallet-watch-head"><div><span class="kicker">SATS SENTINEL · RUNTIME VAULT</span><h2>${esc(walletWatchLang("Überwachte Wallets & Adressen","Watched wallets & addresses"))}</h2><p>${esc(walletWatchLang("Der Portfolio-Tresor ist gesperrt. Im verschlüsselten Sentinel-Runtime-Tresor ist aktuell keine Watch-Wallet verfügbar. Einmal entsperren, damit der Runtime-Stand aufgebaut wird.","The portfolio vault is locked. No watch wallet is currently available in the encrypted Sentinel runtime vault. Unlock once to build the runtime state."))}</p></div></div>`;return;}
   const cards=catalog.map((mon,index)=>{const id=String(mon.id||""),runtime=walletWatchMonitorRuntimeSummary(id),label=state.discreet?`Wallet #${index+1}`:(String(mon.label||"").trim()||`Wallet ${index+1}`),kind=String(mon.kind||"address").toUpperCase(),balance=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,counts=state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("Adresse(n)","address(es)")}${String(mon.kind||"address")!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`,last=runtime.last_activity?.detected_at?fmtDateTime(runtime.last_activity.detected_at):walletWatchLang("keine neue Bewegung","no new movement"),masked=state.discreet?"••••":String(mon.watch_value_masked||walletWatchLang("verschlüsselt","encrypted")),detail=walletWatchNotificationDetailLabel(mon.notification_detail),editor=state.lockedWalletWatchEditId===id?lockedWalletWatchEditorHtml(mon):"",collapsed=state.lockedWalletWatchEditId===id?false:walletWatchMonitorIsCollapsed(id);return `<article class="locked-wallet-card ${collapsed?"is-collapsed":""}" data-monitor-id="${esc(id)}">${collapsed?walletWatchCompactSummaryHtml(mon,{locked:true,index}):walletWatchMonitorToggleHtml(id,label,kind,balance,false)}<div class="locked-wallet-card-body" ${collapsed?"hidden":""}><div class="locked-wallet-card-head"><code class="locked-wallet-watch-value">${esc(masked)}</code><div class="sats-sentinel-watch-actions"><button class="secondary compact locked-wallet-edit" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact locked-wallet-delete" type="button" data-id="${esc(id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="locked-wallet-balance">${esc(balance)}</div><div class="locked-wallet-meta"><span>${esc(counts)}</span><span>${esc(walletWatchLang("Benachrichtigung","Notification"))}: ${esc(detail)}</span><span>${esc(walletWatchLang("Letzte Bewegung","Last movement"))}: ${esc(last)}</span></div>${walletWatchMonitorAddressesHtml(id)}${editor}</div></article>`;}).join("");
@@ -4816,7 +4845,7 @@ function walletWatchMonitorRuntimeSummary(monitorId){
   const id=String(monitorId||""),st=state.walletWatch?.status||{},last=st.last_activity_by_monitor?.[id]||null,aggregate=st.monitor_summaries?.[id],overview=walletWatchTxOverviewState(id)?.data||null;
   const overviewBalance=overview&&Number.isFinite(Number(overview.balance_sats))?Number(overview.balance_sats):null;
   if(aggregate&&typeof aggregate==="object"){
-    return {addresses:Number(aggregate.address_count||0),receive_addresses:Number(aggregate.receive_address_count||0),change_addresses:Number(aggregate.change_address_count||0),receive_used:Number(aggregate.receive_used_count||0),change_used:Number(aggregate.change_used_count||0),balance_sats:overviewBalance===null?Number(aggregate.balance_sats||0):overviewBalance,utxo_count:Number(aggregate.utxo_count||0),baseline_complete:Boolean(aggregate.baseline_complete),last_activity:last};
+    return {addresses:Number(aggregate.address_count||0),receive_addresses:Number(aggregate.receive_address_count||0),change_addresses:Number(aggregate.change_address_count||0),receive_used:Number(aggregate.receive_used_count||0),change_used:Number(aggregate.change_used_count||0),balance_sats:overviewBalance===null?Number(aggregate.balance_sats||0):overviewBalance,utxo_count:Number(aggregate.utxo_count||0),baseline_complete:Boolean(aggregate.baseline_complete),resolved_address_type:String(aggregate.resolved_address_type||""),resolved_address_type_verified:Boolean(aggregate.resolved_address_type_verified),last_activity:last};
   }
   const addresses=Array.isArray(st.addresses)?st.addresses.filter(row=>String(row?.monitor_id||"")===id):[],receive=addresses.filter(row=>row?.branch==="receive"),change=addresses.filter(row=>row?.branch==="change");
   return {addresses:addresses.length,receive_addresses:receive.length,change_addresses:change.length,receive_used:receive.filter(row=>row?.used===true).length,change_used:change.filter(row=>row?.used===true).length,balance_sats:overviewBalance===null?addresses.reduce((sum,row)=>sum+Number(row?.balance_sats||0),0):overviewBalance,utxo_count:addresses.reduce((sum,row)=>sum+Number(row?.utxo_count||0),0),baseline_complete:addresses.length>0&&addresses.every(row=>Boolean(row?.baseline_complete)),last_activity:last};
@@ -4875,7 +4904,7 @@ function renderWalletWatch(){
     const safeValue=String(mon.value||"").trim()?maskWalletWatchValue(mon.value):(state.discreet?"••••":String(mon.watch_value_masked||walletWatchLang("verschlüsselt gespeichert","stored encrypted")));const reserve=mon.kind==="address"?walletWatchLang("Exakte Adresse dauerhaft überwachen","Monitor this exact address permanently"):`Receive Gap ${mon.receive_count||0} · Change Gap ${mon.change_count||0}`;
     const threshold=Number(mon.min_notify_sats||0);const thresholdText=threshold>0?`${fmtNumber(threshold,0)} sats`:walletWatchLang("Keine Alarmgrenze","No alert threshold");
     const channels=[mon.notify_ha_event!==false?"HA Event":null,mon.notify_persistent!==false?"HA":null,mon.notify_services!==false?"Push":null,mon.notify_external!==false?"ntfy/Webhook":null].filter(Boolean).join(" · ")||walletWatchLang("Nur Journal","Journal only");
-    const incoming=mon.notify_incoming!==false,outgoing=mon.notify_outgoing!==false,kindLabel=String(mon.kind||"address").toUpperCase(),runtime=walletWatchMonitorRuntimeSummary(mon.id),historyLimit=[0,5,10,25,50,100].includes(Number(mon.history_limit))?Number(mon.history_limit):10,balanceText=state.discreet?"••••":`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,pending=Boolean(mon._pending_save),historyLabel=historyLimit===0?walletWatchLang("Unbegrenzt · 25/Seite","Unlimited · 25/page"):`${historyLimit} TX`,detailMode=String(mon.notification_detail||cfg.notification_detail||"discreet"),detailLabel=detailMode==="detailed"?walletWatchLang("Detailliert","Detailed"):detailMode==="normal"?walletWatchLang("Normal","Normal"):walletWatchLang("Diskret","Discreet"),label=state.discreet?"••••":(mon.label||mon.id),collapsed=walletWatchMonitorIsCollapsed(mon.id);
+    const incoming=mon.notify_incoming!==false,outgoing=mon.notify_outgoing!==false,kindLabel=String(mon.kind||"address").toUpperCase(),runtime=walletWatchMonitorRuntimeSummary(mon.id),historyLimit=[0,5,10,25,50,100].includes(Number(mon.history_limit))?Number(mon.history_limit):10,xpubResolving=mon.kind==="xpub"&&String(mon.address_type||"auto")==="auto"&&!runtime.resolved_address_type_verified,balanceText=state.discreet?"••••":xpubResolving?walletWatchLang("Wird ermittelt …","Detecting …"):`${fmtNumber(Number(runtime.balance_sats||0)/SATsFix(),8)} BTC`,pending=Boolean(mon._pending_save),historyLabel=historyLimit===0?walletWatchLang("Unbegrenzt · 25/Seite","Unlimited · 25/page"):`${historyLimit} TX`,detailMode=String(mon.notification_detail||cfg.notification_detail||"discreet"),detailLabel=detailMode==="detailed"?walletWatchLang("Detailliert","Detailed"):detailMode==="normal"?walletWatchLang("Normal","Normal"):walletWatchLang("Diskret","Discreet"),label=state.discreet?"••••":(mon.label||mon.id),collapsed=walletWatchMonitorIsCollapsed(mon.id);
     return `<article class="sats-sentinel-watch-card ${pending?"pending-save":""} ${collapsed?"is-collapsed":""}" data-monitor-id="${esc(mon.id)}">${collapsed?walletWatchCompactSummaryHtml(mon):walletWatchMonitorToggleHtml(mon.id,label,kindLabel,balanceText,false)}<div class="sats-sentinel-watch-body" ${collapsed?"hidden":""}><div class="sats-sentinel-watch-head"><div class="sats-sentinel-watch-badges"><span class="sats-sentinel-category ${esc(walletWatchCategoryClass(mon.category))}">${esc(walletWatchCategoryLabel(mon.category))}</span><span class="sats-sentinel-kind-badge">${esc(kindLabel)}</span>${pending?`<span class="sats-sentinel-pending-badge">${esc(walletWatchLang("NOCH SPEICHERN","SAVE REQUIRED"))}</span>`:""}</div><div class="sats-sentinel-watch-actions"><button class="secondary compact wallet-watch-edit" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Bearbeiten","Edit"))}</button><button class="danger compact wallet-watch-delete" type="button" data-id="${esc(mon.id)}">${esc(walletWatchLang("Entfernen","Remove"))}</button></div></div><div class="sats-sentinel-watch-title">${mon.note&&!state.discreet?`<p>${esc(mon.note)}</p>`:""}</div><code class="sats-sentinel-watch-address">${esc(safeValue)}</code><div class="wallet-watch-monitor-meta"><div class="wide-meta"><span>${esc(walletWatchLang("Überwachung","Monitoring"))}</span><strong>${esc(reserve)}</strong></div><div><span>${esc(walletWatchLang("Bestand","Balance"))}</span><strong>${esc(balanceText)}</strong><small>${esc(state.discreet?"••••":`${runtime.addresses} ${walletWatchLang("abgeleitete Adresse(n)","derived address(es)")}${mon.kind!=="address"?` · Receive ${runtime.receive_addresses} · Change ${runtime.change_addresses}`:""} · ${runtime.utxo_count} UTXO`)}</small></div><div><span>${esc(walletWatchLang("TX-Übersicht","TX overview"))}</span><strong>${esc(historyLabel)}</strong></div><div class="wide-meta sats-sentinel-last-movement"><span>${esc(walletWatchLang("Letzte von Sentinel erkannte Bewegung","Last movement detected by Sentinel"))}</span>${walletWatchLastDetectedHtml(runtime.last_activity)}</div><div class="${incoming?"is-on":"is-off"}"><span>${esc(walletWatchLang("Eingangs-Alarm","Incoming alert"))}</span><strong>${esc(incoming?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div class="${outgoing?"is-on":"is-off"}"><span>${esc(walletWatchLang("Ausgangs-Alarm","Outgoing alert"))}</span><strong>${esc(outgoing?walletWatchLang("Alarm aktiv","Alert on"):walletWatchLang("Nur protokollieren","Log only"))}</strong></div><div><span>${esc(walletWatchLang("Alarmgrenze","Alert threshold"))}</span><strong>${esc(thresholdText)}</strong></div><div><span>${esc(walletWatchLang("Alarmkanäle","Alert channels"))}</span><strong>${esc(channels)}</strong></div><div><span>${esc(walletWatchLang("Benachrichtigungsdetails","Notification detail"))}</span><strong>${esc(detailLabel)}</strong></div></div>${walletWatchMonitorAddressesHtml(mon.id)}<details class="sats-sentinel-tx-details" data-monitor-id="${esc(mon.id)}" ${pending?'data-pending-save="1"':""} ${!collapsed&&!pending&&state.walletWatchOpenTxDetails.has(String(mon.id))?"open":""}><summary>${esc(pending?walletWatchLang("Erst Sats Sentinel speichern, dann TX laden","Save Sats Sentinel before loading TX"):historyLimit===0?walletWatchLang("Alle Transaktionen seitenweise anzeigen","Browse all transactions page by page"):walletWatchLang(`Letzte ${historyLimit} Transaktionen anzeigen`,`Show last ${historyLimit} transactions`))}</summary><div class="sats-sentinel-tx-host" data-wallet-watch-tx-host="${esc(mon.id)}"><p class="storage-note">${esc(pending?walletWatchLang("Dieser Watch-Eintrag existiert noch nicht im verschlüsselten Backend. Erst speichern.","This watch entry does not exist in the encrypted backend yet. Save it first."):walletWatchLang("Historische Übersicht wird erst beim Öffnen geladen und löst keine rückwirkenden Alarme aus.","Historical overview is loaded only when opened and never triggers retroactive alerts."))}</p></div></details></div></article>`;
   }).join(""):`<p class="storage-note">${esc(walletWatchLang("Noch keine Adresse oder Watch-only-Wallet eingetragen.","No address or watch-only wallet configured yet."))}</p>`;
   list.querySelectorAll(".sats-sentinel-watch-toggle").forEach(button=>button.onclick=()=>{const id=String(button.dataset.id||"");setWalletWatchMonitorCollapsed(id,!walletWatchMonitorIsCollapsed(id));renderWalletWatch();});

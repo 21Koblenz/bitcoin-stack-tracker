@@ -23,7 +23,7 @@ from typing import Any, Mapping
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .buy_opportunity import SCORE_VERSION
+from .buy_opportunity import SCORE_VERSION, score_affecting_settings
 from .const import DOMAIN
 
 _CACHE_STORAGE_VERSION = 1
@@ -42,7 +42,7 @@ def market_assessment_history_signature(
     header = {
         "score_version": SCORE_VERSION,
         "currency": str(currency).upper(),
-        "settings": settings,
+        "settings": score_affecting_settings(settings),
     }
     digest.update(
         json.dumps(header, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

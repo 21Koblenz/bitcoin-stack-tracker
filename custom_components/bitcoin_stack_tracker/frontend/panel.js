@@ -1,4 +1,4 @@
-const FRONTEND_BUILD = "0.21.0.13";
+const FRONTEND_BUILD = "0.21.0.14";
 const RPC_SOURCE = "bitcoin-stack-tracker-native";
 const PANEL_ELEMENT = `bitcoin-stack-tracker-panel-${FRONTEND_BUILD.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
 

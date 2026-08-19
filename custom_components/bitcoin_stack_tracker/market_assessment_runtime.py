@@ -8,10 +8,14 @@ avoidable CPU stalls and large amounts of short-lived Python objects.
 This module keeps one cache per config entry, runs the model only in HA's
 executor, and coalesces concurrent requests. Structural input changes (settings
 or historical source data) invalidate immediately. Intraday live-price ticks do
-not invalidate the current snapshot before the five-minute TTL expires. When
+not invalidate the current snapshot before the fifteen-minute TTL expires. When
 the next calculation is due it uses the newest coordinator price available at
 that moment. Historical chart scores are cached separately and are never
 invalidated by intraday price ticks.
+
+The 90-day 15-minute reconstruction lifecycle is owned exclusively by the
+config-entry setup code. Reading a market assessment must never spawn, restart,
+or otherwise manage that long-running background worker.
 """
 from __future__ import annotations
 
@@ -25,14 +29,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings
+from .buy_opportunity import calculate_buy_opportunity, normalize_buy_opportunity_settings, score_affecting_settings
 from .const import CONF_BUY_OPPORTUNITY_SETTINGS, DOMAIN
 from .helpers import configured_currencies, effective_settings
 from .market_assessment_intraday_cache import market_assessment_intraday_signature
 
 _LOGGER = logging.getLogger(__name__)
 
-MARKET_ASSESSMENT_CACHE_SECONDS = 5 * 60
+MARKET_ASSESSMENT_CACHE_SECONDS = 15 * 60
 _CACHE_KEY = "_market_assessment_cache"
 _TASK_KEY = "_market_assessment_task"
 
@@ -68,11 +72,10 @@ def _assessment_inputs(
     today = dt_util.utcnow().date()
     latest_history_day = max(history, default=None) if isinstance(history, dict) else None
     latest_history_value = history.get(latest_history_day) if latest_history_day and isinstance(history, dict) else None
-    # Keep the expensive current assessment bounded to one calculation per five
-    # minutes. Do not include ``current_price`` in the structural key: doing so
-    # would let every coordinator quote bypass the TTL. The newest live price is
-    # still passed into calculate_buy_opportunity() once the TTL expires.
-    # Settings/history/day/source transitions remain immediate invalidators.
+    # Keep the expensive current assessment bounded to one calculation per
+    # fifteen minutes. Do not include ``current_price`` in the structural key:
+    # doing so would let every coordinator quote bypass the TTL. The newest live
+    # price is still passed into calculate_buy_opportunity() once the TTL expires.
     structural_key = (
         currency,
         price_source,
@@ -80,7 +83,7 @@ def _assessment_inputs(
         len(history) if isinstance(history, dict) else 0,
         latest_history_day,
         latest_history_value,
-        repr(scoring_settings),
+        repr(score_affecting_settings(scoring_settings)),
         today,
     )
     return structural_key, history, current_price, currency, scoring_settings, price_source
@@ -118,7 +121,6 @@ async def async_market_assessment(
         try:
             await running
         except Exception:
-            # The caller below will retry with its own current inputs.
             pass
         cached = runtime.get(_CACHE_KEY)
         now = monotonic()
@@ -165,8 +167,6 @@ async def async_market_assessment(
                     currency=currency,
                 )
             except Exception:
-                # Snapshot persistence is display-only and must never turn a
-                # successful market calculation into a failed HA sensor update.
                 _LOGGER.debug("Could not persist market-assessment intraday snapshot", exc_info=True)
         return snapshot
 

@@ -199,6 +199,24 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "extreme": 90.0,
 }
 
+RATING_KEYS = (
+    "very_expensive", "expensive", "neutral", "interesting",
+    "cheap", "very_cheap", "extreme",
+)
+MAX_RATING_LABEL_LENGTH = 120
+
+
+def score_affecting_settings(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return only settings that can change numeric scores or rating bands.
+
+    User-facing rating text is deliberately excluded. Renaming e.g.
+    ``very_cheap`` must never invalidate years of cached score history
+    or restart the 90-day intraday reconstruction.
+    """
+    payload = dict(settings or {})
+    payload.pop("labels", None)
+    return payload
+
 
 def _finite(value: Any) -> float | None:
     try:
@@ -705,6 +723,15 @@ def normalize_buy_opportunity_settings(
     if not all(left < right for left, right in zip(ordered, ordered[1:])):
         thresholds = dict(DEFAULT_THRESHOLDS)
 
+    raw_labels = raw.get("labels") if isinstance(raw.get("labels"), Mapping) else {}
+    labels: dict[str, str] = {}
+    for key in RATING_KEYS:
+        value = str(raw_labels.get(key) or "") if isinstance(raw_labels, Mapping) else ""
+        # Keep labels display-only and safe for HTML/UI transport. The
+        # frontend escapes them again before inserting text into markup.
+        value = "".join(char for char in value.strip() if ord(char) >= 32 and ord(char) != 127)
+        labels[key] = value[:MAX_RATING_LABEL_LENGTH]
+
     raw_model = raw.get("model") if isinstance(raw.get("model"), Mapping) else {}
     model: dict[str, float | int] = {}
     for key, default in DEFAULT_MODEL_SETTINGS.items():
@@ -764,6 +791,7 @@ def normalize_buy_opportunity_settings(
         "signal_weights": signal_weights,
         "turning_point_weights": turning_point_weights,
         "thresholds": thresholds,
+        "labels": labels,
         "model": model,
         "score_version": SCORE_VERSION,
         "adaptive_window_days": model["adaptive_window_days"],

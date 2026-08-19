@@ -2321,6 +2321,10 @@ class WalletWatchManager:
                 str(monitor.get("_resolved_address_type") or monitor.get("address_type") or "auto")
                 if str(monitor.get("kind") or "") == "xpub" else ""
             ),
+            "resolved_address_type_verified": (
+                bool(monitor.get("_resolved_address_type_verified"))
+                if str(monitor.get("kind") or "") == "xpub" else True
+            ),
             "notify_incoming": monitor["notify_incoming"],
             "notify_outgoing": monitor["notify_outgoing"],
             "category": monitor.get("category", "other"),
@@ -2345,6 +2349,7 @@ class WalletWatchManager:
         for key in (
             "baseline_complete", "summary_signature", "known_txids", "utxo_count", "balance_sats",
             "last_activity_at", "last_balance_refresh_unix",
+            "resolved_address_type", "resolved_address_type_verified",
         ):
             row[key] = deepcopy(old.get(key, row.get(key)))
         if "utxo_count" not in old and isinstance(old.get("utxos"), list):
@@ -2364,7 +2369,7 @@ class WalletWatchManager:
 
     async def _resolve_xpub_address_type(
         self, monitor: dict[str, Any], source: dict[str, Any], *, electrum_client: _ElectrumRPCClient | None
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Resolve script type for an ambiguous plain xpub from actual wallet history.
 
         ypub/zpub are unambiguous. A plain xpub is not: many descriptor wallets
@@ -2378,9 +2383,9 @@ class WalletWatchManager:
         extpub = str(monitor.get("value") or "")
         root = _parse_extpub(extpub)
         if requested != "auto":
-            return requested
+            return requested, True
         if not extpub.lower().startswith("xpub"):
-            return root.script_type
+            return root.script_type, True
         candidates = list(_XPUB_AUTO_CANDIDATES)
         scores = {item: 0 for item in candidates}
         # Probe one script family at a time instead of bursting all four
@@ -2404,12 +2409,14 @@ class WalletWatchManager:
 
             if electrum_client is not None:
                 calls = [
-                    ("blockchain.scripthash.get_history", [_electrum_scripthash(address)])
+                    ("blockchain.scripthash.subscribe", [_electrum_scripthash(address)])
                     for address in addresses
                 ]
-                results = await electrum_client.call_many(calls)
-                for history in results:
-                    if isinstance(history, list) and history:
+                results = await self._electrum_calls_chunked(
+                    electrum_client, calls, chunk_size=ELECTRUM_STATUS_BATCH_SIZE
+                )
+                for status in results:
+                    if status not in {None, ""}:
                         scores[script_type] += 1
             else:
                 # HTTP/Esplora fallback is intentionally conservative and only
@@ -2426,8 +2433,8 @@ class WalletWatchManager:
             # No history exists inside the configured gap. Native SegWit is the
             # modern default; the UI exposes an explicit override for new/empty
             # wallets where history cannot identify the script family.
-            return "p2wpkh"
-        return best
+            return "p2wpkh", False
+        return best, True
 
     async def _probe_gap_address_used(
         self, source: dict[str, Any], address: str, *, electrum_client: _ElectrumRPCClient | None = None
@@ -2483,9 +2490,11 @@ class WalletWatchManager:
 
                 monitor = deepcopy(monitor)
                 if monitor.get("kind") == "xpub":
-                    monitor["_resolved_address_type"] = await self._resolve_xpub_address_type(
+                    resolved_type, resolved_verified = await self._resolve_xpub_address_type(
                         monitor, source, electrum_client=client
                     )
+                    monitor["_resolved_address_type"] = resolved_type
+                    monitor["_resolved_address_type_verified"] = bool(resolved_verified)
 
                 for branch, branch_name, gap_limit in (
                     (0, "receive", int(monitor.get("receive_count") or 0)),
@@ -2583,20 +2592,22 @@ class WalletWatchManager:
         # Remember the auto-detected script family without storing any additional
         # private material. This also invalidates pre-rc20 naked-xpub caches that
         # were derived as legacy merely because the serialization prefix was xpub.
-        resolved_by_monitor: dict[str, str] = {}
+        resolved_by_monitor: dict[str, tuple[str, bool]] = {}
         for row in rebuilt:
             if not isinstance(row, dict):
                 continue
             resolved = str(row.get("resolved_address_type") or "")
             monitor_id = str(row.get("monitor_id") or "")
             if monitor_id and resolved in _XPUB_AUTO_CANDIDATES:
-                resolved_by_monitor[monitor_id] = resolved
+                resolved_by_monitor[monitor_id] = (resolved, bool(row.get("resolved_address_type_verified")))
         for item in self.runtime_store.data.get("monitor_catalog") or []:
             if not isinstance(item, dict):
                 continue
             monitor_id = str(item.get("id") or "")
             if monitor_id in resolved_by_monitor:
-                item["resolved_address_type"] = resolved_by_monitor[monitor_id]
+                resolved, verified = resolved_by_monitor[monitor_id]
+                item["resolved_address_type"] = resolved
+                item["resolved_address_type_verified"] = verified
         await self.runtime_store.async_save()
 
     async def _maintain_gap_from_standby(self, source: dict[str, Any]) -> bool:
@@ -3140,6 +3151,8 @@ class WalletWatchManager:
                     "balance_sats": 0,
                     "utxo_count": 0,
                     "baseline_complete": True,
+                    "resolved_address_type": "",
+                    "resolved_address_type_verified": False,
                 },
             )
             summary["address_count"] += 1
@@ -3154,6 +3167,9 @@ class WalletWatchManager:
                     summary["change_used_count"] += 1
             summary["balance_sats"] += int(row.get("balance_sats") or 0)
             summary["utxo_count"] += int(row.get("utxo_count") or 0)
+            if row.get("resolved_address_type"):
+                summary["resolved_address_type"] = str(row.get("resolved_address_type") or "")
+                summary["resolved_address_type_verified"] = bool(row.get("resolved_address_type_verified"))
             summary["baseline_complete"] = bool(summary["baseline_complete"]) and bool(
                 row.get("baseline_complete")
             )
@@ -4175,7 +4191,7 @@ class WalletWatchManager:
         settings = effective_settings(self.entry)
         proxy = None if local_direct else tor_proxy_from_settings(settings)
         headers: dict[str, str] = {
-            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.13",
+            "User-Agent": "Bitcoin-Stack-Tracker/0.21.0.14",
         }
         token = str(target.get("token") or "")
         if token:

@@ -128,7 +128,7 @@ def test_fifo_fiat_values_hide_cleanly_in_fiat_free_mode():
 
 def test_hidden_network_inventory_is_not_polled_globally():
     block = function_block(APP, "function startNetworkPolling()", "function renderSecurity")
-    assert "},30000);" in block
+    assert "},60000);" in block
     assert 'if(state.activeTab==="settings")' in block
     assert 'state.activeTab==="settings" ||' not in block
     prefix = block.split('if(state.activeTab==="settings")', 1)[0]

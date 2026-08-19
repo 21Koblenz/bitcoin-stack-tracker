@@ -13,13 +13,17 @@ def test_chart_has_independent_left_and_right_scale_controls():
     assert 'bst_chart_scale_right' in APP
     assert 'function chartAxisScale(index)' in APP
     assert 'const logarithmic = index =>' in APP
-    assert 'logarithmic(0)?t("logarithmic")' in APP
-    assert 'logarithmic(1)?t("logarithmic")' in APP
+    assert 'const symlogarithmic = index =>' in APP
+    assert 'chartScaleLabel(0)' in APP
+    assert 'chartScaleLabel(1)' in APP
 
 
-def test_signed_series_only_blocks_its_own_log_axis():
-    assert 'const logBlocked = Boolean(item?.allowNegative || item?.forceLinear);' in APP
-    assert 'if (logBlocked && chartAxisScale(index) === "log") setChartAxisScale(index,"linear")' in APP
+def test_signed_series_uses_symlog_on_its_own_axis():
+    assert 'const logBlocked = Boolean(item?.forceLinear);' in APP
+    assert 'const signedLog = Boolean(item?.allowNegative && chartAxisScale(index) === "log");' in APP
+    assert 't(signedLog?"symlogarithmic":"logarithmic")' in APP
+    assert 'Math.sign(numeric)*Math.log10(1+Math.abs(numeric)/threshold)' in APP
+    assert 'Math.sign(numeric)*threshold*((10 ** Math.abs(numeric))-1)' in APP
     assert 'const signedSeries = series.some' not in APP
 
 
