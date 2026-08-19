@@ -78,11 +78,22 @@ DEFAULT_LONG_TERM_DAYS = 365
 MIN_LONG_TERM_DAYS = 1
 MAX_LONG_TERM_DAYS = 36500
 DEFAULT_TAX_NOTE = (
-    "Hinweis: Die Steuerdarstellung ist eine Rechenhilfe und keine Steuerberatung. "
-    "Regeln koennen sich aendern; bitte im Zweifel Steuerberatung einholen."
+    "Configurable holding-period overview only. Depending on the applicable law, "
+    "coins older than the selected period may be treated differently. Not tax advice "
+    "and not a tax return."
 )
+DEFAULT_DEPOT_ID = "main"
+ALL_DEPOTS = "all"
 
-SECURITY_SCHEMA_VERSION = 3
-SECURITY_STORAGE_KEY_PREFIX = f"{DOMAIN}.security"
+# Keep Store's external version stable and migrate the internal schema ourselves.
 STORAGE_VERSION = 1
+STORAGE_SCHEMA_VERSION = 5
+SECURITY_SCHEMA_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.ledger"
+HISTORY_STORAGE_KEY_PREFIX = f"{DOMAIN}.history"
+SECURITY_STORAGE_KEY_PREFIX = f"{DOMAIN}.security"
+RUNTIME = "runtime"
+
+BRAND_NAME = "Einundzwanzig Koblenz"
+BRAND_WATERMARK = "created by Einundzwanzig Koblenz"
+V4V_LIGHTNING_ADDRESS = "creamowl25@primal.net"
