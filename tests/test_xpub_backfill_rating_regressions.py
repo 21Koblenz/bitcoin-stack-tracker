@@ -23,7 +23,9 @@ def test_90_day_backfill_is_wired_throttled_and_visible():
     assert "BACKFILL_SCORE_BATCH_POINTS = 2" in BACKFILL
     assert "BACKFILL_SCORE_PAUSE_SECONDS = 20" in BACKFILL
     assert "marketAssessmentBackfillStatus" in APP
-    assert "Bitstamp 5m" in APP
+    assert "Bitstamp 5m · Tor only" not in APP
+    assert "s.interval_minutes||15" in APP
+    assert "s.network_route||\"Tor only\"" in APP
 
 
 def test_rating_names_are_editable_but_display_only():

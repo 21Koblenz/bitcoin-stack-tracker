@@ -838,10 +838,12 @@ async function performAutoLock(){
   if(Date.now()-state.lastActivityAt < state.autoLockMinutes*60000){scheduleAutoLock();return;}
   autoLockInFlight=true;
   try{
+    if(!walletWatchShowWhenLocked())hideLockedWalletWatch();
     await service("lock_vault",{config_entry_id:state.entryId});
     toast(t("autoLockTriggered"));
     state.lastActivityAt=Date.now();
     await loadData();
+    if(!walletWatchShowWhenLocked())hideLockedWalletWatch();
   }catch(error){
     toast(error.message||String(error));
     state.lastActivityAt=Date.now();
@@ -1083,8 +1085,7 @@ async function loadData() {
     updateVaultGateText();
     if(autoLockTimer){clearTimeout(autoLockTimer);autoLockTimer=null;}
     renderAutoLock();
-    state.lockedWalletWatchEditId="";
-    state.walletWatch=null;
+    hideLockedWalletWatch();
     const showLockedSentinel=walletWatchShowWhenLocked();
     if(showLockedSentinel){
       const managed=await loadLockedWalletWatchManagement();
@@ -2992,10 +2993,11 @@ function startLivePricePolling(){
 function renderMarketAssessmentBackfillStatus(payload=state.marketAssessmentHistory){
   const host=$("#marketAssessmentBackfillStatus");if(!host)return;const s=payload?.intraday_backfill||{};
   if(!Object.keys(s).length){host.textContent=walletWatchLang("90-Tage-Rückrechnung wartet auf Start …","90-day reconstruction waiting to start …");return;}
-  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),source=Number(s.source_points||0),done=Number(s.completed_points||cached),target=source>0?source:Number(s.expected_full_grid_points||25920),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points||target-done));
-  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${complete?"vollständig":String(s.state||"läuft gedrosselt")} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${complete?"complete":String(s.state||"throttled")} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)}) · Bitstamp 5m · Tor only${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);
+  const cached=Number(s.cached_points||0),live=Number(s.live_points||0),backfilled=Number(s.backfilled_points||0),available=Number(s.available_price_points||0),done=Number(s.completed_points||cached),target=Number(s.expected_source_points||s.expected_full_grid_points||8640),pct=target>0?Math.max(0,Math.min(100,done/target*100)):0,complete=Boolean(s.complete),remaining=Math.max(0,Number(s.remaining_points??(target-done))),interval=Math.max(1,Number(s.interval_minutes||15)),source=String(s.source||walletWatchLang("lokaler Kurscache / Tor-Anbieter","local price cache / Tor provider")),route=String(s.network_route||"Tor only"),stateLabel=complete?walletWatchLang("vollständig","complete"):String(s.state||walletWatchLang("läuft gedrosselt","throttled")),availableLabel=available>0?` · ${walletWatchLang("Kurse verfügbar","prices available")} ${fmtNumber(available,0)}`:"";
+  host.textContent=walletWatchLang(`${complete?"✓":"⏳"} 90-Tage-Rückrechnung: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)} % · ${stateLabel} · Cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / rückgerechnet ${fmtNumber(backfilled,0)})${availableLabel} · ${source} · ${fmtNumber(interval,0)} min · ${route}${remaining?` · verbleibend ${fmtNumber(remaining,0)}`:""}`,`${complete?"✓":"⏳"} 90-day reconstruction: ${fmtNumber(done,0)} / ${fmtNumber(target,0)} · ${fmtNumber(pct,1)}% · ${stateLabel} · cache ${fmtNumber(cached,0)} (live ${fmtNumber(live,0)} / backfilled ${fmtNumber(backfilled,0)})${availableLabel} · ${source} · ${fmtNumber(interval,0)} min · ${route}${remaining?` · ${fmtNumber(remaining,0)} remaining`:""}`);
   host.className=`result market-assessment-backfill-status ${complete?"positive":""}`;
 }
+
 function renderMarketAssessmentHistory(){
   const host=$("#marketAssessmentHistoryChart"),hint=$("#marketAssessmentHistoryHint"),bestLegend=$("#marketAssessmentHistoryBestLegend"),markerTooltip=$("#marketAssessmentHistoryMarkerTooltip"),select=$("#marketAssessmentHistoryRange"),overlayToggle=$("#marketAssessmentHistoryPriceOverlay"),priceScaleSelect=$("#marketAssessmentHistoryPriceScale"),opacityInput=$("#marketAssessmentHistoryPriceOpacity"),opacityValue=$("#marketAssessmentHistoryPriceOpacityValue"),opacityControl=$("#marketAssessmentHistoryPriceOpacityControl"),smoothingSelect=$("#marketAssessmentHistorySmoothing");
   if(!host)return;if(select)select.value=state.marketAssessmentHistoryRange||"3y";if(overlayToggle)overlayToggle.checked=Boolean(state.marketAssessmentHistoryPriceOverlay);if(priceScaleSelect){priceScaleSelect.value=state.marketAssessmentHistoryPriceScale||"log";priceScaleSelect.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityInput){opacityInput.value=String(state.marketAssessmentHistoryPriceOpacity);opacityInput.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityValue)opacityValue.textContent=`${Math.round(state.marketAssessmentHistoryPriceOpacity)} %`;if(opacityControl)opacityControl.classList.toggle("is-inactive",!state.marketAssessmentHistoryPriceOverlay);if(smoothingSelect)smoothingSelect.value=String(state.marketAssessmentHistorySmoothing||5);
@@ -4106,7 +4108,7 @@ $$('.tabs button[data-tab="settings"]').forEach(button=>button.addEventListener(
 $("#portfolioSelect").addEventListener("change",()=>setTimeout(loadBackupHealth,250));
 window.addEventListener("storage",event=>{if(event.key==="bst_last_activity_at"){state.lastActivityAt=sharedLastActivity();scheduleAutoLock();}else if(event.key==="bst_auto_lock_minutes"){const value=Number(event.newValue);if([0,5,15,30,60,120].includes(value)){state.autoLockMinutes=value;scheduleAutoLock();}}});
 for(const activityEvent of ["pointerdown","keydown","touchstart","input"]){window.addEventListener(activityEvent,recordUserActivity,{passive:true});}
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.entryId){void refreshNetworkStatus({silent:true});if(state.activeTab==="settings")void refreshConnectionInventory({silent:true});}});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.entryId){void loadData().then(()=>{if(state.data?.locked&&!walletWatchShowWhenLocked())hideLockedWalletWatch();void refreshNetworkStatus({silent:true});if(state.activeTab==="settings")void refreshConnectionInventory({silent:true});}).catch(error=>console.warn("Bitcoin Stack foreground state refresh failed",errorText(error)));}});
 const compactTableMedia=window.matchMedia("(max-width: 760px)");
 const refreshCompactTableLayout=()=>{if(!state.data||state.data.locked)return;if(state.activeTab==="ledger")renderLedger();else if(state.activeTab==="tax")renderTax();};
 if(typeof compactTableMedia.addEventListener==="function")compactTableMedia.addEventListener("change",refreshCompactTableLayout);
@@ -4727,17 +4729,26 @@ function walletWatchCompactSummaryHtml(mon,{locked=false,index=0}={}){
 }
 function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v1:${state.entryId||"default"}`;}
 function walletWatchShowWhenLocked(){return localStorage.getItem(walletWatchLockedDisplayStorageKey())==="1";}
+function hideLockedWalletWatch(){
+  state.lockedWalletWatchEditId="";
+  state.lockedWalletWatchSaving=false;
+  state.walletWatch=null;
+  state.walletWatchTxOverviews={};
+  const host=$("#lockedWalletWatch");
+  if(host){host.classList.add("hidden");host.innerHTML="";}
+}
 function setWalletWatchShowWhenLocked(show){
   const enabled=Boolean(show);
   localStorage.setItem(walletWatchLockedDisplayStorageKey(),enabled?"1":"0");
   const input=$("#walletWatchShowWhenLocked");if(input)input.checked=enabled;
+  if(!enabled){hideLockedWalletWatch();return;}
   if(state.data?.locked){
     state.lockedWalletWatchEditId="";
     state.walletWatchTxOverviews={};
-    if(!enabled){state.walletWatch=null;const host=$("#lockedWalletWatch");if(host){host.classList.add("hidden");host.innerHTML="";}}
-    else void loadLockedWalletWatchManagement().then(ok=>{if(ok)renderLockedWalletWatch();else void refreshWalletWatchStatus({silent:true});});
+    void loadLockedWalletWatchManagement().then(ok=>{if(ok)renderLockedWalletWatch();else void refreshWalletWatchStatus({silent:true});});
   }
 }
+
 function walletWatchPanelStorageKey(){return `bst_walletwatch_panel_state:${state.entryId||"default"}`;}
 function walletWatchPanelPreferences(){try{const parsed=JSON.parse(localStorage.getItem(walletWatchPanelStorageKey())||"{}");return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed:{};}catch(_error){return {};}}
 function setWalletWatchPanelCollapsed(panel,collapsed,{persist=false}={}){
