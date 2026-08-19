@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.13
+# Bitcoin Stack Tracker v0.21.0.14
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -73,7 +73,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - causal historical market-assessment chart with BTC-price overlay, crosshair values, configurable price opacity and linear/log price axis
 - optional **causal EMA smoothing** (Off / 3 / 5 / 7 / 14 / 30 points); display-only and shared with the overview-chart overlay
 - overview chart mode **Bitcoin price + market assessment** with an independent linear score axis that auto-scales to the visible score range
-- real short-range assessment snapshots without extra model work: **1 h on 1 day · 6 h on week-to-date/1 week · 12 h on month-to-date/30 days**; snapshots come from the existing five-minute current-score run, are not interpolated, and are retained for up to 45 days
+- real short-range assessment snapshots without extra model work: **1 h on 1 day · 6 h on week-to-date/1 week · 12 h on month-to-date/30 days**; snapshots come from the existing 15-minute current-score run, are not interpolated, and are retained for up to 90 days
 - bottom/top zone and confirmation diagnostics, configurable weights, thresholds and adaptive volatility/cycle windows
 - stack history
 - portfolio value
@@ -169,27 +169,23 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.13**. This release consolidates the post-v0.21.0.12 RC line through RC20 and fixes HD-wallet false-zero discovery, Home Assistant timer/CPU regressions, Companion QR scanning and stale wallet-card frontend state.
+Current project version: **v0.21.0.14**. This release makes the 90-day market-assessment reconstruction startup-safe, moves live/reconstructed scores to 15-minute buckets, fixes Sats Sentinel privacy after inactivity auto-lock and completes the performance/repository cleanup.
 
-#### Changes since v0.21.0.12
+#### Highlights since v0.21.0.13
 
-- **HD discovery bootstrap:** existing small Gap values remain user-controlled, but initial discovery checks a standard 20-address window before declaring a branch unused. New HD monitors default to Receive 20 / Change 20.
-- **xpub Auto script detection:** historical activity resolves native SegWit, nested SegWit, Taproot or legacy; plain xpub serialization is no longer treated as a definitive legacy script hint.
-- **Locked Sentinel privacy:** the encrypted runtime vault keeps Sentinel monitoring alive while the portfolio vault is locked, but the locked screen hides the entire Sentinel wallet/address/balance/source card by default and does not fetch that management payload. An unlocked local display option can opt back in; monitoring/alerts stay active either way.
-- **Lower Fulcrum/electrs load:** bounded batches/yields, hourly sliced reconciliation and coalesced runtime-store writes reduce Core/storage churn.
-- **Market-assessment performance:** one shared current-score executor cache plus a persistent causal history-score cache. The price chart remains live while the CPU-heavy current score is refreshed at most every five minutes from the newest quote. Those existing model runs also feed a lightweight public intraday snapshot store (1 h / 6 h / 12 h display buckets for short overview ranges) without any additional model calculation. A newly added or corrected durable daily history value changes the content signature, rebuilds the daily score series once and immediately stores the new generation persistently.
-- **Vault timer fix:** old callback registrations are cancelled/rebound and the expiry worker no longer accepts Home Assistant's datetime tick as the `hass` argument.
-- **Companion QR fix:** scan results/abort are handled by external-bus message type with a three-second startup handshake.
-- **Collapsed wallet cards:** cards default collapsed and the v5 local preference key resets stale production-browser state once.
-- **Bounded journal:** Sentinel retains the newest 5,000 activity rows.
-- **Validation:** dedicated release/security, functional/performance, current-score-cache and persistent history-cache regressions pass on the final build. The uploaded RC20 component archive did not contain the full repository test suite, so the previous 502+8 result is not represented as rerun.
+- one detached startup-safe reconstruction worker; market reads never start a second long-running backfill
+- 15-minute score buckets, 90-day retention and 8,640 target points
+- local 15-minute, legacy 5-minute and adaptive price caches are reused before any public request
+- missing public history is Tor-only/fail-closed; Coinbase Exchange first, Bitstamp fallback
+- locked-screen Sentinel stays hidden after inactivity auto-lock when disabled; monitoring and alerts continue
+- reconstruction status reports the real source, 15-minute interval and Tor route
+- performance smoke: 28/28 focused tests; market-score p95 147.11 ms; max-drawdown p95 15.94 ms; TWR p95 36.64 ms
 
 **After updating, fully restart Home Assistant Core and hard-reload the frontend.**
 
 The **Tor Gateway remains at v0.21.0.3**.
 
-Release changes: [`CHANGELOG.md`](CHANGELOG.md)  
-Release overview: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
+Release changes: [`CHANGELOG.md`](CHANGELOG.md)
 
 ### What this project explicitly is not
 
@@ -280,7 +276,7 @@ Details: [`CSV-IMPORT.md`](CSV-IMPORT.md)
 - kausaler historischer Markteinschätzungs-Chart mit BTC-Preis-Overlay, Fadenkreuzwerten, einstellbarer Preis-Deckkraft und linearer/logarithmischer Preisachse
 - optionale **kausale EMA-Glättung** (Aus / 3 / 5 / 7 / 14 / 30 Punkte); rein visuell und identisch für das Startseiten-Overlay
 - Startseiten-Chartmodus **Bitcoin-Kurs + Markteinschätzung** mit eigener linearer Scoreachse, die auf den sichtbaren Scorebereich skaliert
-- echte Kurzzeit-Score-Snapshots ohne zusätzliche Modelllast: **1 h bei Heute · 6 h bei Seit Wochenbeginn/1 Woche · 12 h bei Seit Monatsbeginn/30 Tage**; die Punkte stammen aus der bestehenden 5-Minuten-Current-Score-Berechnung, werden nicht interpoliert und bis zu 45 Tage gespeichert
+- echte Kurzzeit-Score-Snapshots ohne zusätzliche Modelllast: **1 h bei Heute · 6 h bei Seit Wochenbeginn/1 Woche · 12 h bei Seit Monatsbeginn/30 Tage**; die Punkte stammen aus der bestehenden 15-Minuten-Current-Score-Berechnung, werden nicht interpoliert und bis zu 90 Tage gespeichert
 - Boden-/Top-Zonen und Bestätigungsdiagnostik, einstellbare Gewichte, Schwellen sowie adaptive Volatilitäts-/Zyklusfenster
 - Stack-Verlauf
 - Portfoliowert
@@ -376,27 +372,23 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.13**. Dieses Release bündelt die RC-Linie nach v0.21.0.12 bis RC20 und behebt HD-Wallet-False-Zero-Erkennung, Home-Assistant-Timer-/CPU-Regressions, Companion-QR-Scanning und veralteten Wallet-Card-Frontend-Zustand.
+Aktueller Projektstand: **v0.21.0.14**. Dieses Release macht die 90-Tage-Markteinschätzungs-Rückrechnung startup-sicher, stellt Live-/Rückrechnungs-Scores auf 15-Minuten-Buckets um, behebt die Sats-Sentinel-Privatsphäre beim Inaktivitäts-Auto-Lock und schließt die Performance-/Repository-Bereinigung ab.
 
-#### Änderungen seit v0.21.0.12
+#### Highlights seit v0.21.0.13
 
-- **HD-Discovery-Bootstrap:** bestehende kleine Gap-Werte bleiben benutzergesteuert, aber die Initialsuche prüft 20 Adressen, bevor ein Branch als unbenutzt gilt. Neue HD-Watches starten mit Receive 20 / Change 20.
-- **xpub-Auto-Script-Erkennung:** Historie entscheidet zwischen Native SegWit, Nested SegWit, Taproot und Legacy; das nackte xpub-Präfix gilt nicht mehr als eindeutiger Legacy-Hinweis.
-- **Locked-Sentinel-Privatsphäre:** Der verschlüsselte Runtime-Tresor hält die Sentinel-Überwachung bei gesperrtem Portfolio-Tresor aktiv, aber der Sperrbildschirm blendet die komplette Wallet-/Adress-/Bestands-/Quellenkarte standardmäßig aus und lädt dieses Management-Payload nicht. Eine lokale Anzeigeoption kann sie bewusst wieder einblenden; Überwachung/Alarme laufen in beiden Fällen weiter.
-- **Weniger Fulcrum/electrs-Last:** begrenzte Batches/Yields, stündlich geslictes Reconcile und zusammengefasste Runtime-Store-Writes reduzieren Core-/Storage-Churn.
-- **Markteinschätzungs-Performance:** Der Kurschart bleibt live, der rechenintensive aktuelle Score wird dagegen höchstens alle fünf Minuten gemeinsam im Executor mit dem dann neuesten Kurs berechnet. Diese ohnehin vorhandenen Modellläufe speisen zusätzlich einen kleinen öffentlichen Intraday-Snapshot-Store; die Übersicht verdichtet echte Werte auf 1 h / 6 h / 12 h, ohne zusätzliche Modellberechnung. Die kausale History-Score-Serie liegt persistent in Home Assistant und wird nur bei geänderten Modellparametern/Modellversion/Währung oder historischen Tageskursen neu aufgebaut. Overlay-Requests sind pro Zeitraum race-sicher dedupliziert; kurze Ansichten erhalten zusätzlich einen unsichtbaren historischen Vorlauf.
-- **Vault-Timer-Fix:** alte Callback-Registrierungen werden entfernt/neu gebunden; der Expiry-Worker kann den datetime-Tick nicht mehr als `hass` erhalten.
-- **Companion-QR-Fix:** Scan-Ergebnis/Abbruch werden nach External-Bus-Nachrichtentyp mit 3-Sekunden-Start-Handshake verarbeitet.
-- **Eingeklappte Wallet-Karten:** Standard eingeklappt; v5-Local-Preference setzt veralteten Produktiv-Browser-Zustand einmalig zurück.
-- **Begrenztes Journal:** Sentinel behält die neuesten 5.000 Aktivitätseinträge.
-- **Prüfung:** statische/Security-, Funktions-/Performance-, Current-Cache- sowie persistente History-Cache-/Overlay-Regressionen bestanden. Das hochgeladene RC20-Component-Archiv enthielt nicht die komplette Repository-Testsuite; das frühere 502+8-Ergebnis wird nicht als erneut ausgeführt dargestellt.
+- genau ein entkoppelter startup-sicherer Rückrechnungs-Worker; Market-Reads starten keinen zweiten Langzeit-Backfill
+- 15-Minuten-Score-Buckets, 90 Tage Aufbewahrung und 8.640 Zielpunkte
+- lokale 15-Minuten-, alte 5-Minuten- und adaptive Kurscaches werden vor öffentlichen Abfragen wiederverwendet
+- fehlende öffentliche Historie bleibt Tor-only/fail-closed; Coinbase Exchange zuerst, Bitstamp als Fallback
+- Sats Sentinel bleibt nach Inaktivitäts-Auto-Lock verborgen, wenn die Anzeige deaktiviert ist; Überwachung und Alarme laufen weiter
+- Rückrechnungsstatus zeigt echte Quelle, 15-Minuten-Intervall und Tor-Route
+- Performance-Smoke: 28/28 fokussierte Tests; Market-Score p95 147,11 ms; Max-Drawdown p95 15,94 ms; TWR p95 36,64 ms
 
 **Nach dem Update Home Assistant Core vollständig neu starten und das Frontend hart neu laden.**
 
 Das **Tor Gateway bleibt v0.21.0.3**.
 
-Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)  
-Release-Übersicht: [`RELEASE-NOTES.md`](RELEASE-NOTES.md)
+Änderungen dieses Releases: [`CHANGELOG.md`](CHANGELOG.md)
 
 ### Was das Projekt ausdrücklich nicht ist
 

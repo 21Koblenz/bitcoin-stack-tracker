@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.21.0.14 — 2026-08-19: startup-safe market reconstruction, Sentinel privacy & smoother runtime
+
+### English
+- Fixed duplicate long-running market backfill ownership that could block Home Assistant startup/restart; reconstruction now has one detached background worker.
+- Live/reconstructed market assessment uses 15-minute buckets with 90-day retention (8,640 target buckets), reusing local caches before Tor-only Coinbase/Bitstamp fallback.
+- Fixed Sats Sentinel locked-screen privacy after inactivity auto-lock.
+- Reconstruction status now shows actual source, interval and Tor route instead of hard-coded `Bitstamp 5m`.
+- Performance smoke passed 28/28 focused tests: market-score p95 147.11 ms; max-drawdown p95 15.94 ms; TWR p95 36.64 ms.
+- Custom Integration: **v0.21.0.14**. Tor Gateway: **v0.21.0.3 unchanged**.
+
+### Deutsch
+- Doppelte Langzeit-Backfill-Verantwortung behoben, die Home-Assistant-Startup/Restart blockieren konnte; Rückrechnung besitzt genau einen entkoppelten Background-Worker.
+- Live-/Rückrechnungs-Markteinschätzung nutzt 15-Minuten-Buckets mit 90 Tagen Aufbewahrung (8.640 Ziel-Buckets) und lokale Caches vor Tor-only Coinbase-/Bitstamp-Fallback.
+- Sats-Sentinel-Sperrbildschirm-Privatsphäre nach Inaktivitäts-Auto-Lock behoben.
+- Rückrechnungsstatus zeigt echte Quelle, Intervall und Tor-Route statt festem `Bitstamp 5m`.
+- Performance-Smoke bestand 28/28 fokussierte Tests: Market-Score p95 147,11 ms; Max-Drawdown p95 15,94 ms; TWR p95 36,64 ms.
+- Custom Integration: **v0.21.0.14**. Tor Gateway: **v0.21.0.3 unverändert**.
+
 ## v0.21.0.13 — 2026-08-18: Sats Sentinel accuracy, locked management, QR & HA performance
 
 ### English

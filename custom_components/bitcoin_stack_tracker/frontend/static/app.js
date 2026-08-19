@@ -1,7 +1,7 @@
 "use strict";
 
-const BUILD_VERSION = "0.21.0.13";
-const FRONTEND_BUILD = "0.21.0.13";
+const BUILD_VERSION = "0.21.0.14";
+const FRONTEND_BUILD = "0.21.0.14";
 window.__BITCOIN_STACK_TRACKER_FRONTEND_BUILD__ = FRONTEND_BUILD;
 const SATS_PER_BTC = 100_000_000;
 const state = {
