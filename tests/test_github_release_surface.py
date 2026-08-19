@@ -31,5 +31,5 @@ def test_release_uploads_zip_and_sha256():
 
 def test_integration_only_release_tag_does_not_force_gateway_version_bump():
     assert 'if [[ "${GITHUB_REF_NAME}" == "v${version}" ]]; then' in BUILD_WORKFLOW
-    assert 'Tor Gateway stays at v${version}. Skipping gateway publish.' in BUILD_WORKFLOW
+    assert "kein Gateway-Publish." in BUILD_WORKFLOW
     assert "if: needs.prepare.outputs.publish == 'true' || !startsWith(github.ref, 'refs/tags/')" in BUILD_WORKFLOW
