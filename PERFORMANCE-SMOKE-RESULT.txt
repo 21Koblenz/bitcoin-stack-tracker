@@ -1,0 +1,16 @@
+performance_smoke_commit=bae83e101aa4a98d500be9a8727dfc62e404b251
+regression=success
+market=success
+frontend=success
+
+[regression]
+............................                                             [100%]
+28 passed in 26.12s
+performance math numeric tests: ok
+
+[market]
+MARKET_SCORE median_ms=142.24 p95_ms=147.11 worst_ms=148.51 samples=25 history_days=3650
+
+[frontend]
+MAX_DRAWDOWN median_ms=3.10 p95_ms=15.94 worst_ms=15.94 points=20000 events=1500
+TWR median_ms=22.67 p95_ms=36.64 worst_ms=36.64 points=20000 events=1500
