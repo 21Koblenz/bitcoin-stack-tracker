@@ -1,0 +1,124 @@
+name: Agent performance smoke
+
+on:
+  push:
+    branches:
+      - agent/sentinel-market-cache-cleanup
+    paths:
+      - .github/workflows/agent-performance-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/sentinel-market-cache-cleanup
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check 'pytest>=8,<10'
+
+      - name: Focused regression suite
+        run: |
+          pytest -q \
+            tests/test_bulk_import_performance_regression.py \
+            tests/test_market_backfill_lifecycle.py \
+            tests/test_sentinel_autolock_visibility.py \
+            tests/test_buy_opportunity.py
+          node tests/performance_math_test.js
+
+      - name: Benchmark market scoring hot path
+        shell: python
+        run: |
+          import importlib.util
+          import math
+          import statistics
+          import time
+          from datetime import date, timedelta
+          from pathlib import Path
+
+          path = Path('custom_components/bitcoin_stack_tracker/buy_opportunity.py')
+          spec = importlib.util.spec_from_file_location('bst_buy_opportunity_perf', path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+
+          start = date(2015, 1, 1)
+          history = {}
+          price = 250.0
+          for idx in range(3650):
+              # Deterministic multi-cycle synthetic history; enough movement to
+              # exercise rolling windows, percentiles, RSI and turning points.
+              trend = math.exp(idx / 1800.0)
+              cycle = 1.0 + 0.38 * math.sin(idx / 95.0) + 0.12 * math.sin(idx / 17.0)
+              price = max(25.0, 250.0 * trend * cycle)
+              history[(start + timedelta(days=idx)).isoformat()] = price
+
+          as_of = start + timedelta(days=3649)
+          current = history[as_of.isoformat()]
+
+          # Warm caches/interpreter paths first.
+          for _ in range(3):
+              result = module.calculate_buy_opportunity(history, current, currency='EUR', settings={}, as_of_day=as_of)
+              assert result.get('score') is not None
+
+          samples = []
+          for _ in range(25):
+              begin = time.perf_counter()
+              result = module.calculate_buy_opportunity(history, current, currency='EUR', settings={}, as_of_day=as_of)
+              samples.append((time.perf_counter() - begin) * 1000.0)
+              assert 0 <= float(result.get('score_raw', result['score'])) <= 100
+
+          samples.sort()
+          median = statistics.median(samples)
+          p95 = samples[max(0, math.ceil(len(samples) * 0.95) - 1)]
+          worst = max(samples)
+          print(f'MARKET_SCORE median_ms={median:.2f} p95_ms={p95:.2f} worst_ms={worst:.2f} samples={len(samples)} history_days={len(history)}')
+          # Backfill runs in an executor and is deliberately paced at 2 points
+          # per 20 seconds. This guard catches pathological regressions without
+          # making CI sensitive to ordinary runner jitter.
+          assert p95 < 1500.0, f'market-score p95 too slow: {p95:.2f} ms'
+
+      - name: Benchmark frontend analytics hot paths
+        shell: bash
+        run: |
+          node <<'NODE'
+          const math = require('./custom_components/bitcoin_stack_tracker/frontend/static/performance-math.js');
+          const N = 20000;
+          const prices = Array.from({length:N}, (_,i)=>({time:i*86400000,value:30000 + i*2 + Math.sin(i/19)*5000,key:String(i)}));
+          const events = [];
+          for(let i=0;i<1500;i++){
+            const idx = 1 + Math.floor(i*(N-2)/1500);
+            events.push({time:idx*86400000+1000,btcDelta:0.001,externalFlow:35,valuationPrice:prices[idx].value,sequence:i});
+          }
+          const bench = (name, fn, limitMs) => {
+            for(let i=0;i<3;i++) fn();
+            const samples=[];
+            for(let i=0;i<15;i++){
+              const t0=process.hrtime.bigint();
+              fn();
+              samples.push(Number(process.hrtime.bigint()-t0)/1e6);
+            }
+            samples.sort((a,b)=>a-b);
+            const median=samples[Math.floor(samples.length/2)];
+            const p95=samples[Math.ceil(samples.length*0.95)-1];
+            const worst=samples[samples.length-1];
+            console.log(`${name} median_ms=${median.toFixed(2)} p95_ms=${p95.toFixed(2)} worst_ms=${worst.toFixed(2)} points=${N} events=${events.length}`);
+            if(p95 >= limitMs) throw new Error(`${name} p95 ${p95.toFixed(2)}ms exceeds ${limitMs}ms`);
+          };
+          bench('MAX_DRAWDOWN', ()=>math.maximumDrawdown(prices), 750);
+          bench('TWR', ()=>math.timeWeightedReturn(prices,events), 1500);
+          NODE
