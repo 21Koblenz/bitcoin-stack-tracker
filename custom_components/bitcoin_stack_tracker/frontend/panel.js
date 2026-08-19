@@ -1,6 +1,9 @@
 const FRONTEND_BUILD = "0.21.0.15";
+const FRONTEND_CACHE_REVISION = "10";
 const RPC_SOURCE = "bitcoin-stack-tracker-native";
-const PANEL_ELEMENT = `bitcoin-stack-tracker-panel-${FRONTEND_BUILD.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
+const PANEL_BUILD_TOKEN = FRONTEND_BUILD.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const PANEL_CACHE_TOKEN = FRONTEND_CACHE_REVISION.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const PANEL_ELEMENT = `bitcoin-stack-tracker-panel-${PANEL_BUILD_TOKEN}-r${PANEL_CACHE_TOKEN}`;
 
 const NATIVE_QR_BRIDGE_KEY = "__BITCOIN_STACK_TRACKER_NATIVE_QR_BRIDGE_RC19__";
 let nativeQrMessageSeq = 0;
@@ -191,7 +194,8 @@ class BitcoinStackTrackerPanel extends HTMLElement {
       // Never trust a panel config object that may have survived an in-place
       // Home Assistant frontend update. Force the iframe to this module build.
       frameUrl.searchParams.set("v", FRONTEND_BUILD);
-      frameUrl.searchParams.set("panel_build", FRONTEND_BUILD);
+      frameUrl.searchParams.set("r", FRONTEND_CACHE_REVISION);
+      frameUrl.searchParams.set("panel_build", `${FRONTEND_BUILD}-r${FRONTEND_CACHE_REVISION}`);
       frameSrc = frameUrl.toString();
     } catch (_error) {}
     frame.src = frameSrc;

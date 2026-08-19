@@ -2,7 +2,9 @@
 
 const BUILD_VERSION = "0.21.0.15";
 const FRONTEND_BUILD = "0.21.0.15";
+const FRONTEND_CACHE_REVISION = "10";
 window.__BITCOIN_STACK_TRACKER_FRONTEND_BUILD__ = FRONTEND_BUILD;
+window.__BITCOIN_STACK_TRACKER_FRONTEND_CACHE_REVISION__ = FRONTEND_CACHE_REVISION;
 const SATS_PER_BTC = 100_000_000;
 const state = {
   lang: localStorage.getItem("bst_lang") || (String(navigator.language || "de").toLowerCase().startsWith("de") ? "de" : "en"),
@@ -4753,7 +4755,7 @@ function walletWatchCompactSummaryHtml(mon,{locked=false,index=0}={}){
   const id=String(mon?.id||""),label=state.discreet?(locked?`Wallet #${index+1}`:"••••"):(String(mon?.label||"").trim()||walletWatchLang("Unbenannte Wallet","Unnamed wallet"));
   return `<button class="sats-sentinel-watch-toggle sats-sentinel-watch-compact-toggle" type="button" data-id="${esc(id)}" aria-expanded="false"><span class="sats-sentinel-watch-toggle-chevron" aria-hidden="true">▸</span><span class="sats-sentinel-watch-toggle-name">${esc(label)}</span><span class="sats-sentinel-watch-toggle-action">${esc(walletWatchLang("Einblenden","Show"))}</span></button>`;
 }
-function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v1:${state.entryId||"default"}`;}
+function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v2:${state.entryId||"default"}`;}
 function walletWatchShowWhenLocked(){return localStorage.getItem(walletWatchLockedDisplayStorageKey())==="1";}
 function hideLockedWalletWatch(){
   state.lockedWalletWatchEditId="";

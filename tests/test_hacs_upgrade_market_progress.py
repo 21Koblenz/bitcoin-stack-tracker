@@ -6,6 +6,8 @@ COMP = ROOT / "custom_components" / "bitcoin_stack_tracker"
 CONST = (COMP / "const.py").read_text(encoding="utf-8")
 INDEX = (COMP / "frontend/index.html").read_text(encoding="utf-8")
 APP = (COMP / "frontend/static/app.js").read_text(encoding="utf-8")
+PANEL = (COMP / "frontend/panel.js").read_text(encoding="utf-8")
+PANEL_PY = (COMP / "panel.py").read_text(encoding="utf-8")
 INIT = (COMP / "__init__.py").read_text(encoding="utf-8")
 
 
@@ -33,3 +35,19 @@ def test_market_tab_polls_only_lightweight_progress_every_30_seconds():
     poll = APP.split('marketAssessmentBackfillPollTimer=setInterval', 1)[1].split('function startNetworkPolling', 1)[0]
     assert '},30000);' in poll
     assert 'api/market-assessment/backfill-status?' in APP
+
+
+def test_panel_and_iframe_force_the_same_cache_revision():
+    revision = re.search(r'FRONTEND_CACHE_REVISION = "([^"]+)"', CONST).group(1)
+    assert f'const FRONTEND_CACHE_REVISION = "{revision}";' in PANEL
+    assert 'frameUrl.searchParams.set("r", FRONTEND_CACHE_REVISION);' in PANEL
+    assert '${FRONTEND_BUILD}-r${FRONTEND_CACHE_REVISION}' in PANEL
+    assert '_PANEL_CACHE_TOKEN' in PANEL_PY
+    assert '-r{_PANEL_CACHE_TOKEN}' in PANEL_PY
+
+
+def test_locked_sentinel_upgrade_is_privacy_first():
+    assert 'bst_walletwatch_show_when_locked:v2:' in APP
+    assert 'function hideLockedWalletWatch()' in APP
+    assert 'if(!walletWatchShowWhenLocked())hideLockedWalletWatch();' in APP
+    assert '!walletWatchShowWhenLocked()||!state.walletWatch?.status' in APP
