@@ -1,15 +1,14 @@
-"""Persistent five-minute snapshots for the public market assessment.
+"""Persistent 15-minute snapshots for the public market assessment.
 
-The expensive current assessment is already calculated at most once every five
-minutes. Short overview charts use those real model observations. A one-time,
-throttled upgrade backfill may additionally reconstruct recent five-minute
-points from real exchange OHLC closes; such points are explicitly marked as
-backfilled and never overwrite an actually observed live snapshot.
+The expensive current assessment is calculated at most once every 15 minutes.
+Short overview charts use those real model observations. A throttled upgrade
+backfill may additionally reconstruct recent 15-minute points from real market
+candles; such points are explicitly marked as backfilled and never overwrite an
+actually observed live snapshot.
 
-Only public market/model output is stored. A model/settings/currency change
-selects a new generation. Points older than 90 days are removed automatically.
-To keep Home Assistant I/O low, the in-memory cache is updated immediately while
-durable storage writes are coalesced to at most roughly once per hour.
+Only public market/model output is stored. A model/settings/currency or bucket
+interval change selects a new generation. Points older than 90 days are removed
+automatically. Durable writes remain coalesced to keep Home Assistant I/O low.
 """
 from __future__ import annotations
 
@@ -29,7 +28,7 @@ from .const import DOMAIN
 _STORAGE_VERSION = 1
 _KEY_PREFIX = f"{DOMAIN}.market_assessment_intraday"
 _RETENTION_DAYS = 90
-_BUCKET_MINUTES = 5
+_BUCKET_MINUTES = 15
 _BUCKETS_PER_DAY = (24 * 60) // _BUCKET_MINUTES
 _MAX_POINTS = (_RETENTION_DAYS + 2) * _BUCKETS_PER_DAY
 _SAVE_DELAY_SECONDS = 60 * 60
@@ -39,6 +38,7 @@ def market_assessment_intraday_signature(*, currency: str, settings: Mapping[str
     """Return the generation key for comparable intraday score snapshots."""
     payload = {
         "score_version": SCORE_VERSION,
+        "bucket_minutes": _BUCKET_MINUTES,
         "currency": str(currency).upper(),
         "settings": score_affecting_settings(settings),
     }
@@ -84,7 +84,7 @@ def _normalized_point(raw: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 class MarketAssessmentIntradayCache:
-    """Persist observed/reconstructed assessment samples in five-minute buckets."""
+    """Persist observed/reconstructed assessment samples in 15-minute buckets."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self._store = Store[dict[str, Any]](hass, _STORAGE_VERSION, f"{_KEY_PREFIX}.{entry_id}")
@@ -134,8 +134,6 @@ class MarketAssessmentIntradayCache:
                 continue
             bucket = str(point["bucket"])
             previous = deduped.get(bucket)
-            # An actual live observation is authoritative for its bucket. Older
-            # cache generations and the upgrade backfill must never replace it.
             if previous is not None and not bool(previous.get("backfilled")):
                 continue
             if previous is None or not bool(point.get("backfilled")):
@@ -158,7 +156,7 @@ class MarketAssessmentIntradayCache:
         result: Mapping[str, Any],
         currency: str,
     ) -> bool:
-        """Record one actually calculated live sample per five-minute bucket."""
+        """Record one actually calculated live sample per 15-minute bucket."""
         stamp = _parse_utc(calculated_at)
         try:
             score = float(result.get("score_raw", result.get("score")))
@@ -210,11 +208,7 @@ class MarketAssessmentIntradayCache:
     async def async_merge_points(
         self, signature: str, points: list[Mapping[str, Any]]
     ) -> int:
-        """Merge a bounded backfill batch without O(n) scans for every point.
-
-        Existing live observations win over reconstructed points. A new live point
-        can later replace a backfilled point through ``async_record``.
-        """
+        """Merge a bounded backfill batch while preserving real live samples."""
         if not points:
             return 0
         async with self._lock:
@@ -229,11 +223,7 @@ class MarketAssessmentIntradayCache:
                     continue
                 point["backfilled"] = True
                 bucket = str(point["bucket"])
-                previous = self._bucket_index.get(bucket)
-                if previous is not None:
-                    # Never replace a live observation; replacing an older
-                    # reconstructed point is unnecessary because generation
-                    # changes already select a new empty cache.
+                if self._bucket_index.get(bucket) is not None:
                     continue
                 self._data.setdefault("points", []).append(point)
                 self._bucket_index[bucket] = point
@@ -253,9 +243,13 @@ class MarketAssessmentIntradayCache:
         async with self._lock:
             if str(self._data.get("signature") or "") != str(signature):
                 return {
-                    "cached_points": 0, "live_points": 0, "backfilled_points": 0,
+                    "cached_points": 0,
+                    "live_points": 0,
+                    "backfilled_points": 0,
                     "expected_full_grid_points": _RETENTION_DAYS * _BUCKETS_PER_DAY,
-                    "oldest_timestamp": None, "newest_timestamp": None,
+                    "interval_minutes": _BUCKET_MINUTES,
+                    "oldest_timestamp": None,
+                    "newest_timestamp": None,
                 }
             points = [item for item in self._data.get("points", []) if isinstance(item, dict)]
             live = sum(1 for item in points if not bool(item.get("backfilled")))
@@ -266,6 +260,7 @@ class MarketAssessmentIntradayCache:
                 "live_points": live,
                 "backfilled_points": backfilled,
                 "expected_full_grid_points": _RETENTION_DAYS * _BUCKETS_PER_DAY,
+                "interval_minutes": _BUCKET_MINUTES,
                 "oldest_timestamp": ordered[0] if ordered else None,
                 "newest_timestamp": ordered[-1] if ordered else None,
             }
