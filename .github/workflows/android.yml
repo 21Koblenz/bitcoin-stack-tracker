@@ -6,8 +6,6 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
   push:
-    branches:
-      - main
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
