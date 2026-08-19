@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.21.0.15 — 2026-08-19: HACS upgrade cache & live reconstruction progress
+
+### English
+- Fixed an upgrade-only frontend cache mismatch: the native panel advertised cache revision 9 while `index.html` still loaded `app.js`/CSS with stale revision 6. Fresh installs therefore worked while existing browsers could keep an older v0.21.0.14 frontend after a HACS update.
+- All stable frontend assets now use the same release/cache-busting revision.
+- Added a lightweight reconstruction-status endpoint that reads only in-memory/cache statistics and performs no model calculation or public network request.
+- While the Market Assessment tab is visible, 90-day reconstruction progress refreshes every 30 seconds without reloading the heavy history chart.
+- Custom Integration: **v0.21.0.15**. Tor Gateway: **v0.21.0.3 unchanged**.
+
+### Deutsch
+- Upgrade-spezifischen Frontend-Cache-Fehler behoben: Das native Panel meldete Cache-Revision 9, während `index.html` `app.js`/CSS noch mit der alten Revision 6 lud. Neuinstallationen funktionierten deshalb, während bestehende Browser nach einem HACS-Update alte v0.21.0.14-Assets behalten konnten.
+- Alle stabilen Frontend-Dateien verwenden jetzt konsistent dieselbe Release-/Cache-Busting-Revision.
+- Neuer leichter Rückrechnungs-Status-Endpunkt: liest nur Runtime-/Cache-Statistiken, ohne Modellberechnung und ohne öffentliche Netzwerkabfrage.
+- Solange der Tab Markteinschätzung sichtbar ist, aktualisiert sich der Fortschritt der 90-Tage-Rückrechnung alle 30 Sekunden, ohne den schweren History-Chart neu zu laden.
+- Custom Integration: **v0.21.0.15**. Tor Gateway: **v0.21.0.3 unverändert**.
+
 ## v0.21.0.14 — 2026-08-19: startup-safe market reconstruction, Sentinel privacy & smoother runtime
 
 ### English

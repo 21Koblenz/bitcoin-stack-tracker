@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.14
+# Bitcoin Stack Tracker v0.21.0.15
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -169,7 +169,7 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.14**. This release makes the 90-day market-assessment reconstruction startup-safe, moves live/reconstructed scores to 15-minute buckets, fixes Sats Sentinel privacy after inactivity auto-lock and completes the performance/repository cleanup.
+Current project version: **v0.21.0.15**. This patch fixes HACS-upgrade frontend cache invalidation and keeps 90-day reconstruction progress live without adding model or network load. This release makes the 90-day market-assessment reconstruction startup-safe, moves live/reconstructed scores to 15-minute buckets, fixes Sats Sentinel privacy after inactivity auto-lock and completes the performance/repository cleanup.
 
 #### Highlights since v0.21.0.13
 
@@ -372,7 +372,7 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.14**. Dieses Release macht die 90-Tage-Markteinschätzungs-Rückrechnung startup-sicher, stellt Live-/Rückrechnungs-Scores auf 15-Minuten-Buckets um, behebt die Sats-Sentinel-Privatsphäre beim Inaktivitäts-Auto-Lock und schließt die Performance-/Repository-Bereinigung ab.
+Aktueller Projektstand: **v0.21.0.15**. Dieses Patch-Release behebt die Frontend-Cache-Invalidierung bei HACS-Updates und hält den Fortschritt der 90-Tage-Rückrechnung ohne zusätzliche Modell- oder Netzwerklast live. Dieses Release macht die 90-Tage-Markteinschätzungs-Rückrechnung startup-sicher, stellt Live-/Rückrechnungs-Scores auf 15-Minuten-Buckets um, behebt die Sats-Sentinel-Privatsphäre beim Inaktivitäts-Auto-Lock und schließt die Performance-/Repository-Bereinigung ab.
 
 #### Highlights seit v0.21.0.13
 
