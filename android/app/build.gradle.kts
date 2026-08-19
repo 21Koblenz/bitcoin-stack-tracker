@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "de.einundzwanzigkoblenz.bitcoinstacktracker"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "de.einundzwanzigkoblenz.bitcoinstacktracker"
