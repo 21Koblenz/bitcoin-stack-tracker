@@ -2905,6 +2905,32 @@ class BitcoinStackNativePanelRpcView(HomeAssistantView):
                 "dashboard_poll_seconds": 30,
             })
 
+        if route == "api/market-assessment/backfill-status" and method == "GET":
+            entry_id = q("entry_id")
+            runtime = _runtime(self.hass, entry_id)
+            try:
+                runtime["security"].require_owner(requester)
+            except VaultAccessDenied as err:
+                raise web.HTTPForbidden(text="Owner access is required") from err
+            entry = self.hass.config_entries.async_get_entry(entry_id)
+            if entry is None:
+                raise web.HTTPBadRequest(text="Config entry was not found")
+            current_settings = effective_settings(entry)
+            currencies = configured_currencies(current_settings)
+            market_settings = normalize_buy_opportunity_settings(
+                current_settings.get(CONF_BUY_OPPORTUNITY_SETTINGS), currencies
+            )
+            intraday_signature = await self.hass.async_add_executor_job(partial(
+                market_assessment_intraday_signature,
+                currency=market_settings["currency"],
+                settings=market_settings,
+            ))
+            backfill_status = deepcopy(runtime.get("market_assessment_backfill_status") or {})
+            intraday_cache = runtime.get("market_assessment_intraday_cache")
+            if intraday_cache is not None:
+                backfill_status.update(await intraday_cache.async_stats(intraday_signature))
+            return respond({"intraday_backfill": backfill_status})
+
         if route == "api/market-assessment/history" and method == "GET":
             entry_id = q("entry_id")
             runtime = _runtime(self.hass, entry_id)

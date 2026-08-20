@@ -14,7 +14,9 @@ from .const import DOMAIN, FRONTEND_BUILD, FRONTEND_CACHE_REVISION, VERSION
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL_PATH = "bitcoin-stack-tracker"
-PANEL_ELEMENT = "bitcoin-stack-tracker-panel-" + "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_BUILD.lower()).strip("-")
+_PANEL_BUILD_TOKEN = "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_BUILD.lower()).strip("-")
+_PANEL_CACHE_TOKEN = "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_CACHE_REVISION.lower()).strip("-")
+PANEL_ELEMENT = f"bitcoin-stack-tracker-panel-{_PANEL_BUILD_TOKEN}-r{_PANEL_CACHE_TOKEN}"
 STATIC_URL = "/api/bitcoin_stack_tracker/frontend"
 
 

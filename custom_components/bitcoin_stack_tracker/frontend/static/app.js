@@ -1,8 +1,10 @@
 "use strict";
 
-const BUILD_VERSION = "0.21.0.14";
-const FRONTEND_BUILD = "0.21.0.14";
+const BUILD_VERSION = "0.21.0.15";
+const FRONTEND_BUILD = "0.21.0.15";
+const FRONTEND_CACHE_REVISION = "10";
 window.__BITCOIN_STACK_TRACKER_FRONTEND_BUILD__ = FRONTEND_BUILD;
+window.__BITCOIN_STACK_TRACKER_FRONTEND_CACHE_REVISION__ = FRONTEND_CACHE_REVISION;
 const SATS_PER_BTC = 100_000_000;
 const state = {
   lang: localStorage.getItem("bst_lang") || (String(navigator.language || "de").toLowerCase().startsWith("de") ? "de" : "en"),
@@ -68,6 +70,8 @@ let walletWatchStatusRefreshInFlight = false;
 let networkPollTimer = null;
 let marketAssessmentPollTimer = null;
 let marketAssessmentRefreshInFlight = false;
+let marketAssessmentBackfillPollTimer = null;
+let marketAssessmentBackfillRefreshInFlight = false;
 let livePricePollTimer = null;
 let livePriceRefreshInFlight = false;
 let livePriceUpdatedAt = "";
@@ -2966,7 +2970,7 @@ async function refreshLivePrice({silent=true}={}){
       renderBitcoinNetworkStrip();
       renderActiveTabContent(state.activeTab);
       // Price rendering stays live, but the CPU-heavy market score is allowed
-      // to lag by up to five minutes. startMarketAssessmentPolling() shares one
+      // to lag by up to 15 minutes. startMarketAssessmentPolling() shares one
       // server-side snapshot with the HA sensor and all panel clients. This
       // avoids turning every 30-second UI price tick into a model/API wake-up.
       if(state.activeTab==="settings")void refreshConnectionInventory({silent:true,refreshLive:false});
@@ -2998,11 +3002,29 @@ function renderMarketAssessmentBackfillStatus(payload=state.marketAssessmentHist
   host.className=`result market-assessment-backfill-status ${complete?"positive":""}`;
 }
 
+async function refreshMarketAssessmentBackfillStatus({silent=true}={}){
+  if(marketAssessmentBackfillRefreshInFlight||!state.entryId||!state.data||state.data.locked)return false;
+  const requestedEntry=state.entryId;
+  marketAssessmentBackfillRefreshInFlight=true;
+  try{
+    const result=await api(`api/market-assessment/backfill-status?entry_id=${encodeURIComponent(requestedEntry)}`,{timeoutMs:7000});
+    if(requestedEntry!==state.entryId||!state.data)return false;
+    const status=result?.intraday_backfill&&typeof result.intraday_backfill==="object"?result.intraday_backfill:{};
+    state.marketAssessmentHistory={...(state.marketAssessmentHistory||{}),intraday_backfill:status};
+    renderMarketAssessmentBackfillStatus(state.marketAssessmentHistory);
+    return true;
+  }catch(error){
+    if(!silent)toast(errorText(error));
+    return false;
+  }finally{marketAssessmentBackfillRefreshInFlight=false;}
+}
+
 function renderMarketAssessmentHistory(){
   const host=$("#marketAssessmentHistoryChart"),hint=$("#marketAssessmentHistoryHint"),bestLegend=$("#marketAssessmentHistoryBestLegend"),markerTooltip=$("#marketAssessmentHistoryMarkerTooltip"),select=$("#marketAssessmentHistoryRange"),overlayToggle=$("#marketAssessmentHistoryPriceOverlay"),priceScaleSelect=$("#marketAssessmentHistoryPriceScale"),opacityInput=$("#marketAssessmentHistoryPriceOpacity"),opacityValue=$("#marketAssessmentHistoryPriceOpacityValue"),opacityControl=$("#marketAssessmentHistoryPriceOpacityControl"),smoothingSelect=$("#marketAssessmentHistorySmoothing");
   if(!host)return;if(select)select.value=state.marketAssessmentHistoryRange||"3y";if(overlayToggle)overlayToggle.checked=Boolean(state.marketAssessmentHistoryPriceOverlay);if(priceScaleSelect){priceScaleSelect.value=state.marketAssessmentHistoryPriceScale||"log";priceScaleSelect.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityInput){opacityInput.value=String(state.marketAssessmentHistoryPriceOpacity);opacityInput.disabled=!state.marketAssessmentHistoryPriceOverlay;}if(opacityValue)opacityValue.textContent=`${Math.round(state.marketAssessmentHistoryPriceOpacity)} %`;if(opacityControl)opacityControl.classList.toggle("is-inactive",!state.marketAssessmentHistoryPriceOverlay);if(smoothingSelect)smoothingSelect.value=String(state.marketAssessmentHistorySmoothing||5);
   const payload=state.marketAssessmentHistory,rawPoints=marketAssessmentLiveTailPoints(payload,{includeIntraday:true}),points=smoothMarketAssessmentPoints(rawPoints);
   renderMarketAssessmentBackfillStatus(payload);
+  if(state.activeTab==="market")void refreshMarketAssessmentBackfillStatus({silent:true});
   if(!points.length){host.innerHTML=`<p class="storage-note">${esc(walletWatchLang("Noch keine rekonstruierte Score-Historie geladen.","No reconstructed score history loaded yet."))}</p>`;if(bestLegend)bestLegend.innerHTML="";if(markerTooltip)markerTooltip.classList.add("hidden");if(hint)hint.textContent="";return;}
   const overlay=Boolean(state.marketAssessmentHistoryPriceOverlay),priceLog=state.marketAssessmentHistoryPriceScale!=="linear",priceOpacity=Math.max(0,Math.min(1,Number(state.marketAssessmentHistoryPriceOpacity||0)/100)),currency=String(payload?.currency||state.data?.summary?.reference_currency||"EUR").toUpperCase();
   const mobile=window.matchMedia("(max-width: 760px)").matches,width=Math.max(mobile?320:760,Math.round(host.clientWidth||(mobile?360:1100))),height=Math.max(mobile?600:560,Math.round(host.clientHeight||(mobile?620:590))),pad={l:58,r:overlay?(mobile?72:88):18,t:32,b:54},pw=width-pad.l-pad.r,ph=height-pad.t-pad.b;
@@ -3070,13 +3092,19 @@ async function refreshMarketAssessment({silent=true}={}){
 }
 function startMarketAssessmentPolling(){
   if(marketAssessmentPollTimer)clearInterval(marketAssessmentPollTimer);
-  // Core shares one executor-backed 5-minute assessment cache between the
-  // sensor and every panel client. Poll only where the score is visible; other
-  // tabs must not keep waking the model/API in the background.
+  if(marketAssessmentBackfillPollTimer)clearInterval(marketAssessmentBackfillPollTimer);
+  // Core shares one executor-backed 15-minute assessment cache between the
+  // sensor and every panel client. Poll the score only where it is visible.
   marketAssessmentPollTimer=setInterval(()=>{
     if(document.hidden||!(state.activeTab==="overview"||state.activeTab==="market"))return;
     void refreshMarketAssessment({silent:true});
   },300000);
+  // Reconstruction progress is an in-memory/cache-stat read only: no model
+  // calculation and no external request. Keep it live while the market tab is open.
+  marketAssessmentBackfillPollTimer=setInterval(()=>{
+    if(document.hidden||state.activeTab!=="market")return;
+    void refreshMarketAssessmentBackfillStatus({silent:true});
+  },30000);
 }
 
 function startNetworkPolling(){
@@ -4727,7 +4755,7 @@ function walletWatchCompactSummaryHtml(mon,{locked=false,index=0}={}){
   const id=String(mon?.id||""),label=state.discreet?(locked?`Wallet #${index+1}`:"••••"):(String(mon?.label||"").trim()||walletWatchLang("Unbenannte Wallet","Unnamed wallet"));
   return `<button class="sats-sentinel-watch-toggle sats-sentinel-watch-compact-toggle" type="button" data-id="${esc(id)}" aria-expanded="false"><span class="sats-sentinel-watch-toggle-chevron" aria-hidden="true">▸</span><span class="sats-sentinel-watch-toggle-name">${esc(label)}</span><span class="sats-sentinel-watch-toggle-action">${esc(walletWatchLang("Einblenden","Show"))}</span></button>`;
 }
-function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v1:${state.entryId||"default"}`;}
+function walletWatchLockedDisplayStorageKey(){return `bst_walletwatch_show_when_locked:v2:${state.entryId||"default"}`;}
 function walletWatchShowWhenLocked(){return localStorage.getItem(walletWatchLockedDisplayStorageKey())==="1";}
 function hideLockedWalletWatch(){
   state.lockedWalletWatchEditId="";

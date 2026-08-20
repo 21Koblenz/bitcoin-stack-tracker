@@ -6,11 +6,11 @@ import hashlib
 
 DOMAIN = "bitcoin_stack_tracker"
 PLATFORMS = ["sensor"]
-VERSION = "0.21.0.14"
+VERSION = "0.21.0.15"
 # Public frontend build stays aligned with the release. A separate cache revision
 # can be bumped for final/repacked assets without inventing a new integration version.
-FRONTEND_BUILD = "0.21.0.14"
-FRONTEND_CACHE_REVISION = "9"
+FRONTEND_BUILD = "0.21.0.15"
+FRONTEND_CACHE_REVISION = "10"
 
 CONF_NAME = "name"
 CONF_GOAL_BTC = "goal_btc"  # Legacy single-goal setting; migrated to local storage.
