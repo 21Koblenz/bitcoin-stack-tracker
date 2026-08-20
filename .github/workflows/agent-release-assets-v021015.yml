@@ -1,0 +1,25 @@
+name: Build v0.21.0.15 release assets
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/agent-release-assets-v021015.yml]
+permissions:
+  contents: write
+jobs:
+  assets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Build and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=v0.21.0.15
+          archive=bitcoin-stack-tracker-home-assistant-${tag}.zip
+          git archive --format=zip --prefix=bitcoin-stack-tracker-${tag}/ -o ${archive} ${tag}
+          sha256sum ${archive} > ${archive}.sha256
+          sha256sum -c ${archive}.sha256
+          gh release upload ${tag} ${archive} ${archive}.sha256 --clobber
