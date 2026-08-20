@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Build and upload
+      - name: Build upload and verify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -23,3 +23,16 @@ jobs:
           sha256sum ${archive} > ${archive}.sha256
           sha256sum -c ${archive}.sha256
           gh release upload ${tag} ${archive} ${archive}.sha256 --clobber
+          rm -rf /tmp/verify && mkdir -p /tmp/verify
+          gh release download ${tag} --dir /tmp/verify --pattern ${archive} --pattern ${archive}.sha256
+          cd /tmp/verify
+          sha256sum -c ${archive}.sha256
+          unzip -p ${archive} bitcoin-stack-tracker-${tag}/VERSION.txt | grep -Fxq 0.21.0.15
+      - name: Remove temporary workflow
+        run: |
+          set -euo pipefail
+          git config user.name "Einundzwanzig Koblenz"
+          git config user.email "koblenzeinundzwanzig@proton.me"
+          git rm .github/workflows/agent-release-assets-v021015.yml
+          git commit -m "Remove temporary v0.21.0.15 asset publisher"
+          git push origin HEAD:main
