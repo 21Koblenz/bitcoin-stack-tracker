@@ -6,9 +6,9 @@ import hashlib
 
 DOMAIN = "bitcoin_stack_tracker"
 PLATFORMS = ["sensor"]
-VERSION = "0.21.0.15"
-# Public frontend build stays aligned with the release. A separate cache revision
-# can be bumped for final/repacked assets without inventing a new integration version.
+VERSION = "0.21.0.16"
+# The base frontend asset bundle is unchanged from 0.21.0.15. Release 0.21.0.16
+# adds fail-safe feature assets on top and versions those files independently.
 FRONTEND_BUILD = "0.21.0.15"
 FRONTEND_CACHE_REVISION = "10"
 
