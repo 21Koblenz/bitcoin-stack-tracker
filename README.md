@@ -1,4 +1,4 @@
-# Bitcoin Stack Tracker v0.21.0.15
+# Bitcoin Stack Tracker v0.21.0.16
 
 [English](#english) · [Deutsch](#deutsch)
 
@@ -169,17 +169,17 @@ Short version:
 
 ### Release
 
-Current project version: **v0.21.0.15**. This patch fixes HACS-upgrade frontend cache invalidation and keeps 90-day reconstruction progress live without adding model or network load. This release makes the 90-day market-assessment reconstruction startup-safe, moves live/reconstructed scores to 15-minute buckets, fixes Sats Sentinel privacy after inactivity auto-lock and completes the performance/repository cleanup.
+Current project version: **v0.21.0.16**. This release adds current value/performance directly to each ledger booking without widening the table and introduces a configurable holding-period cutoff model in the holding-period tab.
 
-#### Highlights since v0.21.0.13
+#### Highlights in v0.21.0.16
 
-- one detached startup-safe reconstruction worker; market reads never start a second long-running backfill
-- 15-minute score buckets, 90-day retention and 8,640 target points
-- local 15-minute, legacy 5-minute and adaptive price caches are reused before any public request
-- missing public history is Tor-only/fail-closed; Coinbase Exchange first, Bitstamp fallback
-- locked-screen Sentinel stays hidden after inactivity auto-lock when disabled; monitoring and alerts continue
-- reconstruction status reports the real source, 15-minute interval and Tor route
-- performance smoke: 28/28 focused tests; market-score p95 147.11 ms; max-drawdown p95 15.94 ms; TWR p95 36.64 ms
+- current fiat value and percentage development per booking
+- no additional desktop ledger column and therefore no new horizontal scrollbar
+- configurable cutoff: acquisitions before it keep the normal holding rule; acquisitions on/after it never become long-term in the model
+- separate summary cards for normal-rule BTC and never-long-term BTC
+- sortable cutoff table with `YYYY MM DD` acquisition dates
+- unlock-loop regression fix retained: no self-triggering DOM MutationObserver
+- HACS validation, Hassfest validation and dependency-security checks passed
 
 **After updating, fully restart Home Assistant Core and hard-reload the frontend.**
 
@@ -372,17 +372,17 @@ Kurzfassung:
 
 ### Release
 
-Aktueller Projektstand: **v0.21.0.15**. Dieses Patch-Release behebt die Frontend-Cache-Invalidierung bei HACS-Updates und hält den Fortschritt der 90-Tage-Rückrechnung ohne zusätzliche Modell- oder Netzwerklast live. Dieses Release macht die 90-Tage-Markteinschätzungs-Rückrechnung startup-sicher, stellt Live-/Rückrechnungs-Scores auf 15-Minuten-Buckets um, behebt die Sats-Sentinel-Privatsphäre beim Inaktivitäts-Auto-Lock und schließt die Performance-/Repository-Bereinigung ab.
+Aktueller Projektstand: **v0.21.0.16**. Dieses Release ergänzt bei jeder Buchung den heutigen Wert samt prozentualer Entwicklung, ohne die Tabelle zu verbreitern, und fügt im Reiter Haltezeit einen frei einstellbaren Stichtag als Modellfunktion hinzu.
 
-#### Highlights seit v0.21.0.13
+#### Highlights in v0.21.0.16
 
-- genau ein entkoppelter startup-sicherer Rückrechnungs-Worker; Market-Reads starten keinen zweiten Langzeit-Backfill
-- 15-Minuten-Score-Buckets, 90 Tage Aufbewahrung und 8.640 Zielpunkte
-- lokale 15-Minuten-, alte 5-Minuten- und adaptive Kurscaches werden vor öffentlichen Abfragen wiederverwendet
-- fehlende öffentliche Historie bleibt Tor-only/fail-closed; Coinbase Exchange zuerst, Bitstamp als Fallback
-- Sats Sentinel bleibt nach Inaktivitäts-Auto-Lock verborgen, wenn die Anzeige deaktiviert ist; Überwachung und Alarme laufen weiter
-- Rückrechnungsstatus zeigt echte Quelle, 15-Minuten-Intervall und Tor-Route
-- Performance-Smoke: 28/28 fokussierte Tests; Market-Score p95 147,11 ms; Max-Drawdown p95 15,94 ms; TWR p95 36,64 ms
+- heutiger Fiatwert und prozentuale Entwicklung je Buchung
+- keine zusätzliche Desktop-Spalte und damit kein neuer horizontaler Scrollbalken
+- frei wählbarer Stichtag: Erwerbe davor folgen der normalen Haltefrist; Erwerbe am/danach werden im Modell nie Langzeit
+- getrennte Karten für normale Haltefrist und nie Langzeit werdende BTC
+- sortierbare Stichtag-Tabelle mit Erwerbsdatum `JJJJ MM TT`
+- Unlock-Regressionsfix bleibt erhalten: kein selbsttriggernder DOM-MutationObserver
+- HACS-, Hassfest- und Dependency-Security-Prüfungen bestanden
 
 **Nach dem Update Home Assistant Core vollständig neu starten und das Frontend hart neu laden.**
 

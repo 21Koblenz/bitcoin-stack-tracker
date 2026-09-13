@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.21.0.16 — 2026-09-13: current booking value & configurable holding cutoff
+
+### English
+
+- Ledger bookings now show the **current fiat value** of the booked BTC amount and the **percentage development since the booking** directly below the existing historical fiat total, so the desktop table keeps its previous column count.
+- The holding-period tab adds a configurable **cutoff date model**. Acquisitions before the cutoff keep the configured holding period; acquisitions on or after the cutoff remain in the existing short-term/taxable model bucket and never receive a future long-term date.
+- The cutoff simulation shows separate cards for BTC under the normal holding rule and BTC that will never become long-term under the configured model.
+- Cutoff lots are listed as **Acquired · Status · Open**. Clicking **Acquired** toggles ascending/descending sorting; dates are displayed as `YYYY MM DD`.
+- The current-value comparison is fee-aware: purchase/income fees increase the historical acquisition total, while sale/expense fees reduce historical proceeds.
+- The release keeps the original ledger width and contains no DOM `MutationObserver`, preventing the vault-unlock render loop discovered during VM testing.
+- Home Assistant custom integration: **v0.21.0.16**. Tor Gateway remains **v0.21.0.3**.
+
+### Deutsch
+
+- Einzelne Buchungen zeigen jetzt den **heutigen Fiatwert** der gebuchten BTC-Menge sowie die **prozentuale Entwicklung seit der Buchung** direkt unter dem bestehenden historischen Fiat-Gesamtbetrag. Dadurch bleibt die bisherige Spaltenzahl der Desktop-Tabelle erhalten.
+- Im Reiter Haltezeit gibt es einen frei wählbaren **Stichtag als Modellfunktion**. Erwerbe vor dem Stichtag folgen weiter der eingestellten Haltefrist; Erwerbe am oder nach dem Stichtag bleiben im Modell dauerhaft im steuerpflichtigen Kurzzeit-Bereich und erhalten kein zukünftiges Langzeitdatum.
+- Die Stichtag-Simulation zeigt getrennte Karten für BTC mit normaler Haltefrist und BTC, die im gewählten Modell nie Langzeit werden.
+- Die Stichtag-Tabelle ist als **Erworben · Status · Offen** aufgebaut. Ein Klick auf **Erworben** wechselt zwischen auf- und absteigender Sortierung; das Datum erscheint als `JJJJ MM TT`.
+- Die Entwicklung je Buchung berücksichtigt Gebühren: Bei Kauf/Einnahme erhöhen Fiatgebühren den historischen Einstand, bei Verkauf/Ausgabe reduzieren sie den historischen Erlös.
+- Die ursprüngliche Tabellenbreite bleibt erhalten und die Release-Oberfläche verwendet keinen DOM-`MutationObserver`; damit ist die im VM-Test gefundene Entsperr-Endlosschleife ausgeschlossen.
+- Home-Assistant-Custom-Integration: **v0.21.0.16**. Tor Gateway bleibt **v0.21.0.3**.
+
+
 ## v0.21.0.15 — 2026-08-19: HACS upgrade cache & live reconstruction progress
 
 ### English
