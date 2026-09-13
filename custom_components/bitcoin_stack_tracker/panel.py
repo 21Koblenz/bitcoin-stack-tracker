@@ -13,6 +13,16 @@ from .const import DOMAIN, FRONTEND_BUILD, FRONTEND_CACHE_REVISION, VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
+# Holding-cutoff feature. It is isolated from the production files and deliberately
+# fails open: if the extension cannot initialize, the normal integration
+# and native panel still load.
+try:
+    from .holding_cutoff import install_holding_cutoff_feature
+
+    install_holding_cutoff_feature()
+except Exception:  # noqa: BLE001 - a release feature must never take Core down
+    _LOGGER.exception("Bitcoin Stack holding-cutoff feature initialization failed")
+
 PANEL_URL_PATH = "bitcoin-stack-tracker"
 _PANEL_BUILD_TOKEN = "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_BUILD.lower()).strip("-")
 _PANEL_CACHE_TOKEN = "".join(ch if ch.isalnum() else "-" for ch in FRONTEND_CACHE_REVISION.lower()).strip("-")
@@ -63,11 +73,17 @@ async def async_register_native_panel(hass: HomeAssistant) -> bool:
             frontend_url_path=PANEL_URL_PATH,
             sidebar_title="Bitcoin Stack",
             sidebar_icon="mdi:bitcoin",
+            # Keep the project's original native panel loader untouched.
             module_url=f"{STATIC_URL}/panel.js?v={FRONTEND_BUILD}&r={FRONTEND_CACHE_REVISION}",
             embed_iframe=False,
             require_admin=False,
             config={
-                "frontend_url": f"{STATIC_URL}/index.html?native=1&v={FRONTEND_BUILD}&r={FRONTEND_CACHE_REVISION}",
+                # Only the HTML document is swapped for a fail-safe release loader.
+                # It loads the original index.html and then adds the feature files.
+                "frontend_url": (
+                    f"{STATIC_URL}/index_features.html?native=1"
+                    f"&v={FRONTEND_BUILD}&r={FRONTEND_CACHE_REVISION}&features=0.21.0.16"
+                ),
                 "version": VERSION,
                 "frontend_build": FRONTEND_BUILD,
                 "frontend_cache_revision": FRONTEND_CACHE_REVISION,
